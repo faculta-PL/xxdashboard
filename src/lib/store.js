@@ -1,4 +1,10 @@
 import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut,
+  updatePassword,
+} from 'firebase/auth'
+import {
   collection,
   doc,
   setDoc,
@@ -6,10 +12,17 @@ import {
   onSnapshot,
   getDocs,
   getDoc,
+  query,
+  where,
+  limit,
 } from 'firebase/firestore'
-import { db, firebaseConfigured } from './firebase'
+import { auth, db, firebaseConfigured, getFirebaseStatus } from './firebase'
 import { sha256, randomToken, randomCode6, uid } from './crypto'
 import { ROLES } from './rbac'
+
+const ADMIN_EMAIL = 'admin@xxdashboard.fr'
+const ADMIN_PASSWORD = 'Admin123!'
+const AUTH_MIN_PASSWORD = firebaseConfigured ? 6 : 4
 
 const LOCAL_KEY = 'xxdashboard_v1'
 const SESSION_KEY = 'xxdashboard_session_token'
@@ -70,7 +83,7 @@ export function getStoreSnapshot() {
   return snapshotState()
 }
 
-async function persistDoc(col, id, value) {
+async function persistDoc(col, id, value, { required = false } = {}) {
   memory[col][id] = value
   saveLocal(memory)
   if (firebaseConfigured && db) {
@@ -78,6 +91,9 @@ async function persistDoc(col, id, value) {
       await setDoc(doc(db, col, id), value, { merge: true })
     } catch (err) {
       console.warn(`Firestore write ${col}/${id} failed:`, err.message)
+      if (required) {
+        throw new Error(`Écriture Firebase impossible (${col}) : ${err.message}`)
+      }
     }
   }
   notify()
@@ -96,24 +112,165 @@ async function removeDoc(col, id) {
   notify()
 }
 
+function mapAuthError(err) {
+  const code = err?.code || ''
+  switch (code) {
+    case 'auth/email-already-in-use':
+      return 'Un compte existe déjà avec cet e-mail.'
+    case 'auth/invalid-email':
+      return 'Adresse e-mail invalide.'
+    case 'auth/weak-password':
+      return 'Le mot de passe doit contenir au moins 6 caractères (exigence Firebase Auth).'
+    case 'auth/user-not-found':
+    case 'auth/wrong-password':
+    case 'auth/invalid-credential':
+      return 'Identifiants incorrects.'
+    case 'auth/too-many-requests':
+      return 'Trop de tentatives. Réessayez dans quelques minutes.'
+    case 'auth/network-request-failed':
+      return 'Réseau indisponible : impossible de joindre Firebase.'
+    case 'auth/operation-not-allowed':
+      return 'Activez le fournisseur E-mail/mot de passe dans Firebase Authentication.'
+    default:
+      return err?.message || 'Erreur Firebase Auth.'
+  }
+}
+
+function cacheDoc(col, row) {
+  if (!row?.id) return row
+  memory[col][row.id] = row
+  return row
+}
+
+async function queryOne(col, field, value) {
+  const local = Object.values(memory[col] || {}).find((d) => d[field] === value)
+  if (local) return local
+  if (!firebaseConfigured || !db) return null
+  try {
+    const snap = await getDocs(query(collection(db, col), where(field, '==', value), limit(1)))
+    if (snap.empty) return null
+    const d = snap.docs[0]
+    return cacheDoc(col, { id: d.id, ...d.data() })
+  } catch (err) {
+    console.warn(`Firestore query ${col}.${field} failed:`, err.message)
+    return null
+  }
+}
+
+async function findUserByEmail(email) {
+  return queryOne('xx_users', 'email', email)
+}
+
+async function findUserByFirebaseUid(firebaseUid) {
+  if (!firebaseUid) return null
+  const byId = memory.xx_users[firebaseUid]
+  if (byId) return byId
+  if (firebaseConfigured && db) {
+    try {
+      const remote = await getRemoteDoc('xx_users', firebaseUid)
+      if (remote) return cacheDoc('xx_users', remote)
+    } catch (err) {
+      console.warn('Firestore user-by-uid lookup failed:', err.message)
+    }
+  }
+  return Object.values(memory.xx_users).find((u) => u.firebaseUid === firebaseUid) || null
+}
+
+function requireFirebaseAuth() {
+  if (!firebaseConfigured || !auth) {
+    throw new Error(
+      'Firebase Auth n’est pas initialisé. Vérifiez les variables VITE_FIREBASE_* et redémarrez Vite.',
+    )
+  }
+}
+
+async function createAuthUser(email, password) {
+  requireFirebaseAuth()
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, password)
+    return cred.user
+  } catch (err) {
+    throw new Error(mapAuthError(err))
+  }
+}
+
+async function signInAuth(email, password) {
+  if (!firebaseConfigured || !auth) return null
+  try {
+    const cred = await signInWithEmailAndPassword(auth, email, password)
+    return cred.user
+  } catch (err) {
+    if (
+      err.code === 'auth/user-not-found' ||
+      err.code === 'auth/wrong-password' ||
+      err.code === 'auth/invalid-credential' ||
+      err.code === 'auth/invalid-email'
+    ) {
+      return null
+    }
+    throw new Error(mapAuthError(err))
+  }
+}
+
+async function ensureAuthUser(email, password) {
+  if (!firebaseConfigured || !auth) return null
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, password)
+    return cred.user
+  } catch (err) {
+    if (err.code === 'auth/email-already-in-use') {
+      return signInAuth(email, password)
+    }
+    console.warn('Firebase Auth ensure user:', err.message)
+    return null
+  }
+}
+
+async function signOutAuthSafe() {
+  if (!auth) return
+  try {
+    if (auth.currentUser) await signOut(auth)
+  } catch (err) {
+    console.warn('Firebase Auth signOut:', err.message)
+  }
+}
+
 async function ensureDefaultAdmin() {
-  const users = Object.values(memory.xx_users)
-  const exists = users.find((u) => u.email === 'admin@xxdashboard.fr')
-  if (exists) return
-  const id = uid('user')
-  const passwordHash = await sha256('Admin123!')
+  const passwordHash = await sha256(ADMIN_PASSWORD)
   const now = new Date().toISOString()
-  await persistDoc('xx_users', id, {
-    id,
-    fullName: 'Administrateur XX',
-    email: 'admin@xxdashboard.fr',
-    passwordHash,
-    role: ROLES.ADMIN,
-    emailVerified: true,
-    verificationCode: null,
-    createdAt: now,
-    updatedAt: now,
-  })
+  let user = await findUserByEmail(ADMIN_EMAIL)
+  let authUser = null
+  if (firebaseConfigured && auth) {
+    authUser = await ensureAuthUser(ADMIN_EMAIL, ADMIN_PASSWORD)
+  }
+  if (!user) {
+    const id = authUser?.uid || uid('user')
+    user = {
+      id,
+      fullName: 'Administrateur XX',
+      email: ADMIN_EMAIL,
+      passwordHash,
+      role: ROLES.ADMIN,
+      emailVerified: true,
+      verificationCode: null,
+      firebaseUid: authUser?.uid || null,
+      createdAt: now,
+      updatedAt: now,
+    }
+    await persistDoc('xx_users', id, user, { required: firebaseConfigured })
+    return
+  }
+  const patch = {}
+  if (authUser?.uid && user.firebaseUid !== authUser.uid) patch.firebaseUid = authUser.uid
+  if (!user.passwordHash) patch.passwordHash = passwordHash
+  if (Object.keys(patch).length) {
+    await persistDoc(
+      'xx_users',
+      user.id,
+      { ...user, ...patch, updatedAt: now },
+      { required: firebaseConfigured },
+    )
+  }
 }
 
 let bootPromise = null
@@ -148,7 +305,11 @@ export function bootStore() {
         console.warn('Firebase sync unavailable, using local store:', err.message)
       }
     }
-    await ensureDefaultAdmin()
+    try {
+      await ensureDefaultAdmin()
+    } catch (err) {
+      console.warn('Admin seed failed:', err.message)
+    }
     return snapshotState()
   })()
   return bootPromise
@@ -158,12 +319,17 @@ export function getBackendMode() {
   return firebaseConfigured && db ? 'firebase' : 'local'
 }
 
+export function getMinPasswordLength() {
+  return AUTH_MIN_PASSWORD
+}
+
 export function diagnoseDatabase() {
   const counts = Object.fromEntries(
     COLLECTIONS.map((c) => [c, Object.keys(memory[c] || {}).length]),
   )
   return {
     mode: getBackendMode(),
+    firebase: getFirebaseStatus(),
     firebaseConfigured,
     collections: counts,
     totalDocuments: Object.values(counts).reduce((a, b) => a + b, 0),
@@ -187,13 +353,18 @@ export async function registerUser({ fullName, email, password }) {
   const normalized = email.trim().toLowerCase()
   if (!fullName?.trim()) throw new Error('Le nom complet est requis.')
   if (!normalized.includes('@')) throw new Error('Adresse e-mail invalide.')
-  if (!password || password.length < 4) {
-    throw new Error('Le mot de passe doit contenir au moins 4 caractères.')
+  if (!password || password.length < AUTH_MIN_PASSWORD) {
+    throw new Error(`Le mot de passe doit contenir au moins ${AUTH_MIN_PASSWORD} caractères.`)
   }
-  const exists = Object.values(memory.xx_users).find((u) => u.email === normalized)
+  const exists = await findUserByEmail(normalized)
   if (exists) throw new Error('Un compte existe déjà avec cet e-mail.')
 
-  const id = uid('user')
+  let authUser = null
+  if (firebaseConfigured) {
+    authUser = await createAuthUser(normalized, password)
+  }
+
+  const id = authUser?.uid || uid('user')
   const passwordHash = await sha256(password)
   const verificationCode = randomCode6()
   const now = new Date().toISOString()
@@ -205,29 +376,36 @@ export async function registerUser({ fullName, email, password }) {
     role: ROLES.MEMBER,
     emailVerified: false,
     verificationCode,
+    firebaseUid: authUser?.uid || null,
     createdAt: now,
     updatedAt: now,
   }
-  await persistDoc('xx_users', id, user)
+  await persistDoc('xx_users', id, user, { required: firebaseConfigured })
 
   const notifId = uid('notif')
-  await persistDoc('xx_notifications', notifId, {
-    id: notifId,
-    userId: id,
-    type: 'email_verification',
-    title: 'Code de vérification e-mail',
-    body: `Votre code de vérification est ${verificationCode}. Saisissez-le dans Paramètres pour activer votre compte.`,
-    read: false,
-    createdAt: now,
-    meta: { verificationCode },
-  })
+  await persistDoc(
+    'xx_notifications',
+    notifId,
+    {
+      id: notifId,
+      userId: id,
+      type: 'email_verification',
+      title: 'Code de vérification e-mail',
+      body: `Votre code de vérification est ${verificationCode}. Saisissez-le dans Paramètres pour activer votre compte.`,
+      read: false,
+      createdAt: now,
+      meta: { verificationCode },
+    },
+    { required: firebaseConfigured },
+  )
 
   return { user: publicUser(user), verificationCode }
 }
 
 export async function verifyEmail(userId, code) {
-  const user = memory.xx_users[userId]
+  const user = memory.xx_users[userId] || (await getRemoteDoc('xx_users', userId))
   if (!user) throw new Error('Utilisateur introuvable.')
+  cacheDoc('xx_users', user)
   if (user.emailVerified) return publicUser(user)
   if (String(code).trim() !== String(user.verificationCode)) {
     throw new Error('Code de vérification incorrect.')
@@ -238,16 +416,55 @@ export async function verifyEmail(userId, code) {
     verificationCode: null,
     updatedAt: new Date().toISOString(),
   }
-  await persistDoc('xx_users', userId, updated)
+  await persistDoc('xx_users', userId, updated, { required: firebaseConfigured })
   return publicUser(updated)
 }
 
 export async function loginUser(email, password) {
   const normalized = email.trim().toLowerCase()
-  const user = Object.values(memory.xx_users).find((u) => u.email === normalized)
-  if (!user) throw new Error('Identifiants incorrects.')
+  if (!password) throw new Error('Identifiants incorrects.')
+
+  let user = await findUserByEmail(normalized)
   const hash = await sha256(password)
-  if (hash !== user.passwordHash) throw new Error('Identifiants incorrects.')
+  const hashOk = Boolean(user && user.passwordHash === hash)
+
+  let authUser = null
+  if (firebaseConfigured && auth) {
+    authUser = await signInAuth(normalized, password)
+    if (!user && authUser) {
+      user = await findUserByFirebaseUid(authUser.uid)
+    }
+    if (hashOk && !authUser) {
+      // Compte Firestore existant (ex. reset SHA-256) sans Auth, ou Auth pas encore créé.
+      authUser = await ensureAuthUser(normalized, password)
+    }
+  }
+
+  if (!hashOk && !authUser) throw new Error('Identifiants incorrects.')
+
+  if (!user && authUser) {
+    const now = new Date().toISOString()
+    user = {
+      id: authUser.uid,
+      fullName: authUser.displayName || normalized.split('@')[0],
+      email: normalized,
+      passwordHash: hash,
+      role: normalized === ADMIN_EMAIL ? ROLES.ADMIN : ROLES.MEMBER,
+      emailVerified: Boolean(authUser.emailVerified),
+      verificationCode: null,
+      firebaseUid: authUser.uid,
+      createdAt: now,
+      updatedAt: now,
+    }
+    await persistDoc('xx_users', user.id, user, { required: true })
+  }
+
+  if (!user) throw new Error('Identifiants incorrects.')
+
+  if (authUser && user.firebaseUid !== authUser.uid) {
+    user = { ...user, firebaseUid: authUser.uid, updatedAt: new Date().toISOString() }
+    await persistDoc('xx_users', user.id, user)
+  }
 
   const token = randomToken(32)
   const now = Date.now()
@@ -262,32 +479,41 @@ export async function loginUser(email, password) {
     active: true,
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
   }
-  await persistDoc('xx_sessions', sessionId, session)
+  await persistDoc('xx_sessions', sessionId, session, { required: firebaseConfigured })
   localStorage.setItem(SESSION_KEY, token)
   return { user: publicUser(user), session }
 }
 
 export async function logoutCurrentSession() {
   const token = localStorage.getItem(SESSION_KEY)
-  if (!token) return
-  const session = Object.values(memory.xx_sessions).find((s) => s.token === token)
-  if (session) {
-    await persistDoc('xx_sessions', session.id, {
-      ...session,
-      active: false,
-      revokedAt: new Date().toISOString(),
-    })
+  if (token) {
+    const session =
+      Object.values(memory.xx_sessions).find((s) => s.token === token) ||
+      (await queryOne('xx_sessions', 'token', token))
+    if (session) {
+      await persistDoc(
+        'xx_sessions',
+        session.id,
+        {
+          ...session,
+          active: false,
+          revokedAt: new Date().toISOString(),
+        },
+        { required: firebaseConfigured },
+      )
+    }
   }
   localStorage.removeItem(SESSION_KEY)
+  await signOutAuthSafe()
 }
 
 export async function getCurrentSession() {
   const token = localStorage.getItem(SESSION_KEY)
   if (!token) return null
-  const session = Object.values(memory.xx_sessions).find(
-    (s) => s.token === token && s.active,
-  )
-  if (!session) {
+  let session =
+    Object.values(memory.xx_sessions).find((s) => s.token === token) ||
+    (await queryOne('xx_sessions', 'token', token))
+  if (!session || !session.active) {
     localStorage.removeItem(SESSION_KEY)
     return null
   }
@@ -300,8 +526,9 @@ export async function getCurrentSession() {
     localStorage.removeItem(SESSION_KEY)
     return null
   }
-  const user = memory.xx_users[session.userId]
+  const user = memory.xx_users[session.userId] || (await getRemoteDoc('xx_users', session.userId))
   if (!user) return null
+  cacheDoc('xx_users', user)
   return { user: publicUser(user), session }
 }
 
@@ -311,19 +538,25 @@ export async function revokeSession(sessionId, requester) {
   if (session.userId !== requester.id && requester.role !== ROLES.ADMIN) {
     throw new Error('Permission refusée.')
   }
-  await persistDoc('xx_sessions', sessionId, {
-    ...session,
-    active: false,
-    revokedAt: new Date().toISOString(),
-  })
+  await persistDoc(
+    'xx_sessions',
+    sessionId,
+    {
+      ...session,
+      active: false,
+      revokedAt: new Date().toISOString(),
+    },
+    { required: firebaseConfigured },
+  )
   if (localStorage.getItem(SESSION_KEY) === session.token) {
     localStorage.removeItem(SESSION_KEY)
+    await signOutAuthSafe()
   }
 }
 
 export async function requestPasswordReset(email) {
   const normalized = email.trim().toLowerCase()
-  const user = Object.values(memory.xx_users).find((u) => u.email === normalized)
+  const user = await findUserByEmail(normalized)
   if (!user) {
     // Ne pas révéler l'existence du compte
     return { ok: true }
@@ -331,52 +564,82 @@ export async function requestPasswordReset(email) {
   const token = randomToken(16)
   const id = uid('reset')
   const expiresAt = new Date(Date.now() + 2 * 3600 * 1000).toISOString()
-  await persistDoc('xx_reset_tokens', id, {
+  await persistDoc(
+    'xx_reset_tokens',
     id,
-    userId: user.id,
-    token,
-    expiresAt,
-    used: false,
-    createdAt: new Date().toISOString(),
-  })
+    {
+      id,
+      userId: user.id,
+      token,
+      expiresAt,
+      used: false,
+      createdAt: new Date().toISOString(),
+    },
+    { required: firebaseConfigured },
+  )
   const notifId = uid('notif')
-  await persistDoc('xx_notifications', notifId, {
-    id: notifId,
-    userId: user.id,
-    type: 'password_reset',
-    title: 'Réinitialisation du mot de passe',
-    body: `Votre jeton temporaire est ${token}. Valable 2 heures.`,
-    read: false,
-    createdAt: new Date().toISOString(),
-    meta: { token },
-  })
+  await persistDoc(
+    'xx_notifications',
+    notifId,
+    {
+      id: notifId,
+      userId: user.id,
+      type: 'password_reset',
+      title: 'Réinitialisation du mot de passe',
+      body: `Votre jeton temporaire est ${token}. Valable 2 heures.`,
+      read: false,
+      createdAt: new Date().toISOString(),
+      meta: { token },
+    },
+    { required: firebaseConfigured },
+  )
   return { ok: true, debugToken: token }
 }
 
 export async function resetPasswordWithToken(token, newPassword) {
-  if (!newPassword || newPassword.length < 4) {
-    throw new Error('Le mot de passe doit contenir au moins 4 caractères.')
+  if (!newPassword || newPassword.length < AUTH_MIN_PASSWORD) {
+    throw new Error(`Le mot de passe doit contenir au moins ${AUTH_MIN_PASSWORD} caractères.`)
   }
-  const entry = Object.values(memory.xx_reset_tokens).find(
-    (t) => t.token === token && !t.used,
-  )
-  if (!entry) throw new Error('Jeton invalide ou déjà utilisé.')
+  const entry =
+    Object.values(memory.xx_reset_tokens).find((t) => t.token === token && !t.used) ||
+    (await queryOne('xx_reset_tokens', 'token', token))
+  if (!entry || entry.used) throw new Error('Jeton invalide ou déjà utilisé.')
   if (new Date(entry.expiresAt).getTime() < Date.now()) {
     throw new Error('Jeton expiré.')
   }
-  const user = memory.xx_users[entry.userId]
+  const user = memory.xx_users[entry.userId] || (await getRemoteDoc('xx_users', entry.userId))
   if (!user) throw new Error('Utilisateur introuvable.')
   const passwordHash = await sha256(newPassword)
-  await persistDoc('xx_users', user.id, {
-    ...user,
-    passwordHash,
-    updatedAt: new Date().toISOString(),
-  })
-  await persistDoc('xx_reset_tokens', entry.id, {
-    ...entry,
-    used: true,
-    usedAt: new Date().toISOString(),
-  })
+  await persistDoc(
+    'xx_users',
+    user.id,
+    {
+      ...user,
+      passwordHash,
+      updatedAt: new Date().toISOString(),
+    },
+    { required: firebaseConfigured },
+  )
+  await persistDoc(
+    'xx_reset_tokens',
+    entry.id,
+    {
+      ...entry,
+      used: true,
+      usedAt: new Date().toISOString(),
+    },
+    { required: firebaseConfigured },
+  )
+  if (auth?.currentUser) {
+    const currentEmail = auth.currentUser.email?.toLowerCase()
+    if (currentEmail === user.email || auth.currentUser.uid === user.firebaseUid) {
+      try {
+        await updatePassword(auth.currentUser, newPassword)
+      } catch (err) {
+        console.warn('Firebase Auth updatePassword:', err.message)
+      }
+    }
+  }
   return true
 }
 

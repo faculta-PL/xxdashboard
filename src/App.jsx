@@ -57,9 +57,11 @@ import {
   diagnoseDatabase,
   exportDeploymentKit,
   getBackendMode,
+  getMinPasswordLength,
   pushLocalToFirebase,
   pullFirebaseToLocal,
 } from './lib/store'
+import { firebaseConfigured, missingFirebaseVars, getFirebaseStatus } from './lib/firebase'
 import { canReadEntity, canEditEntity, canDeleteEntity, isAdmin, ROLES } from './lib/rbac'
 import {
   exportJSON,
@@ -347,6 +349,24 @@ export default function App() {
             onSubmit={handleAuth}
             className="rounded-3xl border border-sage-200 bg-white/80 p-6 shadow-sm backdrop-blur"
           >
+            {firebaseConfigured ? (
+              <div className="mb-4 rounded-xl border border-sage-200 bg-sage-50 px-3 py-2 text-xs text-sage-700">
+                Backend <strong>Firebase</strong> — connexion et inscription écrivent dans Auth
+                et Firestore.
+              </div>
+            ) : (
+              <div className="mb-4 rounded-xl border border-warn/40 bg-warn/10 px-3 py-2.5 text-sm text-sage-800">
+                <p className="font-semibold">Mode local — Firebase n’est pas configuré.</p>
+                <p className="mt-1 text-xs text-sage-600">
+                  Copiez <code className="rounded bg-white px-1">.env.example</code> vers{' '}
+                  <code className="rounded bg-white px-1">.env</code>, renseignez{' '}
+                  <code className="rounded bg-white px-1">VITE_FIREBASE_*</code> (console
+                  Firebase → paramètres du projet), activez E-mail/mot de passe, puis
+                  redémarrez Vite. Les comptes resteront ensuite dans Auth + Firestore.
+                  Variables manquantes : {missingFirebaseVars.join(', ') || 'aucune'}.
+                </p>
+              </div>
+            )}
             <div className="mb-5 flex gap-2 text-sm">
               {[
                 ['login', 'Connexion'],
@@ -393,14 +413,14 @@ export default function App() {
             )}
 
             {(authMode === 'login' || authMode === 'register') && (
-              <Field label="Mot de passe (min. 4 caractères)">
+              <Field label={`Mot de passe (min. ${getMinPasswordLength()} caractères)`}>
                 <div className="relative">
                   <input
                     type={showPass ? 'text' : 'password'}
                     className={inputClass + ' pr-10'}
                     value={authForm.password}
                     onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
-                    minLength={4}
+                    minLength={getMinPasswordLength()}
                     required
                   />
                   <button
@@ -430,7 +450,7 @@ export default function App() {
                     className={inputClass}
                     value={authForm.newPassword}
                     onChange={(e) => setAuthForm({ ...authForm, newPassword: e.target.value })}
-                    minLength={4}
+                    minLength={getMinPasswordLength()}
                     required
                   />
                 </Field>
@@ -2225,9 +2245,39 @@ function SettingsView({ user, session, users, flash, onUserUpdated }) {
           <Database size={18} /> Diagnostic Firebase / déploiement
         </h2>
         <p className="mt-2 text-sm text-sage-600">
-          Mode actuel : <strong>{getBackendMode()}</strong>. Configurez les variables{' '}
-          <code className="rounded bg-sage-100 px-1">VITE_FIREBASE_*</code> pour activer Firestore.
+          Mode actuel : <strong>{getBackendMode()}</strong>
+          {firebaseConfigured
+            ? ' — Auth + Firestore actifs. Connexion, inscription, sessions et jetons de reset sont persistés dans Firebase.'
+            : ' — repli localStorage. Remplissez VITE_FIREBASE_* dans .env puis redémarrez Vite pour brancher Firebase.'}
         </p>
+        {!firebaseConfigured && (
+          <div className="mt-3 rounded-xl border border-warn/30 bg-warn/10 p-3 text-sm text-sage-800">
+            <p className="font-medium">Firebase n’est pas configuré sur cet environnement.</p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-sage-700">
+              <li>
+                Copiez <code className="rounded bg-white px-1">.env.example</code> vers{' '}
+                <code className="rounded bg-white px-1">.env</code>
+              </li>
+              <li>
+                Collez les clés de la console Firebase (apiKey, authDomain, projectId,
+                storageBucket, messagingSenderId, appId)
+              </li>
+              <li>Authentication → Sign-in method → E-mail/mot de passe : activer</li>
+              <li>Firestore Database : créer la base, règles en mode test ou voir README</li>
+              <li>Redémarrer <code className="rounded bg-white px-1">npm run dev</code></li>
+            </ol>
+            <p className="mt-2 text-xs text-sage-600">
+              Variables manquantes : {missingFirebaseVars.join(', ') || 'aucune'}
+            </p>
+          </div>
+        )}
+        {firebaseConfigured && (
+          <p className="mt-2 text-xs text-sage-500">
+            Projet {getFirebaseStatus().projectId} · Auth{' '}
+            {getFirebaseStatus().authReady ? 'OK' : 'indisponible'} · Firestore{' '}
+            {getFirebaseStatus().firestoreReady ? 'OK' : 'indisponible'}
+          </p>
+        )}
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
