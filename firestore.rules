@@ -280,6 +280,33 @@ service cloud.firestore {
       );
     }
 
+    // Conversations IA : propriétaire uniquement, pas de mémoire croisée.
+    match /xx_ai_threads/{id} {
+      allow read, update, delete: if isSignedIn()
+        && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid;
+    }
+
+    // Préférences utilisateur / admin (ex. aiExternalEnabled).
+    match /xx_settings/{id} {
+      allow read: if isSignedIn() && (
+        resource.id == request.auth.uid
+        || resource.data.userId == request.auth.uid
+        || isAdmin()
+      );
+      allow create: if isSignedIn() && (
+        request.resource.id == request.auth.uid
+        || request.resource.data.userId == request.auth.uid
+        || isAdmin()
+      );
+      allow update, delete: if isSignedIn() && (
+        resource.id == request.auth.uid
+        || resource.data.userId == request.auth.uid
+        || isAdmin()
+      );
+    }
+
     match /xx_messages/{id} {
       allow read: if isSignedIn() && (
         isAdmin()

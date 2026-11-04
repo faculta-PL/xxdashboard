@@ -49,9 +49,11 @@ import {
   AlertTriangle,
   BoxSelect,
   Link2,
+  Sparkles,
 } from 'lucide-react'
 import ImportModal from './ImportModal'
 import CanvasView from './CanvasView'
+import { AssistantFab, AssistantPanel, AssistantView, AiSettingsBlock } from './Assistant'
 import {
   bootStore,
   subscribeStore,
@@ -147,6 +149,13 @@ import {
   isNoteAncestor,
 } from './lib/rbac'
 import {
+  FAB_VIEWS,
+  readExternalPref,
+  writeExternalPref,
+  readWebPref,
+  buildContextPayload,
+} from './lib/assistant'
+import {
   MAX_FILE_BYTES,
   ALLOWED_FILE_EXTS,
   FILE_PERM_OPTIONS,
@@ -197,6 +206,7 @@ const SHARE_PERMS = [
 
 const NAV = [
   { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
+  { id: 'assistant', label: 'Assistant IA', icon: Sparkles },
   { id: 'canvas', label: 'Espace visuel', icon: BoxSelect },
   { id: 'notes', label: 'Notes', icon: StickyNote },
   { id: 'ideas', label: 'Boîte à idées', icon: Lightbulb },
@@ -377,6 +387,13 @@ export default function App() {
   const [chatReadMap, setChatReadMap] = useState(readChatMap)
   const [importOpen, setImportOpen] = useState(false)
   const [importDefaults, setImportDefaults] = useState({ destination: 'notes', projectId: '', folderId: '' })
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiCollapsed, setAiCollapsed] = useState(false)
+  const [allowExternal, setAllowExternal] = useState(readExternalPref)
+  const [webSearch, setWebSearch] = useState(readWebPref)
+  const [selectedNoteIds, setSelectedNoteIds] = useState([])
+  const [currentProjectId, setCurrentProjectId] = useState('')
+  const [currentBudgetId, setCurrentBudgetId] = useState('')
 
   const openImport = (defaults = {}) => {
     setImportDefaults({
@@ -565,6 +582,42 @@ export default function App() {
     () => (db && user ? db.xx_canvas_layout?.[user.id] || null : null),
     [db, user],
   )
+  const aiThreads = useMemo(
+    () =>
+      db && user
+        ? Object.values(db.xx_ai_threads || {})
+            .filter((t) => t.userId === user.id)
+            .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
+        : [],
+    [db, user],
+  )
+  const assistantContext = useMemo(
+    () =>
+      buildContextPayload({
+        section: view === 'assistant' ? 'dashboard' : view,
+        notes,
+        ideas,
+        projects,
+        events,
+        files,
+        budgets,
+        budgetLines,
+        risks,
+        selectedNoteIds,
+        currentProjectId,
+        currentBudgetId,
+      }),
+    [view, notes, ideas, projects, events, files, budgets, budgetLines, risks, selectedNoteIds, currentProjectId, currentBudgetId],
+  )
+
+  useEffect(() => {
+    if (!user || !db) return
+    const prefs = db.xx_settings?.[user.id]
+    if (prefs && typeof prefs.aiExternalEnabled === 'boolean') {
+      setAllowExternal(prefs.aiExternalEnabled)
+      writeExternalPref(prefs.aiExternalEnabled)
+    }
+  }, [user, db])
   const chatUnread = useMemo(() => {
     if (!user) return 0
     return chatMessages.filter((m) => {
@@ -766,6 +819,23 @@ export default function App() {
         <main
           className={`min-w-0 ${view === 'chat' ? 'p-2 md:p-4' : 'p-4 md:p-6'} pb-[max(1.25rem,env(safe-area-inset-bottom))]`}
         >
+          {view === 'assistant' && (
+            <AssistantView
+              user={user}
+              threads={aiThreads}
+              section={view}
+              context={assistantContext}
+              users={users}
+              projects={projects}
+              budgets={budgets}
+              notes={notes}
+              flash={flash}
+              allowExternal={allowExternal}
+              setAllowExternal={setAllowExternal}
+              webSearch={webSearch}
+              setWebSearch={setWebSearch}
+            />
+          )}
           {view === 'dashboard' && (
             <DashboardView
               notes={notes}
@@ -810,6 +880,10 @@ export default function App() {
               links={links}
               flash={flash}
               onImport={() => openImport({ destination: 'notes' })}
+              selectedNoteIds={selectedNoteIds}
+              onToggleNote={(id) =>
+                setSelectedNoteIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+              }
             />
           )}
           {view === 'ideas' && (
@@ -829,6 +903,7 @@ export default function App() {
               users={users}
               flash={flash}
               onImport={() => openImport({ destination: 'projects' })}
+              onFocusProject={setCurrentProjectId}
             />
           )}
           {view === 'budget' && (
@@ -841,6 +916,7 @@ export default function App() {
               users={users}
               flash={flash}
               onImport={() => openImport({ destination: 'budget' })}
+              onFocusBudget={setCurrentBudgetId}
             />
           )}
           {view === 'risks' && (
@@ -908,10 +984,36 @@ export default function App() {
               users={users}
               flash={flash}
               onUserUpdated={refreshUser}
+              allowExternal={allowExternal}
+              onAllowExternal={setAllowExternal}
             />
           )}
         </main>
       </div>
+      {view !== 'assistant' && FAB_VIEWS.includes(view) && (
+        <>
+          <AssistantFab view={view} open={aiOpen} onOpen={() => { setAiOpen(true); setAiCollapsed(false) }} />
+          <AssistantPanel
+            open={aiOpen}
+            collapsed={aiCollapsed}
+            onCollapse={setAiCollapsed}
+            onClose={() => setAiOpen(false)}
+            user={user}
+            threads={aiThreads}
+            section={view}
+            context={assistantContext}
+            users={users}
+            projects={projects}
+            budgets={budgets}
+            notes={notes}
+            flash={flash}
+            allowExternal={allowExternal}
+            setAllowExternal={setAllowExternal}
+            webSearch={webSearch}
+            setWebSearch={setWebSearch}
+          />
+        </>
+      )}
       {toast && <Toast toast={toast} />}
       <ImportModal
         open={importOpen}
@@ -935,6 +1037,7 @@ const LANDING_MODULES = [
   { id: 'calendrier', title: 'Calendrier', hint: 'Échéances d’équipe au même endroit.', icon: CalendarDays },
   { id: 'fichiers', title: 'Fichiers', hint: 'Dossiers, 20 Mo, pdf et images.', icon: FolderOpen },
   { id: 'canvas', title: 'Espace visuel', hint: 'Carte, liens, notes et import.', icon: BoxSelect },
+  { id: 'assistant', title: 'Assistant IA', hint: 'Local par défaut, actions à confirmer.', icon: Sparkles },
   { id: 'equipe', title: 'Équipe', hint: 'Présence, profils, invitations.', icon: Users },
   { id: 'chat', title: 'Chat', hint: 'Groupes, Général, messages en direct.', icon: MessageCircle },
   { id: 'export', title: 'Export', hint: 'CSV, XLSX, DOCX, PDF, JSON.', icon: Download },
@@ -1889,7 +1992,7 @@ function dueTone(dateStr, done) {
   return 'border-sage-200 bg-white/80'
 }
 
-function BudgetView({ user, budgets, lines, projects, projectsById, users, flash, onImport }) {
+function BudgetView({ user, budgets, lines, projects, projectsById, users, flash, onImport, onFocusBudget }) {
   const [selectedId, setSelectedId] = useState(budgets[0]?.id || '')
   const [tab, setTab] = useState('planned')
   const [open, setOpen] = useState(false)
@@ -1934,6 +2037,9 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
   }
 
   const selected = budgets.find((b) => b.id === selectedId) || budgets[0] || null
+  useEffect(() => {
+    onFocusBudget?.(selected?.id || '')
+  }, [selected?.id, onFocusBudget])
   const canManage = selected ? canManageBudgetRisk(user, selected, projectsById) : canWriteRole(user)
   const canRemove = selected ? canDeleteBudgetRisk(user, selected, projectsById) : false
   const summary = selected ? budgetSummary(selected, lines) : null
@@ -3255,6 +3361,8 @@ function NotesView({
   links = [],
   flash,
   onImport,
+  selectedNoteIds = [],
+  onToggleNote,
 }) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -3386,9 +3494,20 @@ function NotesView({
     const related = noteLinksOf(n.id)
     return (
       <div key={n.id} className={depth ? 'mt-2 border-l border-sage-200 pl-3' : ''}>
-        <article className="rounded-2xl border border-sage-200 bg-white/80 p-4 transition hover:border-sage-400">
+        <article className={`rounded-2xl border p-4 transition hover:border-sage-400 ${selectedNoteIds.includes(n.id) ? 'border-sage-500 bg-sage-100/80' : 'border-sage-200 bg-white/80'}`}>
           <div className="flex items-start justify-between gap-2">
             <div>
+              {onToggleNote && (
+                <label className="mb-1 flex items-center gap-1.5 text-[11px] text-sage-600">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-sage-700"
+                    checked={selectedNoteIds.includes(n.id)}
+                    onChange={() => onToggleNote(n.id)}
+                  />
+                  Contexte IA
+                </label>
+              )}
               <h3 className="font-display text-lg text-sage-900">{n.title}</h3>
               <p className="text-xs text-sage-500">
                 {n.category} · {n.visibility}
@@ -4989,6 +5108,7 @@ function ProjectsView({
   users,
   flash,
   onImport,
+  onFocusProject,
 }) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -5005,6 +5125,10 @@ function ProjectsView({
     visibility: 'Partagée',
     shares: [],
   })
+
+  useEffect(() => {
+    onFocusProject?.(detail?.id || '')
+  }, [detail?.id, onFocusProject])
 
   const openCreate = () => {
     setEditing(null)
@@ -5583,43 +5707,25 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
     setExtBusy(true)
     setExtErr('')
     try {
-      const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_redirect=1&no_html=1`
-      const res = await fetch(url)
-      if (!res.ok) throw new Error('API indisponible')
-      const data = await res.json()
-      const items = []
-      if (data.AbstractText) {
-        items.push({
-          title: data.Heading || q,
-          snippet: data.AbstractText,
-          url: data.AbstractURL,
-          source: data.AbstractSource || 'DuckDuckGo',
-        })
-      }
-      for (const t of data.RelatedTopics || []) {
-        if (t.Text) {
-          items.push({
-            title: t.Text.split(' - ')[0],
-            snippet: t.Text,
-            url: t.FirstURL,
-            source: 'DuckDuckGo',
-          })
-        } else if (t.Topics) {
-          for (const sub of t.Topics.slice(0, 3)) {
-            items.push({
-              title: sub.Text?.split(' - ')[0] || 'Résultat',
-              snippet: sub.Text,
-              url: sub.FirstURL,
-              source: 'DuckDuckGo',
-            })
-          }
-        }
-      }
+      const res = await fetch('/api/ai-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'API indisponible')
+      const items = (data.results || []).map((r) => ({
+        title: r.title,
+        snippet: r.snippet,
+        url: r.url,
+        source: r.source || 'DuckDuckGo',
+        searchedAt: data.searchedAt,
+      }))
       setExternal(items.slice(0, 12))
-      if (!items.length) setExtErr('Aucun résultat externe.')
+      if (!items.length) setExtErr(data.error || 'Aucun résultat externe.')
     } catch {
       setExtErr(
-        'Recherche externe bloquée (CORS ou réseau). Essayez depuis un navigateur avec accès réseau, ou reformulez la requête interne.',
+        'Recherche web indisponible. Relancez Vite (dev ou preview) pour activer POST /api/ai-search.',
       )
       setExternal([])
     } finally {
@@ -5697,14 +5803,20 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
       </section>
 
       <section>
-        <h2 className="mb-3 font-display text-lg text-sage-900">Ancrage documentaire externe</h2>
+        <h2 className="mb-3 font-display text-lg text-sage-900">Web (hors Nazix)</h2>
         {extErr && <p className="mb-2 text-sm text-warn">{extErr}</p>}
         {external.length === 0 && !extErr && (
           <p className="text-sm text-sage-500">Lancez une recherche externe pour ancrer vos contenus.</p>
         )}
+        {external[0]?.searchedAt && (
+          <p className="mb-2 text-xs text-sage-500">
+            Recherche du {new Date(external[0].searchedAt).toLocaleString('fr-FR')} · DuckDuckGo — ce ne sont pas des faits Nazix.
+          </p>
+        )}
         <ul className="space-y-2">
           {external.map((item, idx) => (
             <li key={idx} className="rounded-xl border border-sage-200 bg-white/70 px-4 py-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-sage-500">Web</p>
               <p className="font-medium text-sage-900">{item.title}</p>
               <p className="text-sm text-sage-600">{item.snippet}</p>
               {item.url && (
@@ -5831,7 +5943,7 @@ function NotificationsView({ notifications, flash, user }) {
   )
 }
 
-function SettingsView({ user, session, users, flash, onUserUpdated }) {
+function SettingsView({ user, session, users, flash, onUserUpdated, allowExternal, onAllowExternal }) {
   const [fullName, setFullName] = useState(user.fullName)
   const [code, setCode] = useState('')
   const [diag, setDiag] = useState(null)
@@ -5972,6 +6084,8 @@ function SettingsView({ user, session, users, flash, onUserUpdated }) {
           ))}
         </ul>
       </section>
+
+      <AiSettingsBlock user={user} allowExternal={allowExternal} onChange={onAllowExternal} />
 
       <section className="rounded-2xl border border-sage-200 bg-white/80 p-5">
         <h2 className="flex items-center gap-2 font-display text-lg text-sage-900">

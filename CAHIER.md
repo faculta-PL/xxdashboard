@@ -33,6 +33,7 @@ Nazix est un espace de travail collaboratif en temps réel : notes, idées (Kanb
 - Chat / groupes
 - Paramètres
 - **Import** (assistant réutilisable, visibilité privée)
+- **Assistant IA** (extractif local par défaut, optionnel clé serveur)
 
 ## Auth Firebase + repli local
 
@@ -130,6 +131,26 @@ Les notes portent un `parentId` (null = racine) en plus de `projectId`. Collecti
 
 Navigation **Espace visuel** (`BoxSelect`). Cartes filtrables (projet / type / recherche), glisser-déposer souris et tactile, traits SVG pour `xx_links`. Positions : `xx_canvas_layout` `{userId, positions:{entityKey:{x,y}}, updatedAt}`. Lecture si l’entité est lisible ; déplacement si `canWriteRole`. N’enlève aucun module.
 
+## Assistant IA
+
+Navigation **Assistant IA** (`Sparkles`) : liste des conversations + chat. Bouton flottant sur Tableau de bord, Notes, Idées, Projets, Calendrier, Fichiers, Budget, Risques, Espace visuel — panneau 360 px à droite (feuille plein écran sur mobile).
+
+### Sécurité
+
+- Le client **n’a jamais** de clé API. Pas de `VITE_OPENAI_*` ni secret dans le bundle.
+- Middleware Vite `POST /api/ai` et `POST /api/ai-search` (`configureServer` **et** `configurePreviewServer`) : lit `OPENAI_API_KEY` ou `ANTHROPIC_API_KEY` ou `GROK_API_KEY` **côté serveur**. Sans clé : `{ mode:'local', ok:false }` — l’assistant extractif tourne sur l’appareil.
+- Par défaut, **aucun** corps de note / fichier n’est envoyé au service externe. Case **« Autoriser l’envoi au service IA »** (panneau + Paramètres). Préférence `xx_settings.aiExternalEnabled` et repli `localStorage nazix_ai_external`.
+- Bannière locale : « IA locale, pas de sync, pas d’envoi auto. »
+- Recherche web : fetch **serveur** DuckDuckGo Instant Answer (pas de CORS). Sources + date, libellé **Web** distinct de **Nazix**.
+- Contexte : uniquement `canReadEntity` (ids, titres, extraits). Affiché : « Contexte : Notes (3) · Projet X ».
+- Pas de mémoire croisée. L’IA ne supprime pas, ne partage pas, ne change pas les ACL. Toute action (note, sous-note, idée, risque, ligne budgétaire, message) est un **aperçu + confirmation**. Lecteur : actions d’écriture désactivées. Message à un membre : destinataire + brouillon + confirmer, puis notification et/ou chat Général.
+
+### Données
+
+`xx_ai_threads` : `{id, userId, title, section, contextLabel, messages:[{role, content, sources?, at}], createdAt, updatedAt}` — **propriétaire uniquement** (lecture / écriture / suppression). `xx_settings` : préférences utilisateur (`aiExternalEnabled`).
+
+Sans clé LLM, l’assistant local (`src/lib/assistant.js`) résume les notes, liste les risques en retard, calcule le restant budgétaire, les prochains événements, et répond « je n’ai pas trouvé » si le contexte ne suffit pas.
+
 ## Règles Firestore à recoller
 
-Collections `xx_links` et `xx_canvas_layout` : connecté, lecture/écriture de ses documents (ou admin). **Recoller `firestore.rules` dans Firebase Console → Firestore → Règles** après déploiement.
+Collections `xx_links`, `xx_canvas_layout`, `xx_ai_threads` (propriétaire uniquement) et `xx_settings`. **Recoller `firestore.rules` dans Firebase Console → Firestore → Règles** après déploiement.

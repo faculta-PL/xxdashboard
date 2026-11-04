@@ -126,6 +126,8 @@ const COLLECTIONS = [
   'xx_risk_actions',
   'xx_links',
   'xx_canvas_layout',
+  'xx_ai_threads',
+  'xx_settings',
 ]
 
 function emptyDb() {
@@ -288,6 +290,8 @@ async function remapUserReferences(fromId, toId) {
     'xx_risk_actions',
     'xx_links',
     'xx_canvas_layout',
+    'xx_ai_threads',
+    'xx_settings',
   ]
   for (const col of entityCols) {
     for (const row of Object.values(memory[col] || {})) {
@@ -361,7 +365,7 @@ async function remapUserReferences(fromId, toId) {
               ? memory.xx_budgets[next.budgetId]
               : memory.xx_risks[next.riskId]
           Object.assign(next, parent ? inheritScopedAccess(parent, next) : shareFields(next, memory.xx_users[toId]))
-        } else if (col !== 'xx_groups') {
+        } else if (col !== 'xx_groups' && col !== 'xx_ai_threads' && col !== 'xx_settings' && col !== 'xx_canvas_layout') {
           Object.assign(next, shareFields(next, memory.xx_users[toId]))
         }
         await persistDoc(col, next.id, next)
@@ -373,10 +377,10 @@ async function remapUserReferences(fromId, toId) {
       await persistDoc('xx_messages', row.id, { ...row, authorId: toId })
     }
   }
-  for (const col of ['xx_sessions', 'xx_notifications', 'xx_reset_tokens']) {
+  for (const col of ['xx_sessions', 'xx_notifications', 'xx_reset_tokens', 'xx_ai_threads', 'xx_settings']) {
     for (const row of Object.values(memory[col] || {})) {
       if (row.userId === fromId) {
-        await persistDoc(col, row.id, { ...row, userId: toId })
+        await persistDoc(col, row.id, { ...row, userId: toId, ownerId: row.ownerId === fromId ? toId : row.ownerId })
       }
     }
   }
@@ -2764,6 +2768,86 @@ export async function saveCanvasLayout(positions, user) {
     updatedAt: now,
   }
   await persistDoc('xx_canvas_layout', id, row)
+  return row
+}
+
+/* ─── Assistant IA (threads + prefs) ─── */
+
+function requireThreadOwner(thread, user) {
+  if (!user) throw new Error('Permission refusée.')
+  if (!thread) throw new Error('Conversation introuvable.')
+  if (thread.userId !== user.id) throw new Error('Permission refusée.')
+}
+
+export function listAiThreads(user) {
+  if (!user) return []
+  return Object.values(memory.xx_ai_threads || {})
+    .filter((t) => t.userId === user.id)
+    .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
+}
+
+export async function saveAiThread(data, user) {
+  if (!user) throw new Error('Permission refusée.')
+  const now = new Date().toISOString()
+  const id = data.id || uid('ait')
+  const existing = memory.xx_ai_threads[id]
+  if (existing) requireThreadOwner(existing, user)
+  const messages = Array.isArray(data.messages) ? data.messages : existing?.messages || []
+  const titleRaw = String(data.title || existing?.title || '').trim()
+  const firstUser = messages.find((m) => m.role === 'user')?.content || ''
+  const title = titleRaw || clipTitle(firstUser) || 'Nouvelle conversation'
+  const row = {
+    ...(existing || {}),
+    id,
+    userId: user.id,
+    ownerId: user.id,
+    ownerEmail: user.email,
+    title,
+    section: data.section !== undefined ? data.section : existing?.section || 'dashboard',
+    contextLabel: data.contextLabel !== undefined ? data.contextLabel : existing?.contextLabel || '',
+    messages,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  }
+  await persistDoc('xx_ai_threads', id, row)
+  return row
+}
+
+function clipTitle(text) {
+  const s = String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!s) return ''
+  return s.length > 48 ? `${s.slice(0, 47)}…` : s
+}
+
+export async function deleteAiThread(id, user) {
+  const existing = memory.xx_ai_threads[id]
+  requireThreadOwner(existing, user)
+  await removeDoc('xx_ai_threads', id)
+}
+
+export function getUserSettings(user) {
+  if (!user) return null
+  return memory.xx_settings?.[user.id] || null
+}
+
+export async function saveUserSettings(user, patch) {
+  if (!user) throw new Error('Permission refusée.')
+  const now = new Date().toISOString()
+  const id = user.id
+  const existing = memory.xx_settings[id] || {}
+  const row = {
+    ...existing,
+    ...patch,
+    id,
+    userId: user.id,
+    ownerId: user.id,
+    ownerEmail: user.email,
+    createdAt: existing.createdAt || now,
+    updatedAt: now,
+  }
+  await persistDoc('xx_settings', id, row)
   return row
 }
 

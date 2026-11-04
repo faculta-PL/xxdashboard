@@ -75,7 +75,7 @@ La barre latérale affiche alors **Firebase** (via `getBackendMode()`).
 | Déconnexion / révocation | `signOut` | `xx_sessions.active = false` |
 | Chat / groupes | — | `xx_groups`, `xx_messages` (membres uniquement) |
 
-Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, `xx_events`, `xx_notifications`, `xx_reset_tokens`, `xx_groups`, `xx_messages`, `xx_files`, `xx_folders`.
+Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, `xx_events`, `xx_notifications`, `xx_reset_tokens`, `xx_groups`, `xx_messages`, `xx_files`, `xx_folders`, `xx_ai_threads`, `xx_settings`.
 
 **Fichiers** : activer **Storage** dans Firebase Console (choisir la région **avant** de créer le bucket — le client ne peut pas la définir). Coller `storage.rules` et `firestore.rules`. Bucket : `partagio.firebasestorage.app`. Taille max 20 Mo (`MAX_FILE_BYTES`). En mode local, blobs IndexedDB `nazix_files` (non synchronisés entre appareils).
 
@@ -92,10 +92,11 @@ Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, 
 7. Calendrier (événements + notifications participants)
 8. Équipe (annuaire : nom, e-mail, rôle, présence 24 h)
 9. Chat et groupes (Général + groupes privés, messages temps réel)
-10. Recherche interne multi-filtres + recherche externe (API DuckDuckGo)
+10. Recherche interne multi-filtres + recherche externe (DuckDuckGo via `POST /api/ai-search`, sans CORS)
 11. Export CSV / XLSX / DOCX / JSON / PDF
 12. Centre de notifications
 13. Paramètres, sessions, diagnostic Firebase, kit d’exportation
+14. Assistant IA (extractif local ; clé `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GROK_API_KEY` **serveur uniquement**, jamais `VITE_*`)
 
 ## Rôles (RBAC)
 
