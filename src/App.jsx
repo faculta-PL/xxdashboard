@@ -44,6 +44,9 @@ import {
   Image as ImageIcon,
   Share2,
   Folder,
+  Wallet,
+  ShieldAlert,
+  AlertTriangle,
 } from 'lucide-react'
 import {
   bootStore,
@@ -95,6 +98,16 @@ import {
   getFileBlob,
   folderDeleteSummary,
   isRemoteFileStorage,
+  saveBudget,
+  deleteBudget,
+  saveBudgetLine,
+  deleteBudgetLine,
+  addBudgetLineComment,
+  saveRisk,
+  deleteRisk,
+  addRiskComment,
+  saveRiskAction,
+  deleteRiskAction,
 } from './lib/store'
 import { firebaseConfigured, missingFirebaseVars, getFirebaseStatus } from './lib/firebase'
 import {
@@ -110,6 +123,20 @@ import {
   canManageFileOrFolder,
   canDeleteFileOrFolder,
   canAddInFolder,
+  canManageBudgetRisk,
+  canDeleteBudgetRisk,
+  computeRiskPriority,
+  isDateOverdue,
+  isDateNearDue,
+  isOpenRisk,
+  BUDGET_CURRENCIES,
+  BUDGET_CATEGORIES,
+  BUDGET_ACTUAL_STATUSES,
+  RISK_CATEGORIES,
+  RISK_PROBABILITIES,
+  RISK_IMPACTS,
+  RISK_STATUSES,
+  RISK_ACTION_STATUSES,
 } from './lib/rbac'
 import {
   MAX_FILE_BYTES,
@@ -149,12 +176,24 @@ const IDEA_STATUSES = [
 ]
 const PROJECT_STATUSES = ['À préparer', 'Actif', 'En pause', 'Terminé', 'Archivé']
 const VISIBILITIES = ['Privée', 'Partagée', 'Publique']
+const SCOPED_VISIBILITIES = ['Privée', 'Partagée', 'Équipe', 'Publique']
+const BUDGET_TABS = [
+  { id: 'planned', label: 'Prévision' },
+  { id: 'actual', label: 'Réel' },
+  { id: 'salary', label: 'Salaires' },
+]
+const SHARE_PERMS = [
+  ['Lecture', 'Lecture'],
+  ['Édition', 'Édition'],
+]
 
 const NAV = [
   { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
   { id: 'notes', label: 'Notes', icon: StickyNote },
   { id: 'ideas', label: 'Boîte à idées', icon: Lightbulb },
   { id: 'projects', label: 'Projets', icon: FolderKanban },
+  { id: 'budget', label: 'Budget', icon: Wallet },
+  { id: 'risks', label: 'Risques et solutions', icon: ShieldAlert },
   { id: 'files', label: 'Fichiers', icon: FolderOpen },
   { id: 'calendar', label: 'Calendrier', icon: CalendarDays },
   { id: 'team', label: 'Équipe', icon: Users },
@@ -436,6 +475,44 @@ export default function App() {
         : [],
     [db, user, fileCtx],
   )
+  const projectsById = useMemo(
+    () => Object.fromEntries(projects.map((p) => [p.id, p])),
+    [projects],
+  )
+  const budgets = useMemo(
+    () =>
+      db && user
+        ? Object.values(db.xx_budgets || {})
+            .filter((b) => canReadEntity(user, b))
+            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr'))
+        : [],
+    [db, user],
+  )
+  const budgetIdSet = useMemo(() => new Set(budgets.map((b) => b.id)), [budgets])
+  const budgetLines = useMemo(
+    () =>
+      db && user
+        ? Object.values(db.xx_budget_lines || {}).filter((l) => budgetIdSet.has(l.budgetId))
+        : [],
+    [db, user, budgetIdSet],
+  )
+  const risks = useMemo(
+    () =>
+      db && user
+        ? Object.values(db.xx_risks || {})
+            .filter((r) => canReadEntity(user, r))
+            .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
+        : [],
+    [db, user],
+  )
+  const riskIdSet = useMemo(() => new Set(risks.map((r) => r.id)), [risks])
+  const riskActions = useMemo(
+    () =>
+      db && user
+        ? Object.values(db.xx_risk_actions || {}).filter((a) => riskIdSet.has(a.riskId))
+        : [],
+    [db, user, riskIdSet],
+  )
   const notifications = useMemo(
     () =>
       db && user
@@ -671,6 +748,9 @@ export default function App() {
               projects={projects}
               files={files}
               events={events}
+              budgets={budgets}
+              budgetLines={budgetLines}
+              risks={risks}
               onQuick={(v) => setView(v)}
             />
           )}
@@ -686,6 +766,28 @@ export default function App() {
               projects={projects}
               notes={notes}
               ideas={ideas}
+              users={users}
+              flash={flash}
+            />
+          )}
+          {view === 'budget' && (
+            <BudgetView
+              user={user}
+              budgets={budgets}
+              lines={budgetLines}
+              projects={projects}
+              projectsById={projectsById}
+              users={users}
+              flash={flash}
+            />
+          )}
+          {view === 'risks' && (
+            <RisksView
+              user={user}
+              risks={risks}
+              actions={riskActions}
+              projects={projects}
+              projectsById={projectsById}
               users={users}
               flash={flash}
             />
@@ -1479,7 +1581,17 @@ function Toast({ toast }) {
   )
 }
 
-function DashboardView({ notes, ideas, projects, files = [], events, onQuick }) {
+function DashboardView({
+  notes,
+  ideas,
+  projects,
+  files = [],
+  events,
+  budgets = [],
+  budgetLines = [],
+  risks = [],
+  onQuick,
+}) {
   const byStatus = PROJECT_STATUSES.map((s) => ({
     status: s,
     count: projects.filter((p) => p.status === s).length,
@@ -1489,11 +1601,29 @@ function DashboardView({ notes, ideas, projects, files = [], events, onQuick }) 
     .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
     .slice(0, 5)
 
+  const openRisks = risks.filter(isOpenRisk)
+  const overdueRisks = openRisks.filter((r) => isDateOverdue(r.dueDate))
+  const firstBudget = budgets[0]
+  const firstPaid = firstBudget
+    ? budgetLines
+        .filter((l) => l.budgetId === firstBudget.id && l.kind === 'actual' && l.status === 'paid')
+        .reduce((sum, l) => sum + Number(l.amount || 0), 0)
+    : 0
+  const firstPlanned = Number(firstBudget?.plannedTotal || 0)
+  const firstRemaining = firstPlanned - firstPaid
+  const firstPct = firstPlanned > 0 ? Math.round((firstPaid / firstPlanned) * 100) : 0
+
   const cards = [
     { label: 'Notes', value: notes.length, tone: 'bg-sage-100' },
     { label: 'Idées', value: ideas.length, tone: 'bg-sage-200/70' },
     { label: 'Projets', value: projects.length, tone: 'bg-sage-100' },
     { label: 'Fichiers', value: files.length, tone: 'bg-sage-200/70' },
+    { label: 'Risques ouverts', value: openRisks.length, tone: 'bg-sage-100' },
+    {
+      label: firstBudget ? `Budget « ${firstBudget.name} »` : 'Budget consommé',
+      value: firstBudget ? `${firstPct} %` : '—',
+      tone: 'bg-sage-200/70',
+    },
   ]
 
   return (
@@ -1510,6 +1640,8 @@ function DashboardView({ notes, ideas, projects, files = [], events, onQuick }) 
             ['ideas', 'Nouvelle idée'],
             ['projects', 'Nouveau projet'],
             ['files', 'Fichiers'],
+            ['budget', 'Budget'],
+            ['risks', 'Risques'],
             ['calendar', 'Nouvel événement'],
           ].map(([id, label]) => (
             <button
@@ -1524,7 +1656,7 @@ function DashboardView({ notes, ideas, projects, files = [], events, onQuick }) 
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {cards.map((c) => (
           <div key={c.label} className={`rounded-2xl ${c.tone} border border-sage-200 p-5`}>
             <p className="text-sm text-sage-600">{c.label}</p>
@@ -1565,6 +1697,1451 @@ function DashboardView({ notes, ideas, projects, files = [], events, onQuick }) 
           )}
         </div>
       </section>
+
+      <section className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-2xl border border-sage-200 bg-white/70 p-5">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="font-display text-lg text-sage-900">Risques en retard</h2>
+            <button type="button" className={btnGhost + ' !py-1 text-xs'} onClick={() => onQuick('risks')}>
+              Voir
+            </button>
+          </div>
+          {overdueRisks.length === 0 ? (
+            <p className="mt-4 text-sm text-sage-500">Aucun risque en retard.</p>
+          ) : (
+            <ul className="mt-4 space-y-2">
+              {overdueRisks.slice(0, 5).map((r) => (
+                <li key={r.id} className="flex items-center justify-between gap-2 text-sm">
+                  <span className="min-w-0 truncate font-medium text-sage-900">{r.title}</span>
+                  <span className="shrink-0 text-xs font-semibold text-danger">{r.dueDate}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="rounded-2xl border border-sage-200 bg-white/70 p-5">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="font-display text-lg text-sage-900">Reste budgétaire</h2>
+            <button type="button" className={btnGhost + ' !py-1 text-xs'} onClick={() => onQuick('budget')}>
+              Voir
+            </button>
+          </div>
+          {firstBudget ? (
+            <div className="mt-4">
+              <p className="font-display text-2xl text-sage-900">
+                {formatMoney(firstRemaining, firstBudget.currency)}
+              </p>
+              <p className="mt-1 text-sm text-sage-600">
+                {firstBudget.name} · {firstPct} % consommé (payé)
+              </p>
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-sage-500">Aucun budget pour le moment.</p>
+          )}
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function formatMoney(amount, currency = 'EUR') {
+  try {
+    return new Intl.NumberFormat('fr-FR', {
+      style: 'currency',
+      currency: currency === 'USD' ? 'USD' : 'EUR',
+    }).format(Number(amount) || 0)
+  } catch {
+    return `${Number(amount) || 0} ${currency || 'EUR'}`
+  }
+}
+
+function budgetSummary(budget, lines) {
+  const mine = lines.filter((l) => l.budgetId === budget?.id)
+  const estimated = mine
+    .filter((l) => l.kind === 'planned')
+    .reduce((s, l) => s + Number(l.amount || 0), 0)
+  const actuals = mine.filter((l) => l.kind === 'actual' && l.status !== 'cancelled')
+  const actual = actuals.reduce((s, l) => s + Number(l.amount || 0), 0)
+  const paid = mine
+    .filter((l) => l.kind === 'actual' && l.status === 'paid')
+    .reduce((s, l) => s + Number(l.amount || 0), 0)
+  const plannedTotal = Number(budget?.plannedTotal || 0)
+  const remaining = plannedTotal - paid
+  const variance = estimated - actual
+  const usedPct = plannedTotal > 0 ? (paid / plannedTotal) * 100 : 0
+  return { estimated, actual, paid, plannedTotal, remaining, variance, usedPct }
+}
+
+function LocalBanner() {
+  if (getBackendMode() !== 'local') return null
+  return (
+    <div className="rounded-xl border border-warn/30 bg-warn/10 px-4 py-3 text-sm text-sage-800">
+      Mode local — données non synchronisées entre appareils
+    </div>
+  )
+}
+
+function PriorityBadge({ value }) {
+  const tone =
+    value === 'élevée'
+      ? 'bg-danger/15 text-danger'
+      : value === 'moyenne'
+        ? 'bg-warn/15 text-warn'
+        : 'bg-ok/15 text-ok'
+  return (
+    <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize ${tone}`}>
+      {value || 'faible'}
+    </span>
+  )
+}
+
+function dueTone(dateStr, done) {
+  if (done || !dateStr) return 'border-sage-200 bg-white/80'
+  if (isDateOverdue(dateStr)) return 'border-danger/40 bg-danger/10'
+  if (isDateNearDue(dateStr)) return 'border-warn/40 bg-warn/10'
+  return 'border-sage-200 bg-white/80'
+}
+
+function BudgetView({ user, budgets, lines, projects, projectsById, users, flash }) {
+  const [selectedId, setSelectedId] = useState(budgets[0]?.id || '')
+  const [tab, setTab] = useState('planned')
+  const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(null)
+  const [lineOpen, setLineOpen] = useState(false)
+  const [lineEditing, setLineEditing] = useState(null)
+  const [commentLine, setCommentLine] = useState(null)
+  const [commentBody, setCommentBody] = useState('')
+  const [confirm, setConfirm] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [form, setForm] = useState(emptyBudget())
+  const [lineForm, setLineForm] = useState(emptyLine('planned'))
+
+  function emptyBudget() {
+    return {
+      name: '',
+      projectId: projects[0]?.id || '',
+      currency: 'EUR',
+      plannedTotal: '',
+      periodStart: '',
+      periodEnd: '',
+      launchDate: '',
+      visibility: 'Privée',
+      shares: [],
+    }
+  }
+
+  function emptyLine(kind) {
+    return {
+      kind,
+      category: BUDGET_CATEGORIES[0],
+      name: '',
+      amount: '',
+      date: new Date().toISOString().slice(0, 10),
+      status: 'planned',
+      duePeriod: '',
+      roleTitle: '',
+      responsibleId: '',
+      notes: '',
+      receiptNote: '',
+    }
+  }
+
+  const selected = budgets.find((b) => b.id === selectedId) || budgets[0] || null
+  const canManage = selected ? canManageBudgetRisk(user, selected, projectsById) : canWriteRole(user)
+  const canRemove = selected ? canDeleteBudgetRisk(user, selected, projectsById) : false
+  const summary = selected ? budgetSummary(selected, lines) : null
+  const tabLines = selected
+    ? lines
+        .filter((l) => l.budgetId === selected.id && l.kind === tab)
+        .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+    : []
+
+  const nameOf = (id) => users.find((u) => u.id === id)?.fullName || '—'
+  const projectTitle = (id) => projects.find((p) => p.id === id)?.title || '—'
+
+  const openCreate = () => {
+    setEditing(null)
+    setForm(emptyBudget())
+    setOpen(true)
+  }
+
+  const openEdit = () => {
+    if (!selected) return
+    setEditing(selected)
+    setForm({
+      name: selected.name || '',
+      projectId: selected.projectId || '',
+      currency: selected.currency || 'EUR',
+      plannedTotal: selected.plannedTotal ?? '',
+      periodStart: selected.periodStart || '',
+      periodEnd: selected.periodEnd || '',
+      launchDate: selected.launchDate || '',
+      visibility: selected.visibility || 'Privée',
+      shares: selected.shares || [],
+    })
+    setOpen(true)
+  }
+
+  const submitBudget = async (e) => {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      const saved = await saveBudget(
+        {
+          id: editing?.id,
+          ...form,
+          name: form.name.trim(),
+          plannedTotal: Number(form.plannedTotal) || 0,
+          shares: form.visibility === 'Privée' ? [] : form.shares,
+        },
+        user,
+      )
+      setSelectedId(saved.id)
+      flash(editing ? 'Budget mis à jour.' : 'Budget créé.')
+      setOpen(false)
+    } catch (err) {
+      flash(err.message || 'Erreur', 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openLine = (line) => {
+    setLineEditing(line || null)
+    setLineForm(line
+      ? {
+          kind: line.kind,
+          category: line.category,
+          name: line.name || '',
+          amount: line.amount ?? '',
+          date: line.date || '',
+          status: line.status || 'planned',
+          duePeriod: line.duePeriod || '',
+          roleTitle: line.roleTitle || '',
+          responsibleId: line.responsibleId || '',
+          notes: line.notes || '',
+          receiptNote: line.receiptNote || '',
+        }
+      : emptyLine(tab))
+    setLineOpen(true)
+  }
+
+  const submitLine = async (e) => {
+    e.preventDefault()
+    if (!selected) return
+    setBusy(true)
+    try {
+      await saveBudgetLine(
+        {
+          id: lineEditing?.id,
+          budgetId: selected.id,
+          ...lineForm,
+          kind: lineEditing?.kind || tab,
+          amount: Number(lineForm.amount) || 0,
+        },
+        user,
+      )
+      flash(lineEditing ? 'Ligne mise à jour.' : 'Ligne ajoutée.')
+      setLineOpen(false)
+    } catch (err) {
+      flash(err.message || 'Erreur', 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submitComment = async (e) => {
+    e.preventDefault()
+    if (!commentLine) return
+    setBusy(true)
+    try {
+      await addBudgetLineComment(commentLine.id, commentBody, user)
+      setCommentBody('')
+      flash('Commentaire ajouté.')
+      const updated = lines.find((l) => l.id === commentLine.id)
+      if (updated) setCommentLine({ ...updated, comments: [...(updated.comments || [])] })
+    } catch (err) {
+      flash(err.message || 'Erreur', 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const runConfirm = async () => {
+    if (!confirm) return
+    setBusy(true)
+    try {
+      if (confirm.type === 'budget') {
+        await deleteBudget(confirm.id, user)
+        flash('Budget supprimé.')
+        setSelectedId('')
+      } else {
+        await deleteBudgetLine(confirm.id, user)
+        flash('Ligne supprimée.')
+      }
+      setConfirm(null)
+    } catch (err) {
+      flash(err.message || 'Erreur', 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const liveCommentLine = commentLine ? lines.find((l) => l.id === commentLine.id) || commentLine : null
+
+  const cards = selected
+    ? [
+        { label: 'Total prévu', value: formatMoney(summary.plannedTotal, selected.currency) },
+        { label: 'Somme prévisionnelle', value: formatMoney(summary.estimated, selected.currency) },
+        { label: 'Somme réelle', value: formatMoney(summary.actual, selected.currency) },
+        { label: 'Payé', value: formatMoney(summary.paid, selected.currency) },
+        { label: 'Restant', value: formatMoney(summary.remaining, selected.currency) },
+        { label: 'Écart prévision / réel', value: formatMoney(summary.variance, selected.currency) },
+        { label: '% consommé', value: `${Math.round(summary.usedPct)} %` },
+      ]
+    : []
+
+  if (projects.length === 0) {
+    return (
+      <div className="space-y-4 animate-fade-up">
+        <LocalBanner />
+        <EmptyState
+          title="Aucun projet"
+          hint="Rattachez un budget à un projet. Créez d’abord un projet dans l’onglet Projets."
+        />
+      </div>
+    )
+  }
+
+  const denied = !canWriteRole(user) && budgets.length === 0
+
+  return (
+    <div className="space-y-4 animate-fade-up">
+      <LocalBanner />
+      <div className="flex flex-wrap items-center gap-2">
+        {budgets.length > 0 && (
+          <select
+            className={inputClass + ' max-w-full md:!w-auto'}
+            value={selected?.id || ''}
+            onChange={(e) => setSelectedId(e.target.value)}
+          >
+            {budgets.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        )}
+        {canWriteRole(user) && (
+          <button type="button" className={btnPrimary} onClick={openCreate}>
+            <Plus size={16} /> Nouveau budget
+          </button>
+        )}
+        {selected && canManage && (
+          <button type="button" className={btnGhost} onClick={openEdit}>
+            <Pencil size={14} /> Modifier
+          </button>
+        )}
+        {selected && canRemove && (
+          <button
+            type="button"
+            className={btnGhost + ' !text-danger'}
+            onClick={() => setConfirm({ type: 'budget', id: selected.id })}
+          >
+            <Trash2 size={14} /> Supprimer
+          </button>
+        )}
+      </div>
+
+      {denied ? (
+        <EmptyState title="Accès refusé" hint="Aucun budget n’a été partagé avec vous." />
+      ) : !selected ? (
+        <EmptyState
+          title="Aucun budget"
+          hint="Créez un budget rattaché à un projet, en EUR ou USD."
+          action={
+            canWriteRole(user) ? (
+              <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
+                <Plus size={16} /> Créer un budget
+              </button>
+            ) : null
+          }
+        />
+      ) : (
+        <>
+          <p className="text-sm text-sage-600">
+            {projectTitle(selected.projectId)} · {selected.currency} · {selected.visibility}
+            {selected.periodStart ? ` · ${selected.periodStart}` : ''}
+            {selected.periodEnd ? ` → ${selected.periodEnd}` : ''}
+          </p>
+          <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {cards.map((c) => (
+              <div key={c.label} className="rounded-2xl border border-sage-200 bg-white/80 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">{c.label}</p>
+                <p className="mt-1 font-display text-2xl text-sage-900">{c.value}</p>
+              </div>
+            ))}
+          </section>
+
+          <div className="flex flex-wrap gap-2">
+            {BUDGET_TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTab(t.id)}
+                className={`min-h-11 rounded-xl px-4 py-2 text-sm font-semibold ${
+                  tab === t.id ? 'bg-sage-700 text-white' : 'bg-white/80 text-sage-800 border border-sage-200'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+            {canManage && (
+              <button type="button" className={btnPrimary} onClick={() => openLine(null)}>
+                <Plus size={16} /> Ajouter une ligne
+              </button>
+            )}
+          </div>
+
+          {tabLines.length === 0 ? (
+            <EmptyState
+              title="Aucune ligne"
+              hint={
+                tab === 'salary'
+                  ? 'Indiquez un intitulé de poste, jamais un identifiant personnel.'
+                  : 'Ajoutez une ligne pour alimenter les totaux.'
+              }
+            />
+          ) : (
+            <>
+              <div className="hidden overflow-x-auto rounded-2xl border border-sage-200 bg-white/80 md:block">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="bg-sage-100 text-sage-700">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Libellé</th>
+                      <th className="px-4 py-3 font-semibold">Catégorie</th>
+                      <th className="px-4 py-3 font-semibold">Montant</th>
+                      <th className="px-4 py-3 font-semibold">{tab === 'salary' ? 'Période' : 'Date'}</th>
+                      <th className="px-4 py-3 font-semibold">{tab === 'actual' ? 'Statut' : 'Responsable'}</th>
+                      <th className="px-4 py-3 font-semibold" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tabLines.map((l) => (
+                      <tr key={l.id} className="border-t border-sage-100">
+                        <td className="px-4 py-3 font-medium text-sage-900">
+                          {l.name}
+                          {l.roleTitle ? <span className="block text-xs text-sage-500">{l.roleTitle}</span> : null}
+                        </td>
+                        <td className="px-4 py-3 text-sage-700">{l.category}</td>
+                        <td className="px-4 py-3">{formatMoney(l.amount, selected.currency)}</td>
+                        <td className="px-4 py-3 text-sage-600">{tab === 'salary' ? l.duePeriod || '—' : l.date || '—'}</td>
+                        <td className="px-4 py-3 text-sage-600">
+                          {tab === 'actual' ? l.status || '—' : nameOf(l.responsibleId)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex justify-end gap-1">
+                            <button type="button" className={btnGhost + ' !px-2'} onClick={() => setCommentLine(l)}>
+                              Commenter
+                            </button>
+                            {canManage && (
+                              <>
+                                <button type="button" className={btnGhost + ' !px-2'} onClick={() => openLine(l)}>
+                                  <Pencil size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className={btnGhost + ' !px-2 !text-danger'}
+                                  onClick={() => setConfirm({ type: 'line', id: l.id })}
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="space-y-2 md:hidden">
+                {tabLines.map((l) => (
+                  <article key={l.id} className="rounded-2xl border border-sage-200 bg-white/80 p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h3 className="font-medium text-sage-900">{l.name}</h3>
+                        <p className="text-xs text-sage-500">
+                          {l.category}
+                          {l.roleTitle ? ` · ${l.roleTitle}` : ''}
+                        </p>
+                      </div>
+                      <p className="font-display text-lg text-sage-900">
+                        {formatMoney(l.amount, selected.currency)}
+                      </p>
+                    </div>
+                    <p className="mt-2 text-sm text-sage-600">
+                      {tab === 'salary' ? l.duePeriod || '—' : l.date || '—'}
+                      {tab === 'actual' ? ` · ${l.status}` : ''}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button type="button" className={btnGhost} onClick={() => setCommentLine(l)}>
+                        Commenter
+                      </button>
+                      {canManage && (
+                        <>
+                          <button type="button" className={btnGhost} onClick={() => openLine(l)}>
+                            <Pencil size={14} /> Modifier
+                          </button>
+                          <button
+                            type="button"
+                            className={btnGhost + ' !text-danger'}
+                            onClick={() => setConfirm({ type: 'line', id: l.id })}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      <Modal open={open} title={editing ? 'Modifier le budget' : 'Nouveau budget'} onClose={() => setOpen(false)} wide>
+        <form onSubmit={submitBudget} className="space-y-1">
+          <Field label="Nom">
+            <input
+              className={inputClass}
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              required
+            />
+          </Field>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <Field label="Projet">
+              <select
+                className={inputClass}
+                value={form.projectId}
+                onChange={(e) => setForm({ ...form, projectId: e.target.value })}
+                required
+              >
+                <option value="">Choisir…</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.title}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Devise">
+              <select
+                className={inputClass}
+                value={form.currency}
+                onChange={(e) => setForm({ ...form, currency: e.target.value })}
+              >
+                {BUDGET_CURRENCIES.map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <Field label="Total prévu">
+            <input
+              className={inputClass}
+              type="number"
+              min="0"
+              step="0.01"
+              value={form.plannedTotal}
+              onChange={(e) => setForm({ ...form, plannedTotal: e.target.value })}
+              required
+            />
+          </Field>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <Field label="Début">
+              <input
+                className={inputClass}
+                type="date"
+                value={form.periodStart}
+                onChange={(e) => setForm({ ...form, periodStart: e.target.value })}
+              />
+            </Field>
+            <Field label="Fin">
+              <input
+                className={inputClass}
+                type="date"
+                value={form.periodEnd}
+                onChange={(e) => setForm({ ...form, periodEnd: e.target.value })}
+              />
+            </Field>
+            <Field label="Lancement">
+              <input
+                className={inputClass}
+                type="date"
+                value={form.launchDate}
+                onChange={(e) => setForm({ ...form, launchDate: e.target.value })}
+              />
+            </Field>
+          </div>
+          <Field label="Visibilité">
+            <select
+              className={inputClass}
+              value={form.visibility}
+              onChange={(e) => setForm({ ...form, visibility: e.target.value })}
+            >
+              {SCOPED_VISIBILITIES.map((v) => (
+                <option key={v}>{v}</option>
+              ))}
+            </select>
+          </Field>
+          {form.visibility !== 'Privée' && (
+            <ShareEditor
+              users={users}
+              shares={form.shares}
+              excludeId={user.id}
+              permissions={SHARE_PERMS}
+              onChange={(shares) => setForm({ ...form, shares })}
+            />
+          )}
+          <ModalActions>
+            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
+              <Check size={16} /> Enregistrer
+            </button>
+          </ModalActions>
+        </form>
+      </Modal>
+
+      <Modal
+        open={lineOpen}
+        title={lineEditing ? 'Modifier la ligne' : 'Nouvelle ligne'}
+        onClose={() => setLineOpen(false)}
+        wide
+      >
+        <form onSubmit={submitLine} className="space-y-1">
+          <Field label="Libellé">
+            <input
+              className={inputClass}
+              value={lineForm.name}
+              onChange={(e) => setLineForm({ ...lineForm, name: e.target.value })}
+              required
+            />
+          </Field>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <Field label="Catégorie">
+              <select
+                className={inputClass}
+                value={lineForm.category}
+                onChange={(e) => setLineForm({ ...lineForm, category: e.target.value })}
+              >
+                {BUDGET_CATEGORIES.map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Montant">
+              <input
+                className={inputClass}
+                type="number"
+                min="0"
+                step="0.01"
+                value={lineForm.amount}
+                onChange={(e) => setLineForm({ ...lineForm, amount: e.target.value })}
+                required
+              />
+            </Field>
+          </div>
+          {(lineEditing?.kind || tab) !== 'salary' && (
+            <Field label="Date">
+              <input
+                className={inputClass}
+                type="date"
+                value={lineForm.date}
+                onChange={(e) => setLineForm({ ...lineForm, date: e.target.value })}
+              />
+            </Field>
+          )}
+          {(lineEditing?.kind || tab) === 'actual' && (
+            <>
+              <Field label="Statut">
+                <select
+                  className={inputClass}
+                  value={lineForm.status}
+                  onChange={(e) => setLineForm({ ...lineForm, status: e.target.value })}
+                >
+                  {BUDGET_ACTUAL_STATUSES.map((s) => (
+                    <option key={s} value={s}>
+                      {s === 'planned' ? 'prévu' : s === 'paid' ? 'payé' : 'annulé'}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Note de reçu">
+                <input
+                  className={inputClass}
+                  value={lineForm.receiptNote}
+                  onChange={(e) => setLineForm({ ...lineForm, receiptNote: e.target.value })}
+                />
+              </Field>
+            </>
+          )}
+          {(lineEditing?.kind || tab) === 'salary' && (
+            <>
+              <Field label="Intitulé de poste (pas d’identifiant personnel)">
+                <input
+                  className={inputClass}
+                  value={lineForm.roleTitle}
+                  onChange={(e) => setLineForm({ ...lineForm, roleTitle: e.target.value })}
+                  placeholder="Ex. Chargé de projet"
+                />
+              </Field>
+              <Field label="Période due">
+                <input
+                  className={inputClass}
+                  type="month"
+                  value={lineForm.duePeriod}
+                  onChange={(e) => setLineForm({ ...lineForm, duePeriod: e.target.value })}
+                />
+              </Field>
+            </>
+          )}
+          <Field label="Responsable">
+            <select
+              className={inputClass}
+              value={lineForm.responsibleId}
+              onChange={(e) => setLineForm({ ...lineForm, responsibleId: e.target.value })}
+            >
+              <option value="">Aucun</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.fullName}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Notes">
+            <textarea
+              className={inputClass + ' min-h-20'}
+              value={lineForm.notes}
+              onChange={(e) => setLineForm({ ...lineForm, notes: e.target.value })}
+            />
+          </Field>
+          <ModalActions>
+            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
+              <Check size={16} /> Enregistrer
+            </button>
+          </ModalActions>
+        </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(liveCommentLine)}
+        title={liveCommentLine ? `Commentaires — ${liveCommentLine.name}` : 'Commentaires'}
+        onClose={() => {
+          setCommentLine(null)
+          setCommentBody('')
+        }}
+      >
+        {liveCommentLine && (
+          <div className="space-y-3">
+            {(liveCommentLine.comments || []).length === 0 ? (
+              <p className="text-sm text-sage-500">Aucun commentaire.</p>
+            ) : (
+              <ul className="space-y-2">
+                {(liveCommentLine.comments || []).map((c, idx) => (
+                  <li key={`${c.at}-${idx}`} className="rounded-xl bg-white p-3 text-sm">
+                    <p className="text-xs text-sage-500">
+                      {nameOf(c.userId)} · {c.at?.slice(0, 16)?.replace('T', ' ')}
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap text-sage-800">{c.body}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {canManage && (
+              <form onSubmit={submitComment}>
+                <textarea
+                  className={inputClass + ' min-h-20'}
+                  value={commentBody}
+                  onChange={(e) => setCommentBody(e.target.value)}
+                  placeholder="Ajouter un commentaire"
+                />
+                <ModalActions>
+                  <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
+                    Envoyer
+                  </button>
+                </ModalActions>
+              </form>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={Boolean(confirm)} title="Confirmer la suppression" onClose={() => setConfirm(null)}>
+        <p className="text-sm text-sage-700">
+          {confirm?.type === 'budget'
+            ? 'Le budget et toutes ses lignes seront supprimés.'
+            : 'Cette ligne sera définitivement supprimée.'}
+        </p>
+        <ModalActions>
+          <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirm(null)}>
+            Annuler
+          </button>
+          <button
+            type="button"
+            className={btnPrimary + ' w-full sm:w-auto !bg-danger'}
+            disabled={busy}
+            onClick={runConfirm}
+          >
+            Supprimer
+          </button>
+        </ModalActions>
+      </Modal>
+    </div>
+  )
+}
+
+function RisksView({ user, risks, actions, projects, projectsById, users, flash }) {
+  const [filterProject, setFilterProject] = useState('')
+  const [filterAssignee, setFilterAssignee] = useState('')
+  const [filterPriority, setFilterPriority] = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
+  const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(null)
+  const [detailId, setDetailId] = useState(null)
+  const [actionOpen, setActionOpen] = useState(false)
+  const [actionEditing, setActionEditing] = useState(null)
+  const [commentBody, setCommentBody] = useState('')
+  const [confirm, setConfirm] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [form, setForm] = useState(emptyRisk())
+  const [actionForm, setActionForm] = useState(emptyAction())
+
+  function emptyRisk() {
+    return {
+      title: '',
+      description: '',
+      projectId: projects[0]?.id || '',
+      category: 'budget',
+      probability: 'faible',
+      impact: 'faible',
+      assigneeId: '',
+      detectedAt: new Date().toISOString().slice(0, 10),
+      dueDate: '',
+      status: 'nouveau',
+      visibility: 'Privée',
+      shares: [],
+    }
+  }
+
+  function emptyAction() {
+    return { title: '', assigneeId: '', dueDate: '', status: 'à faire' }
+  }
+
+  const nameOf = (id) => users.find((u) => u.id === id)?.fullName || '—'
+  const projectTitle = (id) => projects.find((p) => p.id === id)?.title || '—'
+
+  const filtered = risks.filter((r) => {
+    if (filterProject && r.projectId !== filterProject) return false
+    if (filterAssignee && r.assigneeId !== filterAssignee) return false
+    if (filterPriority && (r.priority || computeRiskPriority(r.probability, r.impact)) !== filterPriority) {
+      return false
+    }
+    if (filterStatus && r.status !== filterStatus) return false
+    return true
+  })
+
+  const detail = risks.find((r) => r.id === detailId) || null
+  const detailActions = detail
+    ? actions
+        .filter((a) => a.riskId === detail.id)
+        .sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')))
+    : []
+  const canManage = detail
+    ? canManageBudgetRisk(user, detail, projectsById)
+    : canWriteRole(user)
+
+  const openCreate = () => {
+    setEditing(null)
+    setForm(emptyRisk())
+    setOpen(true)
+  }
+
+  const openEdit = (risk) => {
+    setEditing(risk)
+    setForm({
+      title: risk.title || '',
+      description: risk.description || '',
+      projectId: risk.projectId || '',
+      category: risk.category || 'autre',
+      probability: risk.probability || 'faible',
+      impact: risk.impact || 'faible',
+      assigneeId: risk.assigneeId || '',
+      detectedAt: risk.detectedAt || '',
+      dueDate: risk.dueDate || '',
+      status: risk.status || 'nouveau',
+      visibility: risk.visibility || 'Privée',
+      shares: risk.shares || [],
+    })
+    setOpen(true)
+  }
+
+  const submitRisk = async (e) => {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      const saved = await saveRisk(
+        {
+          id: editing?.id,
+          ...form,
+          title: form.title.trim(),
+          shares: form.visibility === 'Privée' ? [] : form.shares,
+        },
+        user,
+      )
+      setDetailId(saved.id)
+      flash(editing ? 'Risque mis à jour.' : 'Risque créé.')
+      setOpen(false)
+    } catch (err) {
+      flash(err.message || 'Erreur', 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openAction = (action) => {
+    setActionEditing(action || null)
+    setActionForm(
+      action
+        ? {
+            title: action.title || '',
+            assigneeId: action.assigneeId || '',
+            dueDate: action.dueDate || '',
+            status: action.status || 'à faire',
+          }
+        : emptyAction(),
+    )
+    setActionOpen(true)
+  }
+
+  const submitAction = async (e) => {
+    e.preventDefault()
+    if (!detail) return
+    setBusy(true)
+    try {
+      await saveRiskAction(
+        {
+          id: actionEditing?.id,
+          riskId: detail.id,
+          ...actionForm,
+          title: actionForm.title.trim(),
+        },
+        user,
+      )
+      flash(actionEditing ? 'Action mise à jour.' : 'Action ajoutée.')
+      setActionOpen(false)
+    } catch (err) {
+      flash(err.message || 'Erreur', 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submitComment = async (e) => {
+    e.preventDefault()
+    if (!detail) return
+    setBusy(true)
+    try {
+      await addRiskComment(detail.id, commentBody, user)
+      setCommentBody('')
+      flash('Commentaire ajouté.')
+    } catch (err) {
+      flash(err.message || 'Erreur', 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const runConfirm = async () => {
+    if (!confirm) return
+    setBusy(true)
+    try {
+      if (confirm.type === 'risk') {
+        await deleteRisk(confirm.id, user)
+        if (detailId === confirm.id) setDetailId(null)
+        flash('Risque supprimé.')
+      } else {
+        await deleteRiskAction(confirm.id, user)
+        flash('Action supprimée.')
+      }
+      setConfirm(null)
+    } catch (err) {
+      flash(err.message || 'Erreur', 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (projects.length === 0) {
+    return (
+      <div className="space-y-4 animate-fade-up">
+        <LocalBanner />
+        <EmptyState
+          title="Aucun projet"
+          hint="Les risques sont rattachés à un projet. Créez d’abord un projet."
+        />
+      </div>
+    )
+  }
+
+  const denied = !canWriteRole(user) && risks.length === 0
+
+  return (
+    <div className="space-y-4 animate-fade-up">
+      <LocalBanner />
+      <div className="flex flex-wrap items-center gap-2">
+        {canWriteRole(user) && (
+          <button type="button" className={btnPrimary} onClick={openCreate}>
+            <Plus size={16} /> Nouveau risque
+          </button>
+        )}
+        <select
+          className={inputClass + ' max-w-full md:!w-auto'}
+          value={filterProject}
+          onChange={(e) => setFilterProject(e.target.value)}
+        >
+          <option value="">Projet</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.title}
+            </option>
+          ))}
+        </select>
+        <select
+          className={inputClass + ' max-w-full md:!w-auto'}
+          value={filterAssignee}
+          onChange={(e) => setFilterAssignee(e.target.value)}
+        >
+          <option value="">Assigné</option>
+          {users.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.fullName}
+            </option>
+          ))}
+        </select>
+        <select
+          className={inputClass + ' max-w-full md:!w-auto'}
+          value={filterPriority}
+          onChange={(e) => setFilterPriority(e.target.value)}
+        >
+          <option value="">Priorité</option>
+          {['élevée', 'moyenne', 'faible'].map((p) => (
+            <option key={p}>{p}</option>
+          ))}
+        </select>
+        <select
+          className={inputClass + ' max-w-full md:!w-auto'}
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value)}
+        >
+          <option value="">Statut</option>
+          {RISK_STATUSES.map((s) => (
+            <option key={s}>{s}</option>
+          ))}
+        </select>
+      </div>
+
+      {denied ? (
+        <EmptyState title="Accès refusé" hint="Aucun risque n’a été partagé avec vous." />
+      ) : filtered.length === 0 && !detail ? (
+        <EmptyState
+          title="Aucun risque"
+          hint="Enregistrez un risque, sa priorité est calculée (probabilité × impact)."
+          action={
+            canWriteRole(user) ? (
+              <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
+                <Plus size={16} /> Créer un risque
+              </button>
+            ) : null
+          }
+        />
+      ) : (
+        <div className={`grid gap-4 ${detail ? 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]' : ''}`}>
+          <ul className="space-y-2">
+            {filtered.map((r) => {
+              const priority = r.priority || computeRiskPriority(r.probability, r.impact)
+              const done = r.status === 'résolu' || r.status === 'écarté'
+              return (
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    onClick={() => setDetailId(r.id)}
+                    className={`w-full rounded-2xl border p-4 text-left ${dueTone(r.dueDate, done)} ${
+                      detailId === r.id ? 'ring-2 ring-sage-500' : ''
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <h3 className="truncate font-display text-lg text-sage-900">{r.title}</h3>
+                        <p className="text-xs text-sage-500">
+                          {projectTitle(r.projectId)} · {r.category} · {r.status}
+                        </p>
+                      </div>
+                      <PriorityBadge value={priority} />
+                    </div>
+                    {r.dueDate && (
+                      <p className="mt-2 flex items-center gap-1 text-xs text-sage-600">
+                        {isDateOverdue(r.dueDate) && !done ? (
+                          <AlertTriangle size={12} className="text-danger" />
+                        ) : null}
+                        Échéance {r.dueDate}
+                      </p>
+                    )}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+
+          {detail && (
+            <article className="rounded-2xl border border-sage-200 bg-white/80 p-5">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h2 className="font-display text-2xl text-sage-900">{detail.title}</h2>
+                  <p className="mt-1 text-sm text-sage-600">
+                    {projectTitle(detail.projectId)} · Assigné : {nameOf(detail.assigneeId)}
+                  </p>
+                </div>
+                <PriorityBadge value={detail.priority || computeRiskPriority(detail.probability, detail.impact)} />
+              </div>
+              <p className="mt-3 whitespace-pre-wrap text-sm text-sage-700">{detail.description || '—'}</p>
+              <p className="mt-2 text-xs text-sage-500">
+                {detail.probability} × {detail.impact} · détecté {detail.detectedAt || '—'} · statut {detail.status}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {canManageBudgetRisk(user, detail, projectsById) && (
+                  <button type="button" className={btnGhost} onClick={() => openEdit(detail)}>
+                    <Pencil size={14} /> Modifier
+                  </button>
+                )}
+                {canDeleteBudgetRisk(user, detail, projectsById) && (
+                  <button
+                    type="button"
+                    className={btnGhost + ' !text-danger'}
+                    onClick={() => setConfirm({ type: 'risk', id: detail.id })}
+                  >
+                    <Trash2 size={14} /> Supprimer
+                  </button>
+                )}
+                <button type="button" className={btnGhost + ' lg:hidden'} onClick={() => setDetailId(null)}>
+                  Fermer
+                </button>
+              </div>
+
+              <div className="mt-5 flex items-center justify-between gap-2">
+                <h3 className="font-display text-lg text-sage-900">Solutions / actions</h3>
+                {canManage && (
+                  <button type="button" className={btnPrimary} onClick={() => openAction(null)}>
+                    <Plus size={14} /> Action
+                  </button>
+                )}
+              </div>
+              {detailActions.length === 0 ? (
+                <p className="mt-2 text-sm text-sage-500">Aucune action pour le moment.</p>
+              ) : (
+                <ul className="mt-3 space-y-2">
+                  {detailActions.map((a) => (
+                    <li
+                      key={a.id}
+                      className={`rounded-xl border p-3 text-sm ${dueTone(a.dueDate, a.status === 'terminée')}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="font-medium text-sage-900">{a.title}</p>
+                          <p className="text-xs text-sage-500">
+                            {a.status} · {nameOf(a.assigneeId)}
+                            {a.dueDate ? ` · ${a.dueDate}` : ''}
+                            {isDateOverdue(a.dueDate) && a.status !== 'terminée' ? ' · en retard' : ''}
+                            {isDateNearDue(a.dueDate) ? ' · échéance proche' : ''}
+                          </p>
+                        </div>
+                        {canManage && (
+                          <div className="flex gap-1">
+                            <button type="button" className={btnGhost + ' !px-2'} onClick={() => openAction(a)}>
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              className={btnGhost + ' !px-2 !text-danger'}
+                              onClick={() => setConfirm({ type: 'action', id: a.id })}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <h3 className="mt-5 font-display text-lg text-sage-900">Commentaires</h3>
+              {(detail.comments || []).length === 0 ? (
+                <p className="mt-2 text-sm text-sage-500">Aucun commentaire.</p>
+              ) : (
+                <ul className="mt-2 space-y-2">
+                  {(detail.comments || []).map((c, idx) => (
+                    <li key={`${c.at}-${idx}`} className="rounded-xl bg-sage-50 p-3 text-sm">
+                      <p className="text-xs text-sage-500">
+                        {nameOf(c.userId)} · {c.at?.slice(0, 16)?.replace('T', ' ')}
+                      </p>
+                      <p className="mt-1 whitespace-pre-wrap text-sage-800">{c.body}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {canManage && (
+                <form onSubmit={submitComment} className="mt-3">
+                  <textarea
+                    className={inputClass + ' min-h-20'}
+                    value={commentBody}
+                    onChange={(e) => setCommentBody(e.target.value)}
+                    placeholder="Ajouter un commentaire"
+                  />
+                  <button type="submit" className={btnPrimary + ' mt-2'} disabled={busy}>
+                    Envoyer
+                  </button>
+                </form>
+              )}
+            </article>
+          )}
+        </div>
+      )}
+
+      <Modal open={open} title={editing ? 'Modifier le risque' : 'Nouveau risque'} onClose={() => setOpen(false)} wide>
+        <form onSubmit={submitRisk} className="space-y-1">
+          <Field label="Titre">
+            <input
+              className={inputClass}
+              value={form.title}
+              onChange={(e) => setForm({ ...form, title: e.target.value })}
+              required
+            />
+          </Field>
+          <Field label="Description">
+            <textarea
+              className={inputClass + ' min-h-24'}
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+            />
+          </Field>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <Field label="Projet">
+              <select
+                className={inputClass}
+                value={form.projectId}
+                onChange={(e) => setForm({ ...form, projectId: e.target.value })}
+                required
+              >
+                <option value="">Choisir…</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.title}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Catégorie">
+              <select
+                className={inputClass}
+                value={form.category}
+                onChange={(e) => setForm({ ...form, category: e.target.value })}
+              >
+                {RISK_CATEGORIES.map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <Field label="Probabilité">
+              <select
+                className={inputClass}
+                value={form.probability}
+                onChange={(e) => setForm({ ...form, probability: e.target.value })}
+              >
+                {RISK_PROBABILITIES.map((p) => (
+                  <option key={p}>{p}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Impact">
+              <select
+                className={inputClass}
+                value={form.impact}
+                onChange={(e) => setForm({ ...form, impact: e.target.value })}
+              >
+                {RISK_IMPACTS.map((p) => (
+                  <option key={p}>{p}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Priorité calculée">
+              <div className="flex min-h-11 items-center">
+                <PriorityBadge value={computeRiskPriority(form.probability, form.impact)} />
+              </div>
+            </Field>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <Field label="Assigné">
+              <select
+                className={inputClass}
+                value={form.assigneeId}
+                onChange={(e) => setForm({ ...form, assigneeId: e.target.value })}
+              >
+                <option value="">Aucun</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.fullName}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Statut">
+              <select
+                className={inputClass}
+                value={form.status}
+                onChange={(e) => setForm({ ...form, status: e.target.value })}
+              >
+                {RISK_STATUSES.map((s) => (
+                  <option key={s}>{s}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <Field label="Détecté le">
+              <input
+                className={inputClass}
+                type="date"
+                value={form.detectedAt}
+                onChange={(e) => setForm({ ...form, detectedAt: e.target.value })}
+              />
+            </Field>
+            <Field label="Échéance">
+              <input
+                className={inputClass}
+                type="date"
+                value={form.dueDate}
+                onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
+              />
+            </Field>
+          </div>
+          <Field label="Visibilité">
+            <select
+              className={inputClass}
+              value={form.visibility}
+              onChange={(e) => setForm({ ...form, visibility: e.target.value })}
+            >
+              {SCOPED_VISIBILITIES.map((v) => (
+                <option key={v}>{v}</option>
+              ))}
+            </select>
+          </Field>
+          {form.visibility !== 'Privée' && (
+            <ShareEditor
+              users={users}
+              shares={form.shares}
+              excludeId={user.id}
+              permissions={SHARE_PERMS}
+              onChange={(shares) => setForm({ ...form, shares })}
+            />
+          )}
+          <ModalActions>
+            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
+              <Check size={16} /> Enregistrer
+            </button>
+          </ModalActions>
+        </form>
+      </Modal>
+
+      <Modal
+        open={actionOpen}
+        title={actionEditing ? 'Modifier l’action' : 'Nouvelle action'}
+        onClose={() => setActionOpen(false)}
+      >
+        <form onSubmit={submitAction} className="space-y-1">
+          <Field label="Titre">
+            <input
+              className={inputClass}
+              value={actionForm.title}
+              onChange={(e) => setActionForm({ ...actionForm, title: e.target.value })}
+              required
+            />
+          </Field>
+          <Field label="Assigné">
+            <select
+              className={inputClass}
+              value={actionForm.assigneeId}
+              onChange={(e) => setActionForm({ ...actionForm, assigneeId: e.target.value })}
+            >
+              <option value="">Aucun</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.fullName}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Échéance">
+            <input
+              className={inputClass}
+              type="date"
+              value={actionForm.dueDate}
+              onChange={(e) => setActionForm({ ...actionForm, dueDate: e.target.value })}
+            />
+          </Field>
+          <Field label="Statut">
+            <select
+              className={inputClass}
+              value={actionForm.status}
+              onChange={(e) => setActionForm({ ...actionForm, status: e.target.value })}
+            >
+              {RISK_ACTION_STATUSES.map((s) => (
+                <option key={s}>{s}</option>
+              ))}
+            </select>
+          </Field>
+          <ModalActions>
+            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
+              <Check size={16} /> Enregistrer
+            </button>
+          </ModalActions>
+        </form>
+      </Modal>
+
+      <Modal open={Boolean(confirm)} title="Confirmer la suppression" onClose={() => setConfirm(null)}>
+        <p className="text-sm text-sage-700">
+          {confirm?.type === 'risk'
+            ? 'Le risque et ses actions seront supprimés.'
+            : 'Cette action sera définitivement supprimée.'}
+        </p>
+        <ModalActions>
+          <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirm(null)}>
+            Annuler
+          </button>
+          <button
+            type="button"
+            className={btnPrimary + ' w-full sm:w-auto !bg-danger'}
+            disabled={busy}
+            onClick={runConfirm}
+          >
+            Supprimer
+          </button>
+        </ModalActions>
+      </Modal>
     </div>
   )
 }

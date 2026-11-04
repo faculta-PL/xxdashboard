@@ -21,6 +21,8 @@ Nazix est un espace de travail collaboratif en temps réel : notes, idées (Kanb
 - Notes
 - Kanban (boîte à idées)
 - Projets
+- **Budget**
+- **Risques et solutions**
 - **Fichiers**
 - Calendrier
 - Recherche
@@ -80,3 +82,36 @@ Contrôle **dans `store.js` à l’écriture**, pas seulement dans l’UI. Règl
 Entrée de navigation **Fichiers** (icône FolderOpen). Barre d’outils : importer, nouveau dossier, recherche, filtres dossier / type / auteur, bascule liste / grille. États vide, chargement, erreur, progression, terminé, accès refusé, aucun résultat. Aperçu : images (`img`), PDF (`iframe` blob URL), autres : téléchargement. Confirmation de suppression de dossier (contenu inclus). Renommer / déplacer / description dès **Modification**. Notifications `notifyUsers` au partage et à l’ajout. Historique.
 
 Responsive : pile mobile, cartes en liste, filtres qui passent à la ligne.
+
+## Module Budget
+
+Collection Firestore `xx_budgets` (fiche budget rattachée à un projet) et `xx_budget_lines` (lignes Prévision / Réel / Salaires). Écoute `onSnapshot`, comme les notes.
+
+### Décisions verrouillées
+
+- **Devise** : EUR ou USD.
+- **Catégories de ligne** : Salaires et rémunérations, Matériel et équipements, Fournitures et produits, Transport et déplacements, Marketing et communication, Frais administratifs, Prestataires et services, Autres.
+- **Salaires** : intitulé de poste (`roleTitle`) et période due — **jamais** d’identifiant personnel.
+- **Totaux automatiques** : total prévu (saisi), somme des lignes prévisionnelles, somme réelle (hors annulé), payé (réel `paid`), restant (`plannedTotal − payé`), écart prévision / réel, % consommé (`payé / plannedTotal`).
+- **Partage** : Lecture / Édition, visibilité Privée · Partagée · Équipe · Publique (même schéma `shares` / `shareUserIds` que les notes).
+
+### Permissions
+
+- **Admin** : tout
+- **Responsable de projet** : gère les budgets des projets dont il est `leadId` ou qu’il peut éditer (`canEditEntity`)
+- **Membre** : crée ; modifie s’il est propriétaire ou a le partage **Édition**
+- **Lecteur** : lecture des budgets partagés (ou Équipe / Publique) uniquement — pas de création, édition ni suppression
+
+Contrôle **dans `store.js` à l’écriture**. Règles Firestore : connecté, propriétaire, `shareUserIds`, visibilité Équipe / Publique, admin `facultamalika@gmail.com`.
+
+## Module Risques et solutions
+
+Collections `xx_risks` et `xx_risk_actions`. Priorité **calculée** : élevée si probabilité et impact sont élevés ; moyenne si l’un des deux l’est ; sinon faible.
+
+### Données
+
+**Risque** : projet, titre, description, catégorie (budget, délai, fournisseur, produit, équipe, qualité, réglementation, autre), probabilité (faible / moyenne / élevée), impact (faible / moyen / élevé), priorité, assigné, dates, statut (nouveau, à l’étude, en cours, résolu, écarté), partage, commentaires, historique.
+
+**Action** : titre, assigné, échéance, statut (à faire / en cours / terminée), commentaires. Une action en retard à la création ou mise à jour notifie l’assigné et le propriétaire via `notifyUsers`.
+
+Échéance dépassée ou dans les 7 jours : mise en évidence. Tableau de bord : compteur de risques ouverts, % du premier budget, bloc « Risques en retard » et reste budgétaire.

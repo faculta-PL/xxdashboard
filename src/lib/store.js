@@ -38,6 +38,18 @@ import {
   canManageFileOrFolder,
   canDeleteFileOrFolder,
   canReadFileOrFolder,
+  canManageBudgetRisk,
+  canDeleteBudgetRisk,
+  computeRiskPriority,
+  BUDGET_CURRENCIES,
+  BUDGET_CATEGORIES,
+  BUDGET_LINE_KINDS,
+  BUDGET_ACTUAL_STATUSES,
+  RISK_CATEGORIES,
+  RISK_PROBABILITIES,
+  RISK_IMPACTS,
+  RISK_STATUSES,
+  RISK_ACTION_STATUSES,
 } from './rbac'
 import {
   validateUploadFile,
@@ -106,6 +118,10 @@ const COLLECTIONS = [
   'xx_messages',
   'xx_files',
   'xx_folders',
+  'xx_budgets',
+  'xx_budget_lines',
+  'xx_risks',
+  'xx_risk_actions',
 ]
 
 function emptyDb() {
@@ -254,7 +270,19 @@ function remapIdList(list, fromId, toId) {
 
 async function remapUserReferences(fromId, toId) {
   if (!fromId || !toId || fromId === toId) return
-  const entityCols = ['xx_notes', 'xx_ideas', 'xx_projects', 'xx_events', 'xx_groups', 'xx_files', 'xx_folders']
+  const entityCols = [
+    'xx_notes',
+    'xx_ideas',
+    'xx_projects',
+    'xx_events',
+    'xx_groups',
+    'xx_files',
+    'xx_folders',
+    'xx_budgets',
+    'xx_budget_lines',
+    'xx_risks',
+    'xx_risk_actions',
+  ]
   for (const col of entityCols) {
     for (const row of Object.values(memory[col] || {})) {
       let changed = false
@@ -265,6 +293,18 @@ async function remapUserReferences(fromId, toId) {
       }
       if (next.leadId === fromId) {
         next.leadId = toId
+        changed = true
+      }
+      if (next.assigneeId === fromId) {
+        next.assigneeId = toId
+        changed = true
+      }
+      if (next.responsibleId === fromId) {
+        next.responsibleId = toId
+        changed = true
+      }
+      if (next.createdBy === fromId) {
+        next.createdBy = toId
         changed = true
       }
       if (Array.isArray(next.memberIds) && next.memberIds.includes(fromId)) {
@@ -293,9 +333,24 @@ async function remapUserReferences(fromId, toId) {
         }))
         changed = true
       }
+      if (Array.isArray(next.comments) && next.comments.some((c) => c.userId === fromId)) {
+        next.comments = next.comments.map((c) => ({
+          ...c,
+          userId: remapId(c.userId, fromId, toId),
+        }))
+        changed = true
+      }
       if (changed) {
         if (col === 'xx_files' || col === 'xx_folders') {
           Object.assign(next, withFileAccess(next, col === 'xx_files'))
+        } else if (col === 'xx_budgets' || col === 'xx_risks') {
+          Object.assign(next, withScopedAccess(next))
+        } else if (col === 'xx_budget_lines' || col === 'xx_risk_actions') {
+          const parent =
+            col === 'xx_budget_lines'
+              ? memory.xx_budgets[next.budgetId]
+              : memory.xx_risks[next.riskId]
+          Object.assign(next, parent ? inheritScopedAccess(parent, next) : shareFields(next, memory.xx_users[toId]))
         } else if (col !== 'xx_groups') {
           Object.assign(next, shareFields(next, memory.xx_users[toId]))
         }
@@ -356,6 +411,24 @@ async function stampOwnedEntities(user) {
         JSON.stringify(stamped.shareUserIds || []) === JSON.stringify(row.shareUserIds || []) &&
         JSON.stringify(stamped.shareManageUserIds || []) === JSON.stringify(row.shareManageUserIds || []) &&
         stamped.inheritedTeam === row.inheritedTeam
+      if (!same) {
+        await persistDoc(col, row.id, stamped)
+      }
+    }
+  }
+  for (const col of ['xx_budgets', 'xx_risks']) {
+    for (const row of Object.values(memory[col] || {})) {
+      const owns = row.ownerId === user.id
+      const needsShares = Array.isArray(row.shares) && row.shares.length > 0
+      if (!owns && !needsShares) continue
+      const stamped = withScopedAccess({
+        ...row,
+        ...(owns ? { ownerEmail: user.email } : {}),
+      })
+      const same =
+        stamped.ownerEmail === row.ownerEmail &&
+        JSON.stringify(stamped.shareUserIds || []) === JSON.stringify(row.shareUserIds || []) &&
+        JSON.stringify(stamped.shareEditUserIds || []) === JSON.stringify(row.shareEditUserIds || [])
       if (!same) {
         await persistDoc(col, row.id, stamped)
       }
@@ -1444,6 +1517,7 @@ export async function saveProject(data, user) {
   const saved = await upsert('xx_projects', data, user)
   if (prev && prev.leadId !== saved.leadId) {
     await refreshProjectFilesAccess(saved.id)
+    await refreshProjectScopedAccess(saved.id)
   }
   return saved
 }
@@ -2141,4 +2215,403 @@ export async function getFileBlob(fileId, user) {
     if (local) return local
   }
   throw new Error('Fichier indisponible.')
+}
+
+/* ─── Budgets / risques ─── */
+
+function scopedProjects() {
+  return memory.xx_projects || {}
+}
+
+function scopedHistory(user, type, label) {
+  return { type, userId: user.id, label, at: new Date().toISOString() }
+}
+
+function withScopedAccess(row) {
+  const fields = shareFields(row, memory.xx_users[row.ownerId])
+  const project = row.projectId ? memory.xx_projects[row.projectId] : null
+  const shareUserIds = new Set(fields.shareUserIds || [])
+  const shareEditUserIds = new Set(fields.shareEditUserIds || [])
+  const shareEmails = new Set(fields.shareEmails || [])
+  const shareEditEmails = new Set(fields.shareEditEmails || [])
+  if (project?.leadId) {
+    shareUserIds.add(project.leadId)
+    shareEditUserIds.add(project.leadId)
+    const leadEmail = lookupUserEmail(project.leadId)
+    if (leadEmail) {
+      const e = String(leadEmail).toLowerCase()
+      shareEmails.add(e)
+      shareEditEmails.add(e)
+    }
+  }
+  return {
+    ...row,
+    ...fields,
+    shareUserIds: [...shareUserIds],
+    shareEmails: [...shareEmails],
+    shareEditUserIds: [...shareEditUserIds],
+    shareEditEmails: [...shareEditEmails],
+  }
+}
+
+function inheritScopedAccess(parent, row) {
+  return {
+    ...row,
+    ownerId: parent.ownerId,
+    ownerEmail: parent.ownerEmail,
+    visibility: parent.visibility,
+    shares: parent.shares || [],
+    shareUserIds: parent.shareUserIds || [],
+    shareEmails: parent.shareEmails || [],
+    shareEditUserIds: parent.shareEditUserIds || [],
+    shareEditEmails: parent.shareEditEmails || [],
+  }
+}
+
+async function syncScopedChildren(parent, childCol, parentKey) {
+  for (const row of Object.values(memory[childCol] || {})) {
+    if (row[parentKey] !== parent.id) continue
+    await persistDoc(childCol, row.id, inheritScopedAccess(parent, row))
+  }
+}
+
+async function refreshProjectScopedAccess(projectId) {
+  if (!projectId) return
+  for (const budget of Object.values(memory.xx_budgets || {})) {
+    if (budget.projectId !== projectId) continue
+    const next = withScopedAccess(budget)
+    await persistDoc('xx_budgets', next.id, next)
+    await syncScopedChildren(next, 'xx_budget_lines', 'budgetId')
+  }
+  for (const risk of Object.values(memory.xx_risks || {})) {
+    if (risk.projectId !== projectId) continue
+    const next = withScopedAccess(risk)
+    await persistDoc('xx_risks', next.id, next)
+    await syncScopedChildren(next, 'xx_risk_actions', 'riskId')
+  }
+}
+
+function requireBudgetRiskManage(user, entity) {
+  if (!canManageBudgetRisk(user, entity, scopedProjects())) {
+    throw new Error('Permission refusée.')
+  }
+}
+
+function requireBudgetRiskDelete(user, entity) {
+  if (!canDeleteBudgetRisk(user, entity, scopedProjects())) {
+    throw new Error('Permission refusée.')
+  }
+}
+
+function parseAmount(value) {
+  const amount = Number(value)
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error('Montant invalide.')
+  }
+  return amount
+}
+
+async function notifyNewShares(prev, next, user, payload) {
+  const prevIds = new Set((prev?.shares || []).map((s) => s.userId))
+  const ids = (next.shares || [])
+    .map((s) => s.userId)
+    .filter((id) => id && id !== user.id && !prevIds.has(id))
+  if (ids.length) await notifyUsers(ids, payload)
+}
+
+export async function saveBudget(data, user) {
+  if (!user) throw new Error('Permission refusée.')
+  const now = new Date().toISOString()
+  const id = data.id || uid('bdg')
+  const existing = memory.xx_budgets[id]
+  if (!existing) {
+    if (!canWriteRole(user)) {
+      throw new Error('Permission refusée (rôle Lecteur : création interdite).')
+    }
+  } else {
+    requireBudgetRiskManage(user, existing)
+  }
+  const name = String(data.name || '').trim()
+  if (!name) throw new Error('Nom du budget requis.')
+  const projectId = data.projectId || existing?.projectId || null
+  if (!projectId) throw new Error('Projet requis.')
+  const currency = data.currency || existing?.currency || 'EUR'
+  if (!BUDGET_CURRENCIES.includes(currency)) throw new Error('Devise invalide (EUR ou USD).')
+  const plannedTotal = parseAmount(data.plannedTotal ?? existing?.plannedTotal ?? 0)
+  const visibility = data.visibility || existing?.visibility || 'Privée'
+  const shares = visibility === 'Privée' ? [] : data.shares !== undefined ? data.shares : existing?.shares || []
+  const merged = {
+    ...(existing || {}),
+    id,
+    projectId,
+    name,
+    currency,
+    periodStart: data.periodStart ?? existing?.periodStart ?? '',
+    periodEnd: data.periodEnd ?? existing?.periodEnd ?? '',
+    launchDate: data.launchDate ?? existing?.launchDate ?? '',
+    plannedTotal,
+    ownerId: existing?.ownerId || user.id,
+    shares,
+    visibility,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    history: [
+      ...(existing?.history || []),
+      scopedHistory(user, existing ? 'update' : 'create', existing ? 'Budget modifié' : 'Budget créé'),
+    ],
+  }
+  const docData = withScopedAccess(merged)
+  await persistDoc('xx_budgets', id, docData)
+  if (existing) await syncScopedChildren(docData, 'xx_budget_lines', 'budgetId')
+  await notifyNewShares(existing, docData, user, {
+    type: 'budget_share',
+    title: 'Budget partagé',
+    body: `${user.fullName} a partagé le budget « ${docData.name} » avec vous.`,
+    meta: { budgetId: id },
+  })
+  return docData
+}
+
+export async function deleteBudget(id, user) {
+  const existing = memory.xx_budgets[id]
+  if (!existing) throw new Error('Budget introuvable.')
+  requireBudgetRiskDelete(user, existing)
+  for (const line of Object.values(memory.xx_budget_lines || {})) {
+    if (line.budgetId === id) await removeDoc('xx_budget_lines', line.id)
+  }
+  await removeDoc('xx_budgets', id)
+}
+
+export async function saveBudgetLine(data, user) {
+  if (!user) throw new Error('Permission refusée.')
+  const budget = memory.xx_budgets[data.budgetId]
+  if (!budget) throw new Error('Budget introuvable.')
+  requireBudgetRiskManage(user, budget)
+  const now = new Date().toISOString()
+  const id = data.id || uid('bln')
+  const existing = memory.xx_budget_lines[id]
+  if (existing && existing.budgetId !== budget.id) throw new Error('Ligne invalide.')
+  const kind = data.kind || existing?.kind || 'planned'
+  if (!BUDGET_LINE_KINDS.includes(kind)) throw new Error('Type de ligne invalide.')
+  const category = data.category || existing?.category || BUDGET_CATEGORIES[0]
+  if (!BUDGET_CATEGORIES.includes(category)) throw new Error('Catégorie invalide.')
+  const name = String(data.name || existing?.name || '').trim()
+  if (!name) throw new Error('Libellé requis.')
+  const amount = parseAmount(data.amount ?? existing?.amount ?? 0)
+  let status = existing?.status || ''
+  if (kind === 'actual') {
+    status = data.status || existing?.status || 'planned'
+    if (!BUDGET_ACTUAL_STATUSES.includes(status)) throw new Error('Statut invalide.')
+  }
+  const line = inheritScopedAccess(budget, {
+    ...(existing || {}),
+    id,
+    budgetId: budget.id,
+    kind,
+    category,
+    name,
+    amount,
+    date: data.date ?? existing?.date ?? '',
+    duePeriod: kind === 'salary' ? data.duePeriod ?? existing?.duePeriod ?? '' : '',
+    roleTitle: kind === 'salary' ? String(data.roleTitle ?? existing?.roleTitle ?? '').trim() : '',
+    status: kind === 'actual' ? status : '',
+    responsibleId: data.responsibleId ?? existing?.responsibleId ?? '',
+    notes: data.notes ?? existing?.notes ?? '',
+    receiptNote: kind === 'actual' ? data.receiptNote ?? existing?.receiptNote ?? '' : '',
+    comments: existing?.comments || [],
+    createdBy: existing?.createdBy || user.id,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  })
+  await persistDoc('xx_budget_lines', id, line)
+  return line
+}
+
+export async function deleteBudgetLine(id, user) {
+  const existing = memory.xx_budget_lines[id]
+  if (!existing) throw new Error('Ligne introuvable.')
+  const budget = memory.xx_budgets[existing.budgetId]
+  if (!budget) throw new Error('Budget introuvable.')
+  requireBudgetRiskManage(user, budget)
+  await removeDoc('xx_budget_lines', id)
+}
+
+export async function addBudgetLineComment(lineId, body, user) {
+  const line = memory.xx_budget_lines[lineId]
+  if (!line) throw new Error('Ligne introuvable.')
+  const budget = memory.xx_budgets[line.budgetId]
+  if (!budget) throw new Error('Budget introuvable.')
+  requireBudgetRiskManage(user, budget)
+  const text = String(body || '').trim()
+  if (!text) throw new Error('Commentaire vide.')
+  const comments = [...(line.comments || []), { userId: user.id, body: text, at: new Date().toISOString() }]
+  const updated = inheritScopedAccess(budget, {
+    ...line,
+    comments,
+    updatedAt: new Date().toISOString(),
+  })
+  await persistDoc('xx_budget_lines', lineId, updated)
+  return updated
+}
+
+export async function saveRisk(data, user) {
+  if (!user) throw new Error('Permission refusée.')
+  const now = new Date().toISOString()
+  const id = data.id || uid('rsk')
+  const existing = memory.xx_risks[id]
+  if (!existing) {
+    if (!canWriteRole(user)) {
+      throw new Error('Permission refusée (rôle Lecteur : création interdite).')
+    }
+  } else {
+    requireBudgetRiskManage(user, existing)
+  }
+  const title = String(data.title || '').trim()
+  if (!title) throw new Error('Titre du risque requis.')
+  const projectId = data.projectId || existing?.projectId || null
+  if (!projectId) throw new Error('Projet requis.')
+  const category = data.category || existing?.category || 'autre'
+  if (!RISK_CATEGORIES.includes(category)) throw new Error('Catégorie invalide.')
+  const probability = data.probability || existing?.probability || 'faible'
+  const impact = data.impact || existing?.impact || 'faible'
+  if (!RISK_PROBABILITIES.includes(probability)) throw new Error('Probabilité invalide.')
+  if (!RISK_IMPACTS.includes(impact)) throw new Error('Impact invalide.')
+  const status = data.status || existing?.status || 'nouveau'
+  if (!RISK_STATUSES.includes(status)) throw new Error('Statut invalide.')
+  const visibility = data.visibility || existing?.visibility || 'Privée'
+  const shares = visibility === 'Privée' ? [] : data.shares !== undefined ? data.shares : existing?.shares || []
+  const merged = {
+    ...(existing || {}),
+    id,
+    projectId,
+    title,
+    description: data.description ?? existing?.description ?? '',
+    category,
+    probability,
+    impact,
+    priority: computeRiskPriority(probability, impact),
+    ownerId: existing?.ownerId || user.id,
+    assigneeId: data.assigneeId ?? existing?.assigneeId ?? '',
+    detectedAt: data.detectedAt ?? existing?.detectedAt ?? now.slice(0, 10),
+    dueDate: data.dueDate ?? existing?.dueDate ?? '',
+    status,
+    shares,
+    visibility,
+    comments: existing?.comments || [],
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    history: [
+      ...(existing?.history || []),
+      scopedHistory(user, existing ? 'update' : 'create', existing ? 'Risque modifié' : 'Risque créé'),
+    ],
+  }
+  const docData = withScopedAccess(merged)
+  await persistDoc('xx_risks', id, docData)
+  if (existing) await syncScopedChildren(docData, 'xx_risk_actions', 'riskId')
+  await notifyNewShares(existing, docData, user, {
+    type: 'risk_share',
+    title: 'Risque partagé',
+    body: `${user.fullName} a partagé le risque « ${docData.title} » avec vous.`,
+    meta: { riskId: id },
+  })
+  return docData
+}
+
+export async function deleteRisk(id, user) {
+  const existing = memory.xx_risks[id]
+  if (!existing) throw new Error('Risque introuvable.')
+  requireBudgetRiskDelete(user, existing)
+  for (const action of Object.values(memory.xx_risk_actions || {})) {
+    if (action.riskId === id) await removeDoc('xx_risk_actions', action.id)
+  }
+  await removeDoc('xx_risks', id)
+}
+
+export async function addRiskComment(riskId, body, user) {
+  const risk = memory.xx_risks[riskId]
+  if (!risk) throw new Error('Risque introuvable.')
+  requireBudgetRiskManage(user, risk)
+  const text = String(body || '').trim()
+  if (!text) throw new Error('Commentaire vide.')
+  const comments = [...(risk.comments || []), { userId: user.id, body: text, at: new Date().toISOString() }]
+  const updated = withScopedAccess({
+    ...risk,
+    comments,
+    updatedAt: new Date().toISOString(),
+  })
+  await persistDoc('xx_risks', riskId, updated)
+  return updated
+}
+
+function actionIsOverdue(action) {
+  if (!action?.dueDate || action.status === 'terminée') return false
+  const due = new Date(`${String(action.dueDate).slice(0, 10)}T23:59:59`)
+  if (Number.isNaN(due.getTime())) return false
+  return due < new Date()
+}
+
+export async function saveRiskAction(data, user) {
+  if (!user) throw new Error('Permission refusée.')
+  const risk = memory.xx_risks[data.riskId]
+  if (!risk) throw new Error('Risque introuvable.')
+  requireBudgetRiskManage(user, risk)
+  const now = new Date().toISOString()
+  const id = data.id || uid('ract')
+  const existing = memory.xx_risk_actions[id]
+  if (existing && existing.riskId !== risk.id) throw new Error('Action invalide.')
+  const title = String(data.title || existing?.title || '').trim()
+  if (!title) throw new Error('Titre de l’action requis.')
+  const status = data.status || existing?.status || 'à faire'
+  if (!RISK_ACTION_STATUSES.includes(status)) throw new Error('Statut invalide.')
+  const action = inheritScopedAccess(risk, {
+    ...(existing || {}),
+    id,
+    riskId: risk.id,
+    title,
+    assigneeId: data.assigneeId ?? existing?.assigneeId ?? '',
+    dueDate: data.dueDate ?? existing?.dueDate ?? '',
+    status,
+    comments: existing?.comments || [],
+    createdBy: existing?.createdBy || user.id,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  })
+  await persistDoc('xx_risk_actions', id, action)
+  if (actionIsOverdue(action)) {
+    const ids = [action.assigneeId, risk.assigneeId, risk.ownerId].filter((id) => id && id !== user.id)
+    await notifyUsers(ids, {
+      type: 'risk_overdue',
+      title: 'Action en retard',
+      body: `L’action « ${action.title} » du risque « ${risk.title} » est en retard.`,
+      meta: { riskId: risk.id, actionId: action.id },
+    })
+  }
+  return action
+}
+
+export async function deleteRiskAction(id, user) {
+  const existing = memory.xx_risk_actions[id]
+  if (!existing) throw new Error('Action introuvable.')
+  const risk = memory.xx_risks[existing.riskId]
+  if (!risk) throw new Error('Risque introuvable.')
+  requireBudgetRiskManage(user, risk)
+  await removeDoc('xx_risk_actions', id)
+}
+
+export async function addRiskActionComment(actionId, body, user) {
+  const action = memory.xx_risk_actions[actionId]
+  if (!action) throw new Error('Action introuvable.')
+  const risk = memory.xx_risks[action.riskId]
+  if (!risk) throw new Error('Risque introuvable.')
+  requireBudgetRiskManage(user, risk)
+  const text = String(body || '').trim()
+  if (!text) throw new Error('Commentaire vide.')
+  const comments = [...(action.comments || []), { userId: user.id, body: text, at: new Date().toISOString() }]
+  const updated = inheritScopedAccess(risk, {
+    ...action,
+    comments,
+    updatedAt: new Date().toISOString(),
+  })
+  await persistDoc('xx_risk_actions', actionId, updated)
+  return updated
 }

@@ -126,6 +126,14 @@ service cloud.firestore {
       return isAdmin() || isOwner() || isSharedEdit();
     }
 
+    function canWriteResource() {
+      return isAdmin() || isOwnerCreate() || (
+        isSignedIn()
+        && request.resource.data.keys().hasAll(['shareEditUserIds'])
+        && request.auth.uid in request.resource.data.shareEditUserIds
+      );
+    }
+
     function isGroupMember() {
       return isSignedIn()
         && resource.data.keys().hasAll(['memberIds'])
@@ -210,6 +218,30 @@ service cloud.firestore {
       allow create: if isOwnerCreate() || isAdmin();
       allow update: if canWriteEntity();
       allow delete: if isAdmin() || isOwner() || isSharedManage();
+    }
+
+    match /xx_budgets/{id} {
+      allow read: if isSignedIn() && (canReadEntity() || isTeamVisible());
+      allow create: if isOwnerCreate() || isAdmin();
+      allow update, delete: if canWriteEntity();
+    }
+
+    match /xx_budget_lines/{id} {
+      allow read: if isSignedIn() && (canReadEntity() || isTeamVisible());
+      allow create: if canWriteResource();
+      allow update, delete: if canWriteEntity();
+    }
+
+    match /xx_risks/{id} {
+      allow read: if isSignedIn() && (canReadEntity() || isTeamVisible());
+      allow create: if isOwnerCreate() || isAdmin();
+      allow update, delete: if canWriteEntity();
+    }
+
+    match /xx_risk_actions/{id} {
+      allow read: if isSignedIn() && (canReadEntity() || isTeamVisible());
+      allow create: if canWriteResource();
+      allow update, delete: if canWriteEntity();
     }
 
     match /xx_messages/{id} {

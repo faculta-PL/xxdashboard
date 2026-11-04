@@ -25,7 +25,7 @@ export function canReadEntity(user, entity) {
   if (!user || !entity) return false
   if (isAdmin(user)) return true
   if (entity.ownerId === user.id) return true
-  if (entity.visibility === 'Publique') return true
+  if (entity.visibility === 'Publique' || entity.visibility === 'Équipe') return true
   if (entity.visibility === 'Privée') {
     return Boolean(entity.shares?.some((s) => s.userId === user.id))
   }
@@ -200,4 +200,83 @@ export function canAddInFolder(user, folder, ctx = {}) {
 
 export function fileAccessContext(folders = {}, projects = {}) {
   return { folders, projects }
+}
+
+export const BUDGET_CURRENCIES = ['EUR', 'USD']
+
+export const BUDGET_CATEGORIES = [
+  'Salaires et rémunérations',
+  'Matériel et équipements',
+  'Fournitures et produits',
+  'Transport et déplacements',
+  'Marketing et communication',
+  'Frais administratifs',
+  'Prestataires et services',
+  'Autres',
+]
+
+export const BUDGET_LINE_KINDS = ['planned', 'actual', 'salary']
+export const BUDGET_ACTUAL_STATUSES = ['planned', 'paid', 'cancelled']
+
+export const RISK_CATEGORIES = [
+  'budget',
+  'délai',
+  'fournisseur',
+  'produit',
+  'équipe',
+  'qualité',
+  'réglementation',
+  'autre',
+]
+
+export const RISK_PROBABILITIES = ['faible', 'moyenne', 'élevée']
+export const RISK_IMPACTS = ['faible', 'moyen', 'élevé']
+export const RISK_STATUSES = ['nouveau', "à l'étude", 'en cours', 'résolu', 'écarté']
+export const RISK_ACTION_STATUSES = ['à faire', 'en cours', 'terminée']
+export const RISK_OPEN_STATUSES = ['nouveau', "à l'étude", 'en cours']
+
+export function computeRiskPriority(probability, impact) {
+  const highP = probability === 'élevée'
+  const highI = impact === 'élevé'
+  if (highP && highI) return 'élevée'
+  if (highP || highI) return 'moyenne'
+  return 'faible'
+}
+
+export function isDateOverdue(dateStr) {
+  if (!dateStr) return false
+  const due = new Date(`${String(dateStr).slice(0, 10)}T23:59:59`)
+  if (Number.isNaN(due.getTime())) return false
+  return due < new Date()
+}
+
+export function isDateNearDue(dateStr, days = 7) {
+  if (!dateStr || isDateOverdue(dateStr)) return false
+  const due = new Date(`${String(dateStr).slice(0, 10)}T23:59:59`)
+  if (Number.isNaN(due.getTime())) return false
+  const limit = new Date()
+  limit.setDate(limit.getDate() + days)
+  return due <= limit
+}
+
+export function isOpenRisk(risk) {
+  return Boolean(risk && RISK_OPEN_STATUSES.includes(risk.status))
+}
+
+/** Admin, owner, project lead (lead or canEditEntity on the project), or Édition share. */
+export function canManageBudgetRisk(user, entity, projectsById) {
+  if (!user || !entity) return false
+  if (isAdmin(user)) return true
+  if (entity.ownerId === user.id) return true
+  if (isProjectLeadFor(user, entity.projectId, projectsById)) return true
+  if (!canWriteRole(user)) return false
+  const share = entity.shares?.find((s) => s.userId === user.id)
+  return share?.permission === 'Édition'
+}
+
+export function canDeleteBudgetRisk(user, entity, projectsById) {
+  if (!user || !entity) return false
+  if (isAdmin(user)) return true
+  if (entity.ownerId === user.id) return true
+  return isProjectLeadFor(user, entity.projectId, projectsById)
 }
