@@ -5,6 +5,14 @@ export const ROLES = {
   READER: 'Lecteur',
 }
 
+/** Built-in admin accounts — keep in sync with firestore.rules / storage.rules. */
+export const ADMIN_EMAILS = ['admin@xxdashboard.fr', 'facultamalika@gmail.com']
+
+export function isAdminEmail(email) {
+  const normalized = String(email || '').trim().toLowerCase()
+  return ADMIN_EMAILS.includes(normalized)
+}
+
 export const ROLE_RANK = {
   [ROLES.ADMIN]: 4,
   [ROLES.PROJECT_LEAD]: 3,
@@ -13,7 +21,9 @@ export const ROLE_RANK = {
 }
 
 export function isAdmin(user) {
-  return user?.role === ROLES.ADMIN
+  if (!user) return false
+  if (user.role === ROLES.ADMIN) return true
+  return isAdminEmail(user.email)
 }
 
 export function canWriteRole(user) {

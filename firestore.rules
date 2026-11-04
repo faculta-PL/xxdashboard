@@ -20,7 +20,10 @@ service cloud.firestore {
     }
 
     function isAdminEmail() {
-      return isSignedIn() && authEmail() == 'facultamalika@gmail.com';
+      return isSignedIn() && (
+        authEmail() == 'admin@xxdashboard.fr'
+        || authEmail() == 'facultamalika@gmail.com'
+      );
     }
 
     function userPath() {

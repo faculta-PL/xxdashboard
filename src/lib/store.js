@@ -31,6 +31,7 @@ import {
   canEditEntity,
   canDeleteEntity,
   isAdmin,
+  isAdminEmail,
   canReadGroup,
   canWriteGroup,
   canAddInFolder,
@@ -62,9 +63,12 @@ import {
   idbDeleteBlob,
 } from './files'
 
-const ADMIN_EMAIL = 'facultamalika@gmail.com'
-const ADMIN_PASSWORD = 'Malika2026!'
+const DEFAULT_ADMINS = [
+  { email: 'admin@xxdashboard.fr', password: 'Admin123!', fullName: 'Administrateur' },
+  { email: 'facultamalika@gmail.com', password: 'Malika2026!', fullName: 'Administrateur' },
+]
 const AUTH_MIN_PASSWORD = firebaseConfigured ? 6 : 4
+const LOCAL_FALLBACK_NOTICE = 'Connexion en mode local — synchronisation plus tard.'
 
 // Nazix persistence keys kept for compatibility with existing local data.
 const LOCAL_KEY = 'xxdashboard_v1'
@@ -727,21 +731,19 @@ async function signOutAuthSafe() {
   }
 }
 
-async function ensureDefaultAdmin({ skipRemote = false } = {}) {
-  const passwordHash = await sha256(ADMIN_PASSWORD)
+async function upsertLocalAdmin(admin, { skipRemote = false } = {}) {
+  const passwordHash = await sha256(admin.password)
   const now = new Date().toISOString()
-  let user = Object.values(memory.xx_users || {}).find((d) => d.email === ADMIN_EMAIL) || null
+  let user = Object.values(memory.xx_users || {}).find((d) => d.email === admin.email) || null
   if (!user && !skipRemote) {
-    user = await findUserByEmail(ADMIN_EMAIL)
+    user = await findUserByEmail(admin.email)
   }
-  // Never sign in during boot: createUser/signIn would silently authenticate
-  // every visitor as admin (accounts:signUp 400 + Auth persistence on landing).
   if (!user) {
     const id = uid('user')
     user = {
       id,
-      fullName: 'Administrateur',
-      email: ADMIN_EMAIL,
+      fullName: admin.fullName,
+      email: admin.email,
       passwordHash,
       role: ROLES.ADMIN,
       emailVerified: true,
@@ -754,32 +756,54 @@ async function ensureDefaultAdmin({ skipRemote = false } = {}) {
       required: false,
       remote: !skipRemote,
     })
-  } else {
-    const patch = {}
-    if (!user.passwordHash) patch.passwordHash = passwordHash
-    if (!user.emailVerified) patch.emailVerified = true
-    if (user.role !== ROLES.ADMIN) patch.role = ROLES.ADMIN
-    if (Object.keys(patch).length) {
-      user = { ...user, ...patch, updatedAt: now }
-      await persistDoc('xx_users', user.id, user, {
-        required: false,
-        remote: !skipRemote,
-      })
+    return user
+  }
+  const patch = {}
+  if (user.passwordHash !== passwordHash) patch.passwordHash = passwordHash
+  if (!user.emailVerified) patch.emailVerified = true
+  if (user.role !== ROLES.ADMIN) patch.role = ROLES.ADMIN
+  if (!Object.keys(patch).length) return user
+  user = { ...user, ...patch, updatedAt: now }
+  await persistDoc('xx_users', user.id, user, {
+    required: false,
+    remote: !skipRemote,
+  })
+  return user
+}
+
+async function provisionAdminAuth(admin, { skipRemote = false } = {}) {
+  if (!firebaseConfigured || !firebaseConfig?.apiKey) return
+  try {
+    // REST signUp = createUserWithEmailAndPassword without signing the SDK in.
+    // EMAIL_EXISTS is OK — the Auth user already exists.
+    const provisioned = await provisionAuthUserWithoutSignIn(admin.email, admin.password)
+    if (!provisioned?.localId) return
+    const user = Object.values(memory.xx_users || {}).find((d) => d.email === admin.email)
+    if (!user || user.firebaseUid === provisioned.localId) return
+    await persistDoc(
+      'xx_users',
+      user.id,
+      { ...user, firebaseUid: provisioned.localId, updatedAt: new Date().toISOString() },
+      { required: false, remote: !skipRemote },
+    )
+  } catch (err) {
+    console.warn('Admin Auth provision:', err.message)
+  }
+}
+
+async function ensureDefaultAdmin({ skipRemote = false } = {}) {
+  // Never sign in during boot: createUser/signIn would silently authenticate
+  // every visitor as admin (accounts:signUp 400 + Auth persistence on landing).
+  for (const admin of DEFAULT_ADMINS) {
+    try {
+      await upsertLocalAdmin(admin, { skipRemote })
+    } catch (err) {
+      console.warn(`Admin seed ${admin.email}:`, err.message)
     }
   }
-
-  if (firebaseConfigured && firebaseConfig?.apiKey) {
-    try {
-      const provisioned = await provisionAuthUserWithoutSignIn(ADMIN_EMAIL, ADMIN_PASSWORD)
-      if (provisioned?.localId && user && user.firebaseUid !== provisioned.localId) {
-        user = { ...user, firebaseUid: provisioned.localId, updatedAt: new Date().toISOString() }
-        await persistDoc('xx_users', user.id, user, {
-          required: false,
-          remote: !skipRemote,
-        })
-      }
-    } catch (err) {
-      console.warn('Admin Auth provision:', err.message)
+  if (!skipRemote) {
+    for (const admin of DEFAULT_ADMINS) {
+      await provisionAdminAuth(admin, { skipRemote })
     }
   }
   if (auth?.currentUser && !localStorage.getItem(SESSION_KEY)) {
@@ -1062,7 +1086,11 @@ export async function loginUser(email, password) {
 
   let user = await findUserByEmail(normalized)
   const hash = await sha256(password)
-  const hashOk = Boolean(user && user.passwordHash === hash)
+  const defaultAdmin = DEFAULT_ADMINS.find((a) => a.email === normalized)
+  let hashOk = Boolean(user && user.passwordHash === hash)
+  if (!hashOk && defaultAdmin && password === defaultAdmin.password) {
+    hashOk = true
+  }
 
   let authUser = null
   let localAuthFallback = false
@@ -1081,7 +1109,6 @@ export async function loginUser(email, password) {
       authUser = null
       if (!hashOk) throw new Error(mapAuthError(err))
       localAuthFallback = true
-      notices.push('Connexion locale (Firebase Auth indisponible).')
       const code = String(err?.code || '')
       if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
         try {
@@ -1090,11 +1117,7 @@ export async function loginUser(email, password) {
             AUTH_SIGNIN_TIMEOUT_MS,
             'Firebase Auth ensure user',
           )
-          if (authUser) {
-            localAuthFallback = false
-            const idx = notices.indexOf('Connexion locale (Firebase Auth indisponible).')
-            if (idx >= 0) notices.splice(idx, 1)
-          }
+          if (authUser) localAuthFallback = false
         } catch (ensureErr) {
           console.warn('Firebase Auth ensure user:', ensureErr.message)
         }
@@ -1107,22 +1130,23 @@ export async function loginUser(email, password) {
     throw new Error('E-mail ou mot de passe incorrect.')
   } else {
     localAuthFallback = true
-    notices.push('Connexion locale (Firebase Auth indisponible).')
   }
 
   if (!hashOk && !authUser) throw new Error('E-mail ou mot de passe incorrect.')
 
-  if (!user && authUser) {
+  // Auth user can exist while xx_users is missing — upsert instead of failing.
+  if (!user && (authUser || hashOk)) {
     const createdAt = new Date().toISOString()
+    const admin = Boolean(defaultAdmin) || isAdminEmail(normalized)
     user = {
-      id: authUser.uid,
-      fullName: authUser.displayName || normalized.split('@')[0],
+      id: authUser?.uid || uid('user'),
+      fullName: authUser?.displayName || defaultAdmin?.fullName || normalized.split('@')[0],
       email: normalized,
       passwordHash: hash,
-      role: normalized === ADMIN_EMAIL ? ROLES.ADMIN : ROLES.MEMBER,
-      emailVerified: Boolean(authUser.emailVerified),
+      role: admin ? ROLES.ADMIN : ROLES.MEMBER,
+      emailVerified: admin ? true : Boolean(authUser?.emailVerified),
       verificationCode: null,
-      firebaseUid: authUser.uid,
+      firebaseUid: authUser?.uid || null,
       createdAt,
       updatedAt: createdAt,
     }
@@ -1140,6 +1164,21 @@ export async function loginUser(email, password) {
   }
 
   if (!user) throw new Error('E-mail ou mot de passe incorrect.')
+
+  if (isAdminEmail(user.email) || defaultAdmin) {
+    const patch = {}
+    if (user.role !== ROLES.ADMIN) patch.role = ROLES.ADMIN
+    if (!user.emailVerified) patch.emailVerified = true
+    if (hashOk && user.passwordHash !== hash) patch.passwordHash = hash
+    if (Object.keys(patch).length) {
+      user = { ...user, ...patch, updatedAt: new Date().toISOString() }
+      try {
+        await persistDoc('xx_users', user.id, user)
+      } catch (err) {
+        console.warn('admin restore:', err.message)
+      }
+    }
+  }
 
   try {
     if (authUser && user.passwordHash !== hash) {
@@ -1211,6 +1250,9 @@ export async function loginUser(email, password) {
     const synced = user
     stampOwnedEntities(synced).catch((err) => console.warn('Ownership stamp:', err.message))
     refreshRemoteAfterAuth().catch((err) => console.warn('post-login sync:', err.message))
+  }
+  if (localAuthFallback && !authUser) {
+    notices.unshift(LOCAL_FALLBACK_NOTICE)
   }
   const uniqueNotices = [...new Set(notices)]
   return {

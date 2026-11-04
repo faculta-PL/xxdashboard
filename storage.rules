@@ -20,7 +20,8 @@ service firebase.storage {
 
     function isAdmin() {
       return isSignedIn() && (
-        authEmail() == 'facultamalika@gmail.com'
+        authEmail() == 'admin@xxdashboard.fr'
+        || authEmail() == 'facultamalika@gmail.com'
         || (
           firestore.exists(/databases/(default)/documents/xx_users/$(request.auth.uid))
           && firestore.get(/databases/(default)/documents/xx_users/$(request.auth.uid)).data.role == 'Administrateur'

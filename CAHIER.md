@@ -12,7 +12,7 @@ Nazix est un espace de travail collaboratif en temps réel : notes, idées (Kanb
 
 ## Comptes
 
-- Administrateur : `facultamalika@gmail.com`
+- Administrateurs : `admin@xxdashboard.fr` et `facultamalika@gmail.com`
 - Les autres comptes s’inscrivent via Connexion / Inscription.
 
 ## Modules
@@ -106,7 +106,7 @@ Collection Firestore `xx_budgets` (fiche budget rattachée à un projet) et `xx_
 - **Membre** : crée ; modifie s’il est propriétaire ou a le partage **Édition**
 - **Lecteur** : lecture des budgets partagés (ou Équipe / Publique) uniquement — pas de création, édition ni suppression
 
-Contrôle **dans `store.js` à l’écriture**. Règles Firestore : connecté, propriétaire, `shareUserIds`, visibilité Équipe / Publique, admin `facultamalika@gmail.com`.
+Contrôle **dans `store.js` à l’écriture**. Règles Firestore : connecté, propriétaire, `shareUserIds`, visibilité Équipe / Publique, admins `admin@xxdashboard.fr` et `facultamalika@gmail.com`.
 
 ## Module Risques et solutions
 

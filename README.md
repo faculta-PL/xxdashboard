@@ -32,10 +32,11 @@ npm run dev
 
 L’app écoute sur [http://127.0.0.1:3847](http://127.0.0.1:3847).
 
-### Compte administrateur
+### Comptes administrateur
 
 | E-mail | Mot de passe |
 |--------|--------------|
+| `admin@xxdashboard.fr` | `Admin123!` |
 | `facultamalika@gmail.com` | `Malika2026!` |
 
 ## Firebase (Auth + Firestore)
@@ -70,7 +71,7 @@ La barre latérale affiche alors **Firebase** (via `getBackendMode()`).
 |--------|---------------|-----------|
 | Inscription | `createUserWithEmailAndPassword` + `sendEmailVerification` | `xx_users` (id = Auth uid, rôle Membre, code 6 chiffres de secours) + notification |
 | Connexion | `signInWithEmailAndPassword` **et/ou** SHA-256 Firestore | `xx_sessions` (jeton 24 h, `userId` = Auth uid) |
-| Premier démarrage | création du compte `facultamalika@gmail.com` / `Malika2026!` si possible | seed du même admin dans `xx_users` |
+| Premier démarrage | création Auth des admins `admin@xxdashboard.fr` et `facultamalika@gmail.com` si absents (sans auto-connexion) | seed des deux admins dans `xx_users` |
 | Reset 2 étapes | `sendPasswordResetEmail` puis `confirmPasswordReset` (oobCode) ou `updatePassword` si session | `xx_reset_tokens` + notification de secours |
 | Déconnexion / révocation | `signOut` | `xx_sessions.active = false` |
 | Chat / groupes | — | `xx_groups`, `xx_messages` (membres uniquement) |

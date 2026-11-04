@@ -726,6 +726,13 @@ export default function App() {
         if (/existe déjà|invalide/i.test(msg)) nextFields.email = msg
         if (/caractères|faible/i.test(msg)) nextFields.password = msg
       }
+      if (authMode === 'login') {
+        if (/e-mail ou mot de passe|mot de passe incorrect|aucun compte/i.test(msg)) {
+          nextFields.email = msg
+          nextFields.password = msg
+        } else if (/e-mail|adresse/i.test(msg)) nextFields.email = msg
+        else if (/mot de passe/i.test(msg)) nextFields.password = msg
+      }
       if (authMode === 'reset' && /code|jeton/i.test(msg)) nextFields.resetToken = msg
       if (authMode === 'forgot' && /invalide/i.test(msg)) nextFields.email = msg
       if (Object.keys(nextFields).length) setAuthFieldErrors(nextFields)
