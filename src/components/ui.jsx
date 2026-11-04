@@ -1,4 +1,5 @@
 /** Petits composants réutilisables — palette sauge / crème. */
+import { createPortal } from 'react-dom'
 
 export const inputClass =
   'w-full min-h-11 rounded-xl border border-sage-300 bg-white px-3 py-2.5 text-sage-900 outline-none ring-sage-400 placeholder:text-sage-400 focus:ring-2'
@@ -98,14 +99,18 @@ export function ConfirmDialog({
   busy,
   danger,
 }) {
-  if (!open) return null
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-3">
+  if (!open || typeof document === 'undefined') return null
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-0 sm:items-center sm:p-4">
       <button type="button" className="absolute inset-0" aria-label="Fermer" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-lg overflow-hidden rounded-t-2xl bg-sage-50 p-5 shadow-xl animate-fade-up sm:rounded-2xl">
-        <h3 className="font-display text-xl text-sage-900">{title}</h3>
-        {body && <p className="mt-2 text-sm text-sage-700">{body}</p>}
-        <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+      <div className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-2xl animate-fade-up sm:rounded-2xl">
+        <div className="sticky top-0 shrink-0 border-b border-sage-200 px-5 py-4">
+          <h3 className="font-display text-xl text-sage-900">{title}</h3>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+          {body && <p className="text-sm text-sage-700">{body}</p>}
+        </div>
+        <div className="sticky bottom-0 flex shrink-0 flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-5 py-3 sm:flex-row sm:justify-end pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button type="button" className={btnGhost} onClick={onClose} disabled={busy}>
             {cancelLabel}
           </button>
@@ -119,7 +124,8 @@ export function ConfirmDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

@@ -36,6 +36,14 @@ Nazix est un espace de travail collaboratif en temps réel : notes, idées (Kanb
 - **Assistant IA** (extractif local par défaut, optionnel clé serveur)
 - **Jeux** (arcade distincte : KingX Cueillette, Zianotix Vol, Relais Duo)
 
+## Guide in-app
+
+Première connexion : visite optionnelle en 5 étapes (Passer pour ignorer), persistée dans `localStorage` (`nazix_guide_done`). Un item **Guide** dans Outils liste Tableau de bord, Projets, Notes, Kanban, Fichiers, Budget, Risques, Chat, Jeux, Assistant, avec une carte d’intro repliable par module (`?` dans l’en-tête). Démos CSS ~10 s (notes, kanban, projets, chat) sur le Guide et la landing « Voir la démo ».
+
+## E-mails Auth (modèles Firebase)
+
+Le SPA ne peut pas styler les e-mails Firebase. Coller les modèles FR dans **Console → Authentication → Templates** (objets et corps dans `src/lib/emailCopy.js`). Inscription : `sendEmailVerification` + code à 6 chiffres (toast, notification, écran de succès). Reset : `sendPasswordResetEmail`, lien 1 h, étapes spam / coller le code. Si l’envoi Firebase échoue : toast + « e-mail Firebase indisponible, utilisez le code ci-dessous ».
+
 ## Auth Firebase + repli local
 
 Si les variables `VITE_FIREBASE_*` sont renseignées, Nazix utilise **Firebase Auth** (e-mail / mot de passe), **Firestore** et **Storage**. Sinon, tout fonctionne en **localStorage** (métadonnées) et **IndexedDB** (blobs fichiers), avec mention « Mode local » dans la barre latérale et Paramètres.

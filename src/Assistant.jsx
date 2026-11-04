@@ -63,7 +63,7 @@ export function AssistantFab({ view, open, onOpen }) {
     <button
       type="button"
       onClick={onOpen}
-      className="fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-[max(1rem,env(safe-area-inset-right))] z-30 inline-flex min-h-12 items-center gap-2 rounded-full bg-sage-700 px-4 py-3 text-sm font-semibold text-sage-50 shadow-lg hover:bg-sage-800"
+      className="fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-[max(1rem,env(safe-area-inset-right))] z-20 inline-flex min-h-12 items-center gap-2 rounded-full bg-sage-700 px-4 py-3 text-sm font-semibold text-sage-50 shadow-lg hover:bg-sage-800"
       aria-label="Ouvrir l’assistant IA"
     >
       <Sparkles size={18} />
@@ -803,7 +803,7 @@ export function AssistantPanel({
       <button
         type="button"
         onClick={() => onCollapse(false)}
-        className="fixed top-1/2 right-0 z-30 flex h-24 w-10 -translate-y-1/2 items-center justify-center rounded-l-xl bg-sage-700 text-sage-50 shadow"
+        className="fixed top-1/2 right-0 z-20 flex h-24 w-10 -translate-y-1/2 items-center justify-center rounded-l-xl bg-sage-700 text-sage-50 shadow"
         aria-label="Déplier l’assistant"
       >
         <Sparkles size={16} />
@@ -812,7 +812,7 @@ export function AssistantPanel({
   }
 
   return (
-    <aside className="fixed inset-0 z-40 flex flex-col bg-cream-green shadow-xl lg:inset-y-0 lg:left-auto lg:right-0 lg:w-[360px] lg:border-l lg:border-sage-200">
+    <aside className="fixed inset-0 z-30 flex flex-col bg-cream-green shadow-xl lg:inset-y-0 lg:left-auto lg:right-0 lg:w-[360px] lg:border-l lg:border-sage-200">
       <header className="flex items-center gap-2 border-b border-sage-200 px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
         <Sparkles size={16} className="text-sage-700" />
         <h2 className="min-w-0 flex-1 truncate font-display text-base text-sage-900">Assistant IA</h2>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   BoxSelect,
   CalendarDays,
@@ -407,10 +408,11 @@ export default function CanvasView({
         </div>
       )}
 
-      {peek && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-3">
+      {peek &&
+        createPortal(
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-0 sm:items-center sm:p-4">
           <button type="button" className="absolute inset-0" aria-label="Fermer" onClick={() => setPeek(null)} />
-          <div className="relative z-10 w-full max-w-lg rounded-t-2xl bg-sage-50 p-5 shadow-xl sm:rounded-2xl">
+          <div className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-2xl sm:rounded-2xl">
             <div className="mb-3 flex items-start justify-between gap-2">
               <div>
                 <p className="text-xs font-semibold uppercase text-sage-500">{peek.type}</p>
@@ -423,7 +425,7 @@ export default function CanvasView({
             <p className="whitespace-pre-wrap text-sm text-sage-700">
               {peek.entity.content || peek.entity.description || peek.subtitle || '—'}
             </p>
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-4 flex flex-wrap gap-2 px-5 pb-5">
               <button
                 type="button"
                 className={btnPrimary}
@@ -439,35 +441,41 @@ export default function CanvasView({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
-      {noteOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-3">
+      {noteOpen &&
+        createPortal(
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-0 sm:items-center sm:p-4">
           <button type="button" className="absolute inset-0" aria-label="Fermer" onClick={() => setNoteOpen(false)} />
           <form
             onSubmit={createNote}
-            className="relative z-10 w-full max-w-lg rounded-t-2xl bg-sage-50 p-5 shadow-xl sm:rounded-2xl"
+            className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-2xl sm:rounded-2xl"
           >
-            <h3 className="mb-3 font-display text-xl text-sage-900">Nouvelle note</h3>
-            <label className="mb-3 block text-sm">
-              <span className="mb-1 block font-medium text-sage-800">Titre</span>
-              <input
-                className={inputClass}
-                value={noteForm.title}
-                onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })}
-                required
-              />
-            </label>
-            <label className="mb-3 block text-sm">
-              <span className="mb-1 block font-medium text-sage-800">Contenu</span>
-              <textarea
-                className={inputClass + ' min-h-24'}
-                value={noteForm.content}
-                onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })}
-              />
-            </label>
-            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+            <div className="sticky top-0 shrink-0 border-b border-sage-200 px-5 py-3">
+              <h3 className="font-display text-xl text-sage-900">Nouvelle note</h3>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              <label className="mb-3 block text-sm">
+                <span className="mb-1 block font-medium text-sage-800">Titre</span>
+                <input
+                  className={inputClass}
+                  value={noteForm.title}
+                  onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })}
+                  required
+                />
+              </label>
+              <label className="mb-3 block text-sm">
+                <span className="mb-1 block font-medium text-sage-800">Contenu</span>
+                <textarea
+                  className={inputClass + ' min-h-24'}
+                  value={noteForm.content}
+                  onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })}
+                />
+              </label>
+            </div>
+            <div className="sticky bottom-0 flex shrink-0 flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-5 py-3 sm:flex-row">
               <button type="button" className={btnGhost} onClick={() => setNoteOpen(false)}>
                 Annuler
               </button>
@@ -476,7 +484,8 @@ export default function CanvasView({
               </button>
             </div>
           </form>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )

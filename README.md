@@ -58,10 +58,15 @@ VITE_FIREBASE_APP_ID=
 ```
 
 3. **Authentication** → Sign-in method → activer **E-mail/mot de passe**.
-4. **Firestore Database** → créer la base. Coller le contenu de `firestore.rules` dans **Règles** (isolation par utilisateur : propriétaire, partages, public, admin, membres des groupes). Les règles test ouvertes jusqu’au 2026-12-04 sont dans `firestore.rules.test.md` — à n’utiliser qu’en démo.
-5. Connectez-vous une fois avec l’app **avant** de remplacer d’anciennes règles trop ouvertes, pour tamponner `ownerEmail` / `shareUserIds` sur vos documents.
-6. Redémarrer Vite (`npm run dev`) pour recharger les variables `VITE_*`.
-7. Déploiement CLI (si vous êtes connecté) : `firebase deploy --only firestore:rules` via `firebase.json`. Sans token CLI, le collage console suffit.
+4. **Personnaliser les e-mails Auth (FR)** : Console Firebase → Authentication → **Templates**.
+   - **Adresse e-mail** (vérification) : objet `Confirmez votre adresse e-mail — Nazix`. Corps : demander de cliquer le lien **et** préciser qu’un code à 6 chiffres est aussi affiché dans Nazix (Paramètres / Notifications).
+   - **Réinitialisation du mot de passe** : objet `Réinitialisation de votre mot de passe — Nazix`. Indiquer de vérifier les indésirables, que le lien expire **après 1 heure**, puis de coller le code dans Nazix si le lien ne s’ouvre pas.
+   - Les textes exacts que l’app montre à l’écran (ce que l’utilisateur doit chercher dans sa boîte) sont dans `src/lib/emailCopy.js`. Firebase n’autorise pas de designer ces modèles depuis le SPA : il faut les coller dans la console.
+   - Expéditeur : domaine Auth vérifié. Sans envoi Firebase, Nazix affiche le code local et le message « e-mail Firebase indisponible, utilisez le code ci-dessous ».
+5. **Firestore Database** → créer la base. Coller le contenu de `firestore.rules` dans **Règles** (isolation par utilisateur : propriétaire, partages, public, admin, membres des groupes). Les règles test ouvertes jusqu’au 2026-12-04 sont dans `firestore.rules.test.md` — à n’utiliser qu’en démo.
+6. Connectez-vous une fois avec l’app **avant** de remplacer d’anciennes règles trop ouvertes, pour tamponner `ownerEmail` / `shareUserIds` sur vos documents.
+7. Redémarrer Vite (`npm run dev`) pour recharger les variables `VITE_*`.
+8. Déploiement CLI (si vous êtes connecté) : `firebase deploy --only firestore:rules` via `firebase.json`. Sans token CLI, le collage console suffit.
 
 La barre latérale affiche alors **Firebase** (via `getBackendMode()`).
 

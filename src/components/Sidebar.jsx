@@ -22,6 +22,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ChevronDown,
+  BookOpen,
 } from 'lucide-react'
 import { getBackendMode } from '../lib/store'
 
@@ -54,6 +55,7 @@ export const NAV_GROUPS = [
     id: 'tools',
     label: 'Outils',
     items: [
+      { id: 'guide', label: 'Guide', icon: BookOpen },
       { id: 'search', label: 'Recherche', icon: Search },
       { id: 'export', label: 'Exports', icon: Download },
       { id: 'assistant', label: 'Assistant IA', icon: Sparkles },

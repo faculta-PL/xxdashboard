@@ -62,6 +62,7 @@ import {
   idbGetBlob,
   idbDeleteBlob,
 } from './files'
+import { VERIFY_EMAIL, RESET_EMAIL, firebaseUnavailableLine } from './emailCopy'
 
 const DEFAULT_ADMINS = [
   { email: 'admin@xxdashboard.fr', password: 'Admin123!', fullName: 'Administrateur' },
@@ -987,11 +988,15 @@ export async function registerUser({ fullName, email, password }) {
   if (exists) throw new Error('Un compte existe déjà avec cet e-mail.')
 
   let authUser = null
+  let firebaseSent = false
+  let firebaseError = null
   if (firebaseConfigured) {
     authUser = await createAuthUser(normalized, password)
     try {
       await sendEmailVerification(authUser)
+      firebaseSent = true
     } catch (err) {
+      firebaseError = err
       console.warn('sendEmailVerification:', err.message)
     }
   }
@@ -1019,20 +1024,32 @@ export async function registerUser({ fullName, email, password }) {
     console.warn('General group membership:', err.message)
   }
 
+  const notifBody = firebaseSent
+    ? VERIFY_EMAIL.summary(normalized) + ` Code : ${verificationCode}.`
+    : `${firebaseUnavailableLine()} Code : ${verificationCode}.`
   const notifId = uid('notif')
   await persistDoc('xx_notifications', notifId, {
     id: notifId,
     userId: id,
     type: 'email_verification',
     email: normalized,
-    title: 'Code de vérification e-mail',
-    body: `Votre code de vérification est ${verificationCode}. Un e-mail Firebase a aussi été envoyé. Saisissez le code ici ou cliquez le lien, puis confirmez dans Paramètres.`,
+    title: VERIFY_EMAIL.subject,
+    body: notifBody,
     read: false,
     createdAt: now,
-    meta: { verificationCode },
+    meta: { verificationCode, firebaseSent: Boolean(firebaseSent) },
   })
 
-  return { user: publicUser(user), verificationCode }
+  return {
+    user: publicUser(user),
+    verificationCode,
+    firebaseSent,
+    firebaseError: firebaseError ? String(firebaseError.message || firebaseError) : null,
+    emailCopy: {
+      subject: VERIFY_EMAIL.subject,
+      body: VERIFY_EMAIL.body(normalized, verificationCode),
+    },
+  }
 }
 
 export async function verifyEmail(userId, code) {
@@ -1385,7 +1402,7 @@ export async function requestPasswordReset(email) {
   if (user) {
     const token = randomToken(16)
     const id = uid('reset')
-    const expiresAt = new Date(Date.now() + 2 * 3600 * 1000).toISOString()
+    const expiresAt = new Date(Date.now() + 1 * 3600 * 1000).toISOString()
     await persistDoc(
       'xx_reset_tokens',
       id,
@@ -1400,6 +1417,9 @@ export async function requestPasswordReset(email) {
       },
       { required: false },
     )
+    const notifBody = firebaseSent
+      ? RESET_EMAIL.summary(user.email) + ` Code local : ${token}.`
+      : `${firebaseUnavailableLine()} ${token}`
     const notifId = uid('notif')
     await persistDoc(
       'xx_notifications',
@@ -1409,20 +1429,26 @@ export async function requestPasswordReset(email) {
         userId: user.id,
         email: user.email,
         type: 'password_reset',
-        title: 'Réinitialisation du mot de passe',
-        body: `Votre jeton temporaire est ${token}. Valable 2 heures. Un e-mail Firebase a aussi été envoyé si le compte Auth existe.`,
+        title: RESET_EMAIL.subject,
+        body: notifBody,
         read: false,
         createdAt: new Date().toISOString(),
-        meta: { token },
+        meta: { token, firebaseSent: Boolean(firebaseSent) },
       },
       { required: false },
     )
     return {
       ok: true,
       firebaseSent,
+      localCode: token,
+      email: user.email,
+      emailCopy: {
+        subject: RESET_EMAIL.subject,
+        body: RESET_EMAIL.body(user.email, token),
+      },
       message: firebaseSent
-        ? 'E-mail de réinitialisation envoyé.'
-        : 'Un code a été déposé dans vos notifications (mode local).',
+        ? RESET_EMAIL.summary(user.email)
+        : `${firebaseUnavailableLine()} ${token}`,
     }
   }
 

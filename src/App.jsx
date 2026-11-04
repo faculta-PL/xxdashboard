@@ -54,8 +54,19 @@ import { AssistantFab, AssistantPanel, AssistantView, AiSettingsBlock } from './
 import { EmptyState, PriorityBadge } from './components/ui'
 import { Sidebar, NAV_FLAT, readNavCollapsed } from './components/Sidebar'
 import DashboardView from './components/DashboardView'
-
-const GamesHub = lazy(() => import('./games/GamesHub.jsx'))
+import { GuideView } from './onboarding/GuideView'
+import { GuideOverlay } from './onboarding/GuideOverlay'
+import { ModuleIntro, HelpHeaderButton } from './onboarding/ModuleIntro'
+import { DemoGrid } from './onboarding/DemoClips'
+import { EmailNoticeModal } from './onboarding/EmailNotice'
+import { readGuideDone } from './onboarding/guideContent'
+import {
+  verifyUserMessage,
+  resetUserMessage,
+  VERIFY_EMAIL,
+  RESET_EMAIL,
+  firebaseUnavailableLine,
+} from './lib/emailCopy'
 import {
   bootStore,
   subscribeStore,
@@ -178,6 +189,8 @@ import {
   buildPdfTables,
 } from './lib/export'
 
+const GamesHub = lazy(() => import('./games/GamesHub.jsx'))
+
 const NOTE_CATEGORIES = [
   'Général',
   'Stratégie',
@@ -221,35 +234,128 @@ function writeChatMap(map) {
   localStorage.setItem(CHAT_READ_KEY, JSON.stringify(map))
 }
 
-function Modal({ open, title, onClose, children, wide }) {
-  if (!open) return null
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-3">
-      <button type="button" className="absolute inset-0" aria-label="Fermer" onClick={onClose} />
-      <div
-        className={`relative z-10 flex max-h-[min(92dvh,100%)] w-full max-w-full flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-xl animate-fade-up sm:max-h-[92vh] sm:rounded-2xl ${
+const inputClass =
+  'w-full min-h-11 rounded-xl border border-sage-300 bg-white px-3 py-2.5 text-sage-900 outline-none ring-sage-400 placeholder:text-sage-400 focus:ring-2'
+const btnPrimary =
+  'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-sage-700 px-4 py-2.5 text-sm font-semibold text-sage-50 transition hover:bg-sage-800 disabled:opacity-50'
+const btnGhost =
+  'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-sage-300 bg-white/70 px-3 py-2 text-sm font-medium text-sage-800 transition hover:bg-sage-100'
+
+function Modal({
+  open,
+  title,
+  onClose,
+  children,
+  wide,
+  asForm = false,
+  onSubmit,
+  footer,
+  submitLabel = 'Enregistrer',
+  cancelLabel = 'Annuler',
+  busy = false,
+  danger = false,
+}) {
+  const bodyRef = useRef(null)
+
+  useEffect(() => {
+    if (!open) return undefined
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose?.()
+    }
+    window.addEventListener('keydown', onKey)
+    const frame = window.requestAnimationFrame(() => {
+      if (bodyRef.current) bodyRef.current.scrollTop = 0
+    })
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prev
+    }
+  }, [open, onClose, title])
+
+  if (!open || typeof document === 'undefined') return null
+
+  const showDefaultFooter = footer === undefined && asForm
+  let footerNode = null
+  if (footer === null) footerNode = null
+  else if (footer !== undefined) footerNode = footer
+  else if (showDefaultFooter) {
+    footerNode = (
+      <>
+        <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={onClose} disabled={busy}>
+          {cancelLabel}
+        </button>
+        <button
+          type="submit"
+          className={`${btnPrimary} w-full sm:w-auto${danger ? ' !bg-danger hover:!bg-danger/90' : ''}`}
+          disabled={busy}
+        >
+          {busy ? '…' : submitLabel}
+        </button>
+      </>
+    )
+  }
+
+  const Tag = asForm ? 'form' : 'div'
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-0 sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="nazix-modal-title"
+    >
+      <button type="button" className="absolute inset-0 cursor-default" aria-label="Fermer" onClick={onClose} />
+      <Tag
+        className={`relative z-10 flex max-h-[90vh] w-full max-w-full flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-2xl animate-fade-up sm:rounded-2xl ${
           wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'
         }`}
+        onSubmit={
+          asForm
+            ? (e) => {
+                e.preventDefault()
+                onSubmit?.(e)
+              }
+            : undefined
+        }
+        onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-sage-200 px-4 py-3 sm:px-5">
-          <h3 className="min-w-0 break-words font-display text-xl text-sage-900">{title}</h3>
+        <div className="sticky top-0 z-20 flex shrink-0 items-start justify-between gap-3 border-b border-sage-200 bg-sage-50 px-4 py-3 sm:px-5">
+          <h3 id="nazix-modal-title" className="min-w-0 break-words font-display text-xl text-sage-900">
+            {title}
+          </h3>
           <button
             type="button"
             onClick={onClose}
             className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg p-2 text-sage-600 hover:bg-sage-200"
+            aria-label="Fermer"
           >
             <X size={18} />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 xx-scroll sm:px-5">{children}</div>
-      </div>
-    </div>
+        <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4 xx-scroll sm:px-5">
+          {children}
+        </div>
+        {footerNode ? (
+          <div className="sticky bottom-0 z-20 flex shrink-0 flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-4 py-3 sm:flex-row sm:justify-end sm:px-5 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            {footerNode}
+          </div>
+        ) : null}
+      </Tag>
+    </div>,
+    document.body,
   )
 }
 
-function ModalActions({ children }) {
+function ModalActions({ children, onCancel }) {
   return (
-    <div className="sticky bottom-0 z-10 -mx-4 mt-4 flex flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-4 py-3 sm:-mx-5 sm:flex-row sm:px-5 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <div className="sticky bottom-0 z-10 -mx-4 mt-4 flex flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-4 py-3 sm:-mx-5 sm:flex-row sm:justify-end sm:px-5 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      {onCancel ? (
+        <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={onCancel}>
+          Annuler
+        </button>
+      ) : null}
       {children}
     </div>
   )
@@ -268,13 +374,6 @@ function Field({ label, error, children }) {
     </label>
   )
 }
-
-const inputClass =
-  'w-full min-h-11 rounded-xl border border-sage-300 bg-white px-3 py-2.5 text-sage-900 outline-none ring-sage-400 placeholder:text-sage-400 focus:ring-2'
-const btnPrimary =
-  'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-sage-700 px-4 py-2.5 text-sm font-semibold text-sage-50 transition hover:bg-sage-800 disabled:opacity-50'
-const btnGhost =
-  'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-sage-300 bg-white/70 px-3 py-2 text-sm font-medium text-sage-800 transition hover:bg-sage-100'
 
 function ShareEditor({ users, shares, onChange, excludeId, permissions }) {
   const options = users.filter((u) => u.id !== excludeId)
@@ -378,6 +477,9 @@ export default function App() {
   const [selectedNoteIds, setSelectedNoteIds] = useState([])
   const [currentProjectId, setCurrentProjectId] = useState('')
   const [currentBudgetId, setCurrentBudgetId] = useState('')
+  const [guideOpen, setGuideOpen] = useState(false)
+  const [introForce, setIntroForce] = useState(null)
+  const [emailNotice, setEmailNotice] = useState(null)
 
   const openImport = (defaults = {}) => {
     setImportDefaults({
@@ -620,6 +722,23 @@ export default function App() {
       writeExternalPref(prefs.aiExternalEnabled)
     }
   }, [user, db])
+
+  useEffect(() => {
+    if (!user) return
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+    document.documentElement.scrollTop = 0
+    document.body.scrollTop = 0
+    const main = document.getElementById('nazix-main')
+    if (main) main.scrollTop = 0
+  }, [view, user])
+
+  useEffect(() => {
+    if (!user) return
+    if (emailNotice) return
+    if (readGuideDone()) return
+    setGuideOpen(true)
+  }, [user, emailNotice])
+
   const chatUnread = useMemo(() => {
     if (!user) return 0
     return chatMessages.filter((m) => {
@@ -700,16 +819,31 @@ export default function App() {
         if (res.warning) flash(res.warning, 'warn')
         else flash('Session ouverte.')
       } else if (authMode === 'register') {
-        await registerUser(authForm)
-        flash('Compte créé. E-mail de vérification envoyé.')
+        const created = await registerUser(authForm)
         const logged = await loginUser(authForm.email, authForm.password)
         setUser(logged.user)
         setSession(logged.session)
+        const notice = {
+          kind: 'verify',
+          email: String(authForm.email || '').trim().toLowerCase(),
+          code: created.verificationCode,
+          firebaseSent: Boolean(created.firebaseSent),
+        }
+        setEmailNotice(notice)
+        const msg = verifyUserMessage(notice)
+        flash(msg, created.firebaseSent ? 'ok' : 'warn')
         if (logged.warning) flash(logged.warning, 'warn')
       } else if (authMode === 'forgot') {
         const reset = await requestPasswordReset(authForm.email)
-        const msg = reset?.message || 'E-mail de réinitialisation envoyé.'
-        flash(msg)
+        const notice = {
+          kind: 'reset',
+          email: String(authForm.email || '').trim().toLowerCase(),
+          code: reset?.localCode || '',
+          firebaseSent: Boolean(reset?.firebaseSent),
+        }
+        setEmailNotice(notice)
+        const msg = reset?.message || resetUserMessage(notice)
+        flash(msg, reset?.firebaseSent ? 'ok' : 'warn')
         setAuthError('')
         setAuthMode('reset')
       } else if (authMode === 'reset') {
@@ -784,8 +918,10 @@ export default function App() {
           handleAuth={handleAuth}
           authError={authError}
           authFieldErrors={authFieldErrors}
+          emailNotice={emailNotice}
         />
         {toast && <Toast toast={toast} />}
+        <EmailNoticeModal notice={emailNotice} onClose={() => setEmailNotice(null)} />
       </>
     )
   }
@@ -809,6 +945,7 @@ export default function App() {
           />
         </Suspense>
         {toast && <Toast toast={toast} />}
+        <EmailNoticeModal notice={emailNotice} onClose={() => setEmailNotice(null)} />
       </>
     )
   }
@@ -864,6 +1001,16 @@ export default function App() {
               {NAV_FLAT.find((n) => n.id === view)?.label}
             </h1>
           </div>
+          <HelpHeaderButton
+            onClick={() => {
+              if (view === 'guide') {
+                setGuideOpen(true)
+                return
+              }
+              setIntroForce(view)
+            }}
+            label={`Aide — ${NAV_FLAT.find((n) => n.id === view)?.label || 'module'}`}
+          />
           {!user.emailVerified && (
             <span className="hidden rounded-full bg-warn/15 px-3 py-1 text-xs font-semibold text-warn md:inline">
               E-mail non vérifié
@@ -872,8 +1019,26 @@ export default function App() {
         </header>
 
         <main
+          id="nazix-main"
           className={`min-w-0 ${view === 'chat' ? 'p-2 md:p-4' : 'p-4 md:p-6'} pb-[max(1.25rem,env(safe-area-inset-bottom))]`}
         >
+          {view !== 'guide' && (
+            <ModuleIntro
+              view={view}
+              forceOpen={introForce === view}
+              onOpenGuide={() => setView('guide')}
+              onToggle={() => setIntroForce(null)}
+            />
+          )}
+          {view === 'guide' && (
+            <GuideView
+              onGoView={(id) => setView(id)}
+              onReplayTour={() => {
+                setView('dashboard')
+                setGuideOpen(true)
+              }}
+            />
+          )}
           {view === 'assistant' && (
             <AssistantView
               user={user}
@@ -1077,6 +1242,12 @@ export default function App() {
         </>
       )}
       {toast && <Toast toast={toast} />}
+      <EmailNoticeModal notice={emailNotice} onClose={() => setEmailNotice(null)} />
+      <GuideOverlay
+        open={guideOpen}
+        onClose={() => setGuideOpen(false)}
+        onGoView={(id) => setView(id)}
+      />
       <ImportModal
         open={importOpen}
         onClose={() => setImportOpen(false)}
@@ -1180,6 +1351,7 @@ function LandingPage({
   handleAuth,
   authError,
   authFieldErrors,
+  emailNotice = null,
 }) {
   const [authOpen, setAuthOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -1206,6 +1378,9 @@ function LandingPage({
         <div className="mx-auto grid min-h-[4.25rem] max-w-6xl grid-cols-[1fr_auto] items-center gap-3 px-4 pt-[max(0.5rem,env(safe-area-inset-top))] pb-2 sm:px-6 lg:grid-cols-[1fr_auto_1fr]">
           <p className="font-display text-[1.65rem] leading-none tracking-tight text-sage-900">Nazix</p>
           <nav className="hidden items-center gap-8 text-[15px] font-medium text-sage-800 lg:flex">
+            <button type="button" className="hover:text-sage-950" onClick={() => goSection('demo')}>
+              Démo
+            </button>
             <button type="button" className="hover:text-sage-950" onClick={() => goSection('fonctionnalites')}>
               Fonctionnalités
             </button>
@@ -1245,6 +1420,7 @@ function LandingPage({
           <div className="border-t border-sage-200/70 bg-[#f5f6f1] px-4 py-3 lg:hidden">
             <div className="flex flex-col gap-1">
               {[
+                ['demo', 'Démo'],
                 ['fonctionnalites', 'Fonctionnalités'],
                 ['tarifs', 'Tarifs'],
                 ['ressources', 'Ressources'],
@@ -1291,7 +1467,7 @@ function LandingPage({
             <button
               type="button"
               className="inline-flex min-h-12 w-full items-center justify-center rounded-full border border-sage-300 bg-transparent px-6 text-[15px] font-semibold text-sage-800 transition hover:bg-white/70 sm:w-auto"
-              onClick={() => goSection('fonctionnalites')}
+              onClick={() => goSection('demo')}
             >
               Voir la démo
             </button>
@@ -1363,6 +1539,20 @@ function LandingPage({
               S'inscrire
             </button>
           </form>
+        </div>
+      </section>
+
+      <section id="demo" className="scroll-mt-24 mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-20">
+        <div className="max-w-2xl">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sage-500">Démo</p>
+          <h2 className="mt-2 font-display text-3xl text-sage-900 md:text-4xl">Nazix en dix secondes.</h2>
+          <p className="mt-3 text-sage-600">
+            Clips bouclés (notes, kanban, projets, chat). Ce sont des animations, pas des films — le
+            vrai travail se fait après connexion.
+          </p>
+        </div>
+        <div className="mt-8">
+          <DemoGrid />
         </div>
       </section>
 
@@ -1538,6 +1728,7 @@ function LandingPage({
         handleAuth={handleAuth}
         authError={authError}
         authFieldErrors={authFieldErrors}
+        emailNotice={emailNotice}
       />
     </div>
   )
@@ -1651,6 +1842,7 @@ function AuthModal({
   handleAuth,
   authError,
   authFieldErrors = {},
+  emailNotice = null,
 }) {
   useEffect(() => {
     if (!open) return undefined
@@ -1762,8 +1954,37 @@ function AuthModal({
                 </div>
               </Field>
             )}
+            {authMode === 'forgot' && (
+              <div className="mb-3 rounded-xl border border-sage-200 bg-white/80 px-3 py-3 text-sm text-sage-700">
+                <p className="font-medium text-sage-900">{RESET_EMAIL.subject}</p>
+                <ol className="mt-2 list-decimal space-y-1 pl-4">
+                  {RESET_EMAIL.steps.map((s) => (
+                    <li key={s}>{s}</li>
+                  ))}
+                </ol>
+              </div>
+            )}
             {authMode === 'reset' && (
               <>
+                <div className="mb-3 rounded-xl border border-sage-200 bg-white/80 px-3 py-3 text-sm text-sage-700">
+                  <p>{RESET_EMAIL.summary(authForm.email || emailNotice?.email || 'votre adresse')}</p>
+                  <ol className="mt-2 list-decimal space-y-1 pl-4">
+                    {RESET_EMAIL.steps.map((s) => (
+                      <li key={s}>{s}</li>
+                    ))}
+                  </ol>
+                  {emailNotice?.code ? (
+                    <p className="mt-2 rounded-lg bg-sage-100 px-2 py-2 text-center font-display text-lg tracking-wide text-sage-900">
+                      {emailNotice.code}
+                    </p>
+                  ) : null}
+                  {!emailNotice?.firebaseSent && emailNotice?.kind === 'reset' && (
+                    <p className="mt-2 text-sm font-medium text-warn">{resetUserMessage(emailNotice)}</p>
+                  )}
+                  <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-sage-50 px-2 py-2 text-[11px] leading-relaxed text-sage-700">
+                    {RESET_EMAIL.body(authForm.email || emailNotice?.email || '', emailNotice?.code || '…')}
+                  </pre>
+                </div>
                 <Field label="Code reçu par e-mail" error={authFieldErrors.resetToken}>
                   <input
                     className={inputClass}
@@ -2310,8 +2531,16 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
         </>
       )}
 
-      <Modal open={open} title={editing ? 'Modifier le budget' : 'Nouveau budget'} onClose={() => setOpen(false)} wide>
-        <form onSubmit={submitBudget} className="space-y-1">
+      <Modal
+        open={open}
+        title={editing ? 'Modifier le budget' : 'Nouveau budget'}
+        onClose={() => setOpen(false)}
+        wide
+        asForm
+        onSubmit={submitBudget}
+        busy={busy}
+      >
+        <div className="space-y-1">
           <Field label="Nom">
             <input
               className={inputClass}
@@ -2405,12 +2634,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
               onChange={(shares) => setForm({ ...form, shares })}
             />
           )}
-          <ModalActions>
-            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
-              <Check size={16} /> Enregistrer
-            </button>
-          </ModalActions>
-        </form>
+        </div>
       </Modal>
 
       <Modal
@@ -2418,8 +2642,11 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
         title={lineEditing ? 'Modifier la ligne' : 'Nouvelle ligne'}
         onClose={() => setLineOpen(false)}
         wide
+        asForm
+        onSubmit={submitLine}
+        busy={busy}
       >
-        <form onSubmit={submitLine} className="space-y-1">
+        <div className="space-y-1">
           <Field label="Libellé">
             <input
               className={inputClass}
@@ -2527,12 +2754,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
               onChange={(e) => setLineForm({ ...lineForm, notes: e.target.value })}
             />
           </Field>
-          <ModalActions>
-            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
-              <Check size={16} /> Enregistrer
-            </button>
-          </ModalActions>
-        </form>
+        </div>
       </Modal>
 
       <Modal
@@ -2578,25 +2800,31 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
         )}
       </Modal>
 
-      <Modal open={Boolean(confirm)} title="Confirmer la suppression" onClose={() => setConfirm(null)}>
+      <Modal
+        open={Boolean(confirm)}
+        title="Confirmer la suppression"
+        onClose={() => setConfirm(null)}
+        footer={
+          <>
+            <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirm(null)}>
+              Annuler
+            </button>
+            <button
+              type="button"
+              className={btnPrimary + ' w-full sm:w-auto !bg-danger'}
+              disabled={busy}
+              onClick={runConfirm}
+            >
+              Supprimer
+            </button>
+          </>
+        }
+      >
         <p className="text-sm text-sage-700">
           {confirm?.type === 'budget'
             ? 'Le budget et toutes ses lignes seront supprimés.'
             : 'Cette ligne sera définitivement supprimée.'}
         </p>
-        <ModalActions>
-          <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirm(null)}>
-            Annuler
-          </button>
-          <button
-            type="button"
-            className={btnPrimary + ' w-full sm:w-auto !bg-danger'}
-            disabled={busy}
-            onClick={runConfirm}
-          >
-            Supprimer
-          </button>
-        </ModalActions>
       </Modal>
     </div>
   )
@@ -3024,8 +3252,16 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
         </div>
       )}
 
-      <Modal open={open} title={editing ? 'Modifier le risque' : 'Nouveau risque'} onClose={() => setOpen(false)} wide>
-        <form onSubmit={submitRisk} className="space-y-1">
+      <Modal
+        open={open}
+        title={editing ? 'Modifier le risque' : 'Nouveau risque'}
+        onClose={() => setOpen(false)}
+        wide
+        asForm
+        onSubmit={submitRisk}
+        busy={busy}
+      >
+        <div className="space-y-1">
           <Field label="Titre">
             <input
               className={inputClass}
@@ -3163,20 +3399,18 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
               onChange={(shares) => setForm({ ...form, shares })}
             />
           )}
-          <ModalActions>
-            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
-              <Check size={16} /> Enregistrer
-            </button>
-          </ModalActions>
-        </form>
+        </div>
       </Modal>
 
       <Modal
         open={actionOpen}
         title={actionEditing ? 'Modifier l’action' : 'Nouvelle action'}
         onClose={() => setActionOpen(false)}
+        asForm
+        onSubmit={submitAction}
+        busy={busy}
       >
-        <form onSubmit={submitAction} className="space-y-1">
+        <div className="space-y-1">
           <Field label="Titre">
             <input
               className={inputClass}
@@ -3218,33 +3452,34 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
               ))}
             </select>
           </Field>
-          <ModalActions>
-            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
-              <Check size={16} /> Enregistrer
-            </button>
-          </ModalActions>
-        </form>
+        </div>
       </Modal>
 
-      <Modal open={Boolean(confirm)} title="Confirmer la suppression" onClose={() => setConfirm(null)}>
+      <Modal
+        open={Boolean(confirm)}
+        title="Confirmer la suppression"
+        onClose={() => setConfirm(null)}
+        footer={
+          <>
+            <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirm(null)}>
+              Annuler
+            </button>
+            <button
+              type="button"
+              className={btnPrimary + ' w-full sm:w-auto !bg-danger'}
+              disabled={busy}
+              onClick={runConfirm}
+            >
+              Supprimer
+            </button>
+          </>
+        }
+      >
         <p className="text-sm text-sage-700">
           {confirm?.type === 'risk'
             ? 'Le risque et ses actions seront supprimés.'
             : 'Cette action sera définitivement supprimée.'}
         </p>
-        <ModalActions>
-          <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirm(null)}>
-            Annuler
-          </button>
-          <button
-            type="button"
-            className={btnPrimary + ' w-full sm:w-auto !bg-danger'}
-            disabled={busy}
-            onClick={runConfirm}
-          >
-            Supprimer
-          </button>
-        </ModalActions>
       </Modal>
     </div>
   )
@@ -3511,8 +3746,15 @@ function NotesView({
         </div>
       )}
 
-      <Modal open={open} title={editing ? 'Modifier la note' : 'Nouvelle note'} onClose={() => setOpen(false)} wide>
-        <form onSubmit={submit} className="space-y-1">
+      <Modal
+        open={open}
+        title={editing ? 'Modifier la note' : 'Nouvelle note'}
+        onClose={() => setOpen(false)}
+        wide
+        asForm
+        onSubmit={submit}
+      >
+        <div className="space-y-1">
           <Field label="Titre">
             <input
               className={inputClass}
@@ -3668,30 +3910,31 @@ function NotesView({
               onChange={(shares) => setForm({ ...form, shares })}
             />
           )}
-          <ModalActions>
-            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'}>
-              <Check size={16} /> Enregistrer
-            </button>
-          </ModalActions>
-        </form>
+        </div>
       </Modal>
 
-      <Modal open={Boolean(confirmId)} title="Confirmer la suppression" onClose={() => setConfirmId(null)}>
+      <Modal
+        open={Boolean(confirmId)}
+        title="Confirmer la suppression"
+        onClose={() => setConfirmId(null)}
+        footer={
+          <>
+            <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirmId(null)}>
+              Annuler
+            </button>
+            <button
+              type="button"
+              className={btnPrimary + ' w-full sm:w-auto !bg-danger'}
+              onClick={() => remove(confirmId)}
+            >
+              Supprimer
+            </button>
+          </>
+        }
+      >
         <p className="text-sm text-sage-700">
           Cette action est définitive. Les sous-notes seront rattachées au parent supérieur.
         </p>
-        <ModalActions>
-          <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirmId(null)}>
-            Annuler
-          </button>
-          <button
-            type="button"
-            className={btnPrimary + ' w-full sm:w-auto !bg-danger'}
-            onClick={() => remove(confirmId)}
-          >
-            Supprimer
-          </button>
-        </ModalActions>
       </Modal>
     </div>
   )
@@ -4317,8 +4560,32 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
         </ul>
       )}
 
-      <Modal open={importOpen} title="Importer un fichier" onClose={() => setImportOpen(false)} wide>
-        <form onSubmit={runUpload} className="space-y-1">
+      <Modal
+        open={importOpen}
+        title="Importer un fichier"
+        onClose={() => setImportOpen(false)}
+        wide
+        asForm
+        onSubmit={runUpload}
+        busy={upload.status === 'progress'}
+        footer={
+          upload.status === 'progress' ? (
+            <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={cancelUpload}>
+              Annuler
+            </button>
+          ) : (
+            <>
+              <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setImportOpen(false)}>
+                Annuler
+              </button>
+              <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={!upload.file}>
+                <Upload size={16} /> Téléverser
+              </button>
+            </>
+          )
+        }
+      >
+        <div className="space-y-1">
           <Field label={`Fichier (max ${maxFileSizeLabel()})`}>
             <input
               type="file"
@@ -4384,22 +4651,11 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
           {upload.status === 'error' && upload.error && (
             <p className="mt-2 text-sm text-danger">{upload.error}</p>
           )}
-          <ModalActions>
-            {upload.status === 'progress' ? (
-              <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={cancelUpload}>
-                Annuler
-              </button>
-            ) : (
-              <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={!upload.file}>
-                <Upload size={16} /> Téléverser
-              </button>
-            )}
-          </ModalActions>
-        </form>
+        </div>
       </Modal>
 
-      <Modal open={folderOpen} title="Nouveau dossier" onClose={() => setFolderOpen(false)}>
-        <form onSubmit={submitFolder}>
+      <Modal open={folderOpen} title="Nouveau dossier" onClose={() => setFolderOpen(false)} asForm onSubmit={submitFolder} submitLabel="Créer" busy={busy}>
+        <div>
           <Field label="Nom">
             <input
               className={inputClass}
@@ -4444,12 +4700,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
             onShares={(shares) => setFolderForm({ ...folderForm, shares })}
             onTeamWide={(teamWide) => setFolderForm({ ...folderForm, teamWide })}
           />
-          <ModalActions>
-            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
-              <Check size={16} /> Créer
-            </button>
-          </ModalActions>
-        </form>
+        </div>
       </Modal>
 
       <Modal
@@ -4482,8 +4733,11 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
         open={Boolean(editItem)}
         title={editItem?.kind === 'folder' ? 'Modifier le dossier' : 'Modifier le fichier'}
         onClose={() => setEditItem(null)}
+        asForm
+        onSubmit={submitEdit}
+        busy={busy}
       >
-        <form onSubmit={submitEdit}>
+        <div>
           <Field label="Nom">
             <input
               className={inputClass}
@@ -4534,16 +4788,11 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
               ))}
             </select>
           </Field>
-          <ModalActions>
-            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
-              <Check size={16} /> Enregistrer
-            </button>
-          </ModalActions>
-        </form>
+        </div>
       </Modal>
 
-      <Modal open={Boolean(shareItem)} title="Partage" onClose={() => setShareItem(null)}>
-        <form onSubmit={submitShare}>
+      <Modal open={Boolean(shareItem)} title="Partage" onClose={() => setShareItem(null)} asForm onSubmit={submitShare} busy={busy}>
+        <div>
           <FileShareBlock
             users={users}
             user={user}
@@ -4552,29 +4801,30 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
             onShares={(shares) => setShareForm({ ...shareForm, shares })}
             onTeamWide={(teamWide) => setShareForm({ ...shareForm, teamWide })}
           />
-          <ModalActions>
-            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
-              <Check size={16} /> Enregistrer
-            </button>
-          </ModalActions>
-        </form>
+        </div>
       </Modal>
 
-      <Modal open={Boolean(confirm)} title={confirm?.title || 'Confirmer'} onClose={() => setConfirm(null)}>
+      <Modal
+        open={Boolean(confirm)}
+        title={confirm?.title || 'Confirmer'}
+        onClose={() => setConfirm(null)}
+        footer={
+          <>
+            <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirm(null)}>
+              Annuler
+            </button>
+            <button
+              type="button"
+              className={btnPrimary + ' w-full sm:w-auto !bg-danger'}
+              onClick={runDelete}
+              disabled={busy}
+            >
+              Supprimer
+            </button>
+          </>
+        }
+      >
         <p className="text-sm text-sage-700">{confirm?.body}</p>
-        <ModalActions>
-          <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirm(null)}>
-            Annuler
-          </button>
-          <button
-            type="button"
-            className={btnPrimary + ' w-full sm:w-auto !bg-danger'}
-            onClick={runDelete}
-            disabled={busy}
-          >
-            Supprimer
-          </button>
-        </ModalActions>
       </Modal>
     </div>
   )
@@ -4800,8 +5050,14 @@ function IdeasView({ user, ideas, users, flash }) {
         </div>
       )}
 
-      <Modal open={open} title={editing ? 'Modifier l’idée' : 'Nouvelle idée'} onClose={() => setOpen(false)}>
-        <form onSubmit={submit}>
+      <Modal
+        open={open}
+        title={editing ? 'Modifier l’idée' : 'Nouvelle idée'}
+        onClose={() => setOpen(false)}
+        asForm
+        onSubmit={submit}
+      >
+        <div>
           <Field label="Titre">
             <input
               className={inputClass}
@@ -4847,12 +5103,7 @@ function IdeasView({ user, ideas, users, flash }) {
               onChange={(shares) => setForm({ ...form, shares })}
             />
           )}
-          <ModalActions>
-            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'}>
-              Enregistrer
-            </button>
-          </ModalActions>
-        </form>
+        </div>
       </Modal>
 
       <Modal
@@ -5205,8 +5456,15 @@ function ProjectsView({
         </div>
       )}
 
-      <Modal open={open} title={editing ? 'Modifier le projet' : 'Nouveau projet'} onClose={() => setOpen(false)} wide>
-        <form onSubmit={submit} className="grid grid-cols-1 gap-1 md:grid-cols-2 md:gap-x-4">
+      <Modal
+        open={open}
+        title={editing ? 'Modifier le projet' : 'Nouveau projet'}
+        onClose={() => setOpen(false)}
+        wide
+        asForm
+        onSubmit={submit}
+      >
+        <div className="grid grid-cols-1 gap-1 md:grid-cols-2 md:gap-x-4">
           <div className="md:col-span-2">
             <Field label="Titre">
               <input
@@ -5214,6 +5472,7 @@ function ProjectsView({
                 value={form.title}
                 onChange={(e) => setForm({ ...form, title: e.target.value })}
                 required
+                autoFocus
               />
             </Field>
           </div>
@@ -5325,14 +5584,7 @@ function ProjectsView({
               onChange={(shares) => setForm({ ...form, shares })}
             />
           </div>
-          <div className="md:col-span-2">
-            <ModalActions>
-              <button type="submit" className={btnPrimary + ' w-full sm:w-auto'}>
-                Enregistrer
-              </button>
-            </ModalActions>
-          </div>
-        </form>
+        </div>
       </Modal>
 
       <Modal open={Boolean(detail)} title={detail?.title || ''} onClose={() => setDetail(null)} wide>
@@ -5471,8 +5723,8 @@ function CalendarView({ user, events, users, flash }) {
         </ul>
       )}
 
-      <Modal open={open} title="Nouvel événement" onClose={() => setOpen(false)}>
-        <form onSubmit={submit}>
+      <Modal open={open} title="Nouvel événement" onClose={() => setOpen(false)} asForm onSubmit={submit} submitLabel="Planifier">
+        <div>
           <Field label="Titre">
             <input
               className={inputClass}
@@ -5539,12 +5791,7 @@ function CalendarView({ user, events, users, flash }) {
               )}
             </div>
           </Field>
-          <ModalActions>
-            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'}>
-              Planifier
-            </button>
-          </ModalActions>
-        </form>
+        </div>
       </Modal>
     </div>
   )
@@ -5888,10 +6135,13 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
 
         {!user.emailVerified && (
           <div className="mt-4 rounded-xl border border-warn/30 bg-warn/10 p-3">
-            <p className="text-sm text-sage-800">
-              Cliquez le lien dans l’e-mail Firebase, ou saisissez le code à 6 chiffres reçu dans
-              vos notifications (secours).
+            <p className="text-sm font-medium text-sage-900">{VERIFY_EMAIL.subject}</p>
+            <p className="mt-1 text-sm text-sage-800">
+              {VERIFY_EMAIL.summary(user.email)} Cliquez le lien, ou saisissez le code à 6 chiffres.
             </p>
+            <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-white/70 px-3 py-2 text-[11px] leading-relaxed text-sage-700">
+              {VERIFY_EMAIL.body(user.email, '______')}
+            </pre>
             <div className="mt-2 flex flex-wrap gap-2">
               <input
                 className={inputClass + ' w-full max-w-full md:!w-40'}
@@ -5935,9 +6185,9 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
                 onClick={async () => {
                   try {
                     await resendVerificationEmail()
-                    flash('E-mail de vérification renvoyé.')
+                    flash(VERIFY_EMAIL.summary(user.email), 'ok')
                   } catch (err) {
-                    flash(err.message, 'err')
+                    flash(`${err.message}. ${firebaseUnavailableLine()}`, 'err')
                   }
                 }}
               >
@@ -6422,8 +6672,8 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
         )}
       </section>
 
-      <Modal open={createOpen} title="Nouveau groupe" onClose={() => setCreateOpen(false)}>
-        <form onSubmit={createGroup}>
+      <Modal open={createOpen} title="Nouveau groupe" onClose={() => setCreateOpen(false)} asForm onSubmit={createGroup} submitLabel="Créer" busy={busy}>
+        <div>
           <Field label="Nom">
             <input
               className={inputClass}
@@ -6458,16 +6708,19 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
                 })}
             </div>
           </Field>
-          <ModalActions>
-            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
-              Créer
-            </button>
-          </ModalActions>
-        </form>
+        </div>
       </Modal>
 
-      <Modal open={inviteOpen} title="Inviter dans le groupe" onClose={() => setInviteOpen(false)}>
-        <form onSubmit={invite}>
+      <Modal
+        open={inviteOpen}
+        title="Inviter dans le groupe"
+        onClose={() => setInviteOpen(false)}
+        asForm
+        onSubmit={invite}
+        submitLabel="Ajouter"
+        busy={busy}
+      >
+        <div>
           {outsiders.length === 0 ? (
             <p className="text-sm text-sage-600">Tout le monde est déjà membre.</p>
           ) : (
@@ -6491,16 +6744,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
               })}
             </div>
           )}
-          <ModalActions>
-            <button
-              type="submit"
-              className={btnPrimary + ' w-full sm:w-auto'}
-              disabled={busy || picked.length === 0}
-            >
-              Ajouter
-            </button>
-          </ModalActions>
-        </form>
+        </div>
       </Modal>
     </div>
   )

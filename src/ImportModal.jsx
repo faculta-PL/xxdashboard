@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, Upload, X } from 'lucide-react'
 import {
   saveNote,
@@ -306,13 +307,27 @@ export default function ImportModal({
     }
   }
 
-  if (!open) return null
+  const bodyRef = useRef(null)
+  useEffect(() => {
+    if (!open) return undefined
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const frame = window.requestAnimationFrame(() => {
+      if (bodyRef.current) bodyRef.current.scrollTop = 0
+    })
+    return () => {
+      window.cancelAnimationFrame(frame)
+      document.body.style.overflow = prev
+    }
+  }, [open])
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-3">
+  if (!open || typeof document === 'undefined') return null
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-0 sm:items-center sm:p-4">
       <button type="button" className="absolute inset-0" aria-label="Fermer" onClick={onClose} />
-      <div className="relative z-10 flex max-h-[min(92dvh,100%)] w-full max-w-full flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-xl animate-fade-up sm:max-h-[92vh] sm:max-w-3xl sm:rounded-2xl">
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-sage-200 px-4 py-3 sm:px-5">
+      <div className="relative z-10 flex max-h-[90vh] w-full max-w-full flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-2xl animate-fade-up sm:max-h-[90vh] sm:max-w-3xl sm:rounded-2xl">
+        <div className="sticky top-0 z-20 flex shrink-0 items-start justify-between gap-3 border-b border-sage-200 bg-sage-50 px-4 py-3 sm:px-5">
           <div>
             <h3 className="font-display text-xl text-sage-900">Importer</h3>
             <p className="text-xs text-sage-500">
@@ -327,7 +342,7 @@ export default function ImportModal({
             <X size={18} />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 xx-scroll sm:px-5">
+        <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4 xx-scroll sm:px-5">
           {step === 1 && (
             <div className="space-y-3">
               <Field label={`Fichier (${IMPORT_EXTS.join(', ')}, max ${maxFileSizeLabel()})`}>
@@ -706,7 +721,7 @@ export default function ImportModal({
           )}
           {error && <p className="mt-3 text-sm text-danger">{error}</p>}
         </div>
-        <div className="flex flex-col-reverse gap-2 border-t border-sage-200 px-4 py-3 sm:flex-row sm:px-5 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="sticky bottom-0 z-20 flex shrink-0 flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-4 py-3 sm:flex-row sm:px-5 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           {step === 2 && (
             <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setStep(1)}>
               Retour
@@ -727,6 +742,7 @@ export default function ImportModal({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
