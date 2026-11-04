@@ -11,6 +11,18 @@ Palette vert cassé / sauge · entièrement responsive · **aucune donnée ficti
 - **Auth** : `createUserWithEmailAndPassword` / `signInWithEmailAndPassword` + profil `xx_users` (SHA-256 Web Crypto), sessions `xx_sessions` (24 h), RBAC
 - **Exports** : CSV (UTF-8 BOM), XLSX, DOCX, JSON, PDF
 
+## Lancer en local
+
+Pour utiliser XXDashboard sur votre machine (dossier copié ou archive zip) :
+
+1. Copiez le dossier `XXDashboard`, ou dézippez `XXDashboard-local.zip`.
+2. Dans le dossier du projet : `npm install`
+3. Lancez : `npm run dev`
+
+L’app écoute sur [http://127.0.0.1:3847](http://127.0.0.1:3847).
+
+**Firebase** : si un fichier `.env` est présent (projet partagio), la persistance cloud fonctionne tout de suite. Sinon, copiez `.env.example` vers `.env` et renseignez les variables `VITE_FIREBASE_*` (API key, auth domain, project id, storage bucket, messaging sender id, app id). Sans ces variables, l’app tourne en mode **localStorage**. Redémarrer Vite après toute modification du `.env`.
+
 ## Démarrage rapide
 
 ```bash
