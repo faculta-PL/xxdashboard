@@ -280,3 +280,55 @@ export function canDeleteBudgetRisk(user, entity, projectsById) {
   if (entity.ownerId === user.id) return true
   return isProjectLeadFor(user, entity.projectId, projectsById)
 }
+
+/** Liens entre entités : note|file|idea|project|budget_line|risk|event|task(idea). */
+export const LINK_TYPES = ['note', 'file', 'idea', 'project', 'budget_line', 'risk', 'event', 'task']
+
+export function normalizeLinkType(type) {
+  return type === 'task' ? 'idea' : type
+}
+
+export function entityKey(type, id) {
+  return `${normalizeLinkType(type)}:${id}`
+}
+
+export function parseEntityKey(key) {
+  const raw = String(key || '')
+  const i = raw.indexOf(':')
+  if (i < 0) return { type: '', id: raw }
+  return { type: raw.slice(0, i), id: raw.slice(i + 1) }
+}
+
+export function relatedLinkEnds(links, type, id) {
+  const t = normalizeLinkType(type)
+  const out = []
+  for (const link of links || []) {
+    const fromType = normalizeLinkType(link.fromType)
+    const toType = normalizeLinkType(link.toType)
+    if (fromType === t && link.fromId === id) {
+      out.push({ type: toType, id: link.toId, link, dir: 'to' })
+    } else if (toType === t && link.toId === id) {
+      out.push({ type: fromType, id: link.fromId, link, dir: 'from' })
+    }
+  }
+  return out
+}
+
+export function isNoteAncestor(notesById, maybeAncestorId, noteId) {
+  if (!maybeAncestorId || !noteId) return false
+  let cur = notesById?.[maybeAncestorId]
+  const seen = new Set()
+  while (cur && !seen.has(cur.id)) {
+    if (cur.id === noteId) return true
+    seen.add(cur.id)
+    cur = cur.parentId ? notesById[cur.parentId] : null
+  }
+  return false
+}
+
+export function noteChildList(notes, parentId = null) {
+  const pid = parentId || null
+  return (notes || [])
+    .filter((n) => (n.parentId || null) === pid)
+    .sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), 'fr'))
+}

@@ -2,7 +2,7 @@
 
 export const MAX_FILE_BYTES = 20 * 1024 * 1024
 
-export const ALLOWED_FILE_EXTS = ['pdf', 'docx', 'xlsx', 'csv', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'webp']
+export const ALLOWED_FILE_EXTS = ['pdf', 'docx', 'xlsx', 'csv', 'txt', 'md', 'jpg', 'jpeg', 'png', 'gif', 'webp']
 
 /** Exécutables et formats XSS — toujours refusés, même hors liste blanche. */
 export const BLOCKED_FILE_EXTS = [
@@ -39,6 +39,7 @@ const EXT_MIME = {
   xlsx: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
   csv: ['text/csv', 'text/plain', 'application/csv', 'application/vnd.ms-excel'],
   txt: ['text/plain'],
+  md: ['text/markdown', 'text/plain', 'text/x-markdown'],
   jpg: ['image/jpeg'],
   jpeg: ['image/jpeg'],
   png: ['image/png'],

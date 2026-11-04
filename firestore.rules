@@ -244,6 +244,42 @@ service cloud.firestore {
       allow update, delete: if canWriteEntity();
     }
 
+    match /xx_links/{id} {
+      allow read: if isSignedIn() && (
+        isAdmin()
+        || resource.data.createdBy == request.auth.uid
+        || resource.data.ownerId == request.auth.uid
+      );
+      allow create: if isSignedIn() && (
+        isAdmin()
+        || request.resource.data.createdBy == request.auth.uid
+        || request.resource.data.ownerId == request.auth.uid
+      );
+      allow update, delete: if isSignedIn() && (
+        isAdmin()
+        || resource.data.createdBy == request.auth.uid
+        || resource.data.ownerId == request.auth.uid
+      );
+    }
+
+    match /xx_canvas_layout/{id} {
+      allow read: if isSignedIn() && (
+        isAdmin()
+        || resource.data.userId == request.auth.uid
+        || resource.data.ownerId == request.auth.uid
+      );
+      allow create: if isSignedIn() && (
+        isAdmin()
+        || request.resource.data.userId == request.auth.uid
+        || request.resource.data.ownerId == request.auth.uid
+      );
+      allow update, delete: if isSignedIn() && (
+        isAdmin()
+        || resource.data.userId == request.auth.uid
+        || resource.data.ownerId == request.auth.uid
+      );
+    }
+
     match /xx_messages/{id} {
       allow read: if isSignedIn() && (
         isAdmin()

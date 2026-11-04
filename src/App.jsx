@@ -47,7 +47,11 @@ import {
   Wallet,
   ShieldAlert,
   AlertTriangle,
+  BoxSelect,
+  Link2,
 } from 'lucide-react'
+import ImportModal from './ImportModal'
+import CanvasView from './CanvasView'
 import {
   bootStore,
   subscribeStore,
@@ -108,6 +112,7 @@ import {
   addRiskComment,
   saveRiskAction,
   deleteRiskAction,
+  syncNoteLinks,
 } from './lib/store'
 import { firebaseConfigured, missingFirebaseVars, getFirebaseStatus } from './lib/firebase'
 import {
@@ -137,6 +142,9 @@ import {
   RISK_IMPACTS,
   RISK_STATUSES,
   RISK_ACTION_STATUSES,
+  noteChildList,
+  relatedLinkEnds,
+  isNoteAncestor,
 } from './lib/rbac'
 import {
   MAX_FILE_BYTES,
@@ -189,6 +197,7 @@ const SHARE_PERMS = [
 
 const NAV = [
   { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
+  { id: 'canvas', label: 'Espace visuel', icon: BoxSelect },
   { id: 'notes', label: 'Notes', icon: StickyNote },
   { id: 'ideas', label: 'Boîte à idées', icon: Lightbulb },
   { id: 'projects', label: 'Projets', icon: FolderKanban },
@@ -366,6 +375,17 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false)
   const [showPass, setShowPass] = useState(false)
   const [chatReadMap, setChatReadMap] = useState(readChatMap)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importDefaults, setImportDefaults] = useState({ destination: 'notes', projectId: '', folderId: '' })
+
+  const openImport = (defaults = {}) => {
+    setImportDefaults({
+      destination: defaults.destination || 'notes',
+      projectId: defaults.projectId || '',
+      folderId: defaults.folderId || '',
+    })
+    setImportOpen(true)
+  }
 
   const flash = (message, type = 'ok') => {
     setToast({ message, type })
@@ -540,6 +560,11 @@ export default function App() {
     [db, user],
   )
   const presentIds = useMemo(() => (db ? listPresentUserIds() : []), [db])
+  const links = useMemo(() => (db ? Object.values(db.xx_links || {}) : []), [db])
+  const canvasLayout = useMemo(
+    () => (db && user ? db.xx_canvas_layout?.[user.id] || null : null),
+    [db, user],
+  )
   const chatUnread = useMemo(() => {
     if (!user) return 0
     return chatMessages.filter((m) => {
@@ -754,8 +779,38 @@ export default function App() {
               onQuick={(v) => setView(v)}
             />
           )}
+          {view === 'canvas' && (
+            <CanvasView
+              user={user}
+              projects={projects}
+              notes={notes}
+              ideas={ideas}
+              files={files}
+              events={events}
+              budgets={budgets}
+              budgetLines={budgetLines}
+              risks={risks}
+              links={links}
+              layout={canvasLayout}
+              flash={flash}
+              onImport={() => openImport({ destination: 'notes' })}
+              onOpenModule={(v) => setView(v)}
+            />
+          )}
           {view === 'notes' && (
-            <NotesView user={user} notes={notes} users={users} projects={projects} flash={flash} />
+            <NotesView
+              user={user}
+              notes={notes}
+              users={users}
+              projects={projects}
+              files={files}
+              ideas={ideas}
+              risks={risks}
+              budgetLines={budgetLines}
+              links={links}
+              flash={flash}
+              onImport={() => openImport({ destination: 'notes' })}
+            />
           )}
           {view === 'ideas' && (
             <IdeasView user={user} ideas={ideas} users={users} flash={flash} />
@@ -766,8 +821,14 @@ export default function App() {
               projects={projects}
               notes={notes}
               ideas={ideas}
+              files={files}
+              events={events}
+              budgets={budgets}
+              risks={risks}
+              links={links}
               users={users}
               flash={flash}
+              onImport={() => openImport({ destination: 'projects' })}
             />
           )}
           {view === 'budget' && (
@@ -779,6 +840,7 @@ export default function App() {
               projectsById={projectsById}
               users={users}
               flash={flash}
+              onImport={() => openImport({ destination: 'budget' })}
             />
           )}
           {view === 'risks' && (
@@ -790,6 +852,7 @@ export default function App() {
               projectsById={projectsById}
               users={users}
               flash={flash}
+              onImport={() => openImport({ destination: 'risks' })}
             />
           )}
           {view === 'files' && (
@@ -801,6 +864,9 @@ export default function App() {
               projects={projects}
               users={users}
               flash={flash}
+              onImport={(folderId) =>
+                openImport({ destination: 'files', folderId: folderId || '' })
+              }
             />
           )}
           {view === 'calendar' && (
@@ -819,7 +885,15 @@ export default function App() {
             />
           )}
           {view === 'search' && (
-            <SearchView notes={notes} ideas={ideas} projects={projects} events={events} files={files} />
+            <SearchView
+              notes={notes}
+              ideas={ideas}
+              projects={projects}
+              events={events}
+              files={files}
+              budgets={budgets}
+              risks={risks}
+            />
           )}
           {view === 'export' && (
             <ExportView notes={notes} ideas={ideas} projects={projects} events={events} flash={flash} />
@@ -839,6 +913,17 @@ export default function App() {
         </main>
       </div>
       {toast && <Toast toast={toast} />}
+      <ImportModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        user={user}
+        flash={flash}
+        defaultDestination={importDefaults.destination}
+        defaultProjectId={importDefaults.projectId}
+        defaultFolderId={importDefaults.folderId}
+        projects={projects}
+        budgets={budgets}
+      />
     </div>
   )
 }
@@ -849,6 +934,7 @@ const LANDING_MODULES = [
   { id: 'projets', title: 'Projets', hint: 'Suivi, responsables, pièces jointes.', icon: FolderKanban },
   { id: 'calendrier', title: 'Calendrier', hint: 'Échéances d’équipe au même endroit.', icon: CalendarDays },
   { id: 'fichiers', title: 'Fichiers', hint: 'Dossiers, 20 Mo, pdf et images.', icon: FolderOpen },
+  { id: 'canvas', title: 'Espace visuel', hint: 'Carte, liens, notes et import.', icon: BoxSelect },
   { id: 'equipe', title: 'Équipe', hint: 'Présence, profils, invitations.', icon: Users },
   { id: 'chat', title: 'Chat', hint: 'Groupes, Général, messages en direct.', icon: MessageCircle },
   { id: 'export', title: 'Export', hint: 'CSV, XLSX, DOCX, PDF, JSON.', icon: Download },
@@ -909,7 +995,7 @@ const LANDING_FAQ = [
   },
   {
     q: 'Quelle taille pour les fichiers ?',
-    a: '20 Mo maximum par fichier. Types acceptés : pdf, docx, xlsx, csv, txt, jpg, png, gif, webp. Les exécutables et formats XSS sont refusés.',
+    a: '20 Mo maximum par fichier. Types acceptés : pdf, docx, xlsx, csv, txt, md, jpg, png, gif, webp. Les exécutables et formats XSS sont refusés.',
   },
 ]
 
@@ -1640,6 +1726,7 @@ function DashboardView({
             ['ideas', 'Nouvelle idée'],
             ['projects', 'Nouveau projet'],
             ['files', 'Fichiers'],
+            ['canvas', 'Espace visuel'],
             ['budget', 'Budget'],
             ['risks', 'Risques'],
             ['calendar', 'Nouvel événement'],
@@ -1802,7 +1889,7 @@ function dueTone(dateStr, done) {
   return 'border-sage-200 bg-white/80'
 }
 
-function BudgetView({ user, budgets, lines, projects, projectsById, users, flash }) {
+function BudgetView({ user, budgets, lines, projects, projectsById, users, flash, onImport }) {
   const [selectedId, setSelectedId] = useState(budgets[0]?.id || '')
   const [tab, setTab] = useState('planned')
   const [open, setOpen] = useState(false)
@@ -2033,9 +2120,14 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
           </select>
         )}
         {canWriteRole(user) && (
-          <button type="button" className={btnPrimary} onClick={openCreate}>
-            <Plus size={16} /> Nouveau budget
-          </button>
+          <>
+            <button type="button" className={btnPrimary} onClick={openCreate}>
+              <Plus size={16} /> Nouveau budget
+            </button>
+            <button type="button" className={btnGhost} onClick={onImport}>
+              <Upload size={16} /> Importer
+            </button>
+          </>
         )}
         {selected && canManage && (
           <button type="button" className={btnGhost} onClick={openEdit}>
@@ -2503,7 +2595,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
   )
 }
 
-function RisksView({ user, risks, actions, projects, projectsById, users, flash }) {
+function RisksView({ user, risks, actions, projects, projectsById, users, flash, onImport }) {
   const [filterProject, setFilterProject] = useState('')
   const [filterAssignee, setFilterAssignee] = useState('')
   const [filterPriority, setFilterPriority] = useState('')
@@ -2703,9 +2795,14 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash 
       <LocalBanner />
       <div className="flex flex-wrap items-center gap-2">
         {canWriteRole(user) && (
-          <button type="button" className={btnPrimary} onClick={openCreate}>
-            <Plus size={16} /> Nouveau risque
-          </button>
+          <>
+            <button type="button" className={btnPrimary} onClick={openCreate}>
+              <Plus size={16} /> Nouveau risque
+            </button>
+            <button type="button" className={btnGhost} onClick={onImport}>
+              <Upload size={16} /> Importer
+            </button>
+          </>
         )}
         <select
           className={inputClass + ' max-w-full md:!w-auto'}
@@ -3146,7 +3243,19 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash 
   )
 }
 
-function NotesView({ user, notes, users, projects, flash }) {
+function NotesView({
+  user,
+  notes,
+  users,
+  projects,
+  files = [],
+  ideas = [],
+  risks = [],
+  budgetLines = [],
+  links = [],
+  flash,
+  onImport,
+}) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [confirmId, setConfirmId] = useState(null)
@@ -3162,11 +3271,27 @@ function NotesView({ user, notes, users, projects, flash }) {
       visibility: 'Privée',
       shares: [],
       projectId: '',
+      parentId: '',
+      linkFileIds: [],
+      linkRiskIds: [],
+      linkExpenseIds: [],
+      linkIdeaIds: [],
     }
   }
 
+  const notesById = useMemo(() => Object.fromEntries(notes.map((n) => [n.id, n])), [notes])
   const filtered =
     filterCat === 'Tous' ? notes : notes.filter((n) => n.category === filterCat)
+  const treeNotes = useMemo(() => {
+    if (filterCat !== 'Tous') return filtered
+    const roots = noteChildList(notes, null)
+    const ids = new Set(notes.map((n) => n.id))
+    const orphans = notes.filter((n) => n.parentId && !ids.has(n.parentId))
+    const seen = new Set(roots.map((n) => n.id))
+    return [...roots, ...orphans.filter((n) => !seen.has(n.id))]
+  }, [filterCat, filtered, notes])
+
+  const noteLinksOf = (noteId) => relatedLinkEnds(links, 'note', noteId)
 
   const openCreate = () => {
     setEditing(null)
@@ -3176,6 +3301,7 @@ function NotesView({ user, notes, users, projects, flash }) {
 
   const openEdit = (n) => {
     setEditing(n)
+    const related = noteLinksOf(n.id)
     setForm({
       title: n.title || '',
       content: n.content || '',
@@ -3184,6 +3310,11 @@ function NotesView({ user, notes, users, projects, flash }) {
       visibility: n.visibility || 'Privée',
       shares: n.shares || [],
       projectId: n.projectId || '',
+      parentId: n.parentId || '',
+      linkFileIds: related.filter((r) => r.type === 'file').map((r) => r.id),
+      linkRiskIds: related.filter((r) => r.type === 'risk').map((r) => r.id),
+      linkExpenseIds: related.filter((r) => r.type === 'budget_line').map((r) => r.id),
+      linkIdeaIds: related.filter((r) => r.type === 'idea').map((r) => r.id),
     })
     setOpen(true)
   }
@@ -3211,8 +3342,18 @@ function NotesView({ user, notes, users, projects, flash }) {
         visibility: form.visibility,
         shares: form.visibility === 'Privée' ? [] : form.shares,
         projectId: form.projectId || null,
+        parentId: form.parentId || null,
       }
       const saved = await saveNote(payload, user)
+      const targets = [
+        ...form.linkFileIds.map((id) => ({ type: 'file', id })),
+        ...form.linkRiskIds.map((id) => ({ type: 'risk', id })),
+        ...form.linkExpenseIds.map((id) => ({ type: 'budget_line', id })),
+        ...form.linkIdeaIds.map((id) => ({ type: 'idea', id })),
+      ]
+      if (canWriteRole(user)) {
+        await syncNoteLinks(saved.id, targets, user)
+      }
       const shareIds = (saved.shares || []).map((s) => s.userId)
       if (shareIds.length) {
         await notifyUsers(shareIds, {
@@ -3240,13 +3381,85 @@ function NotesView({ user, notes, users, projects, flash }) {
     flash('Note supprimée.')
   }
 
+  const renderNoteCard = (n, depth = 0) => {
+    const children = filterCat === 'Tous' ? noteChildList(notes, n.id) : []
+    const related = noteLinksOf(n.id)
+    return (
+      <div key={n.id} className={depth ? 'mt-2 border-l border-sage-200 pl-3' : ''}>
+        <article className="rounded-2xl border border-sage-200 bg-white/80 p-4 transition hover:border-sage-400">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h3 className="font-display text-lg text-sage-900">{n.title}</h3>
+              <p className="text-xs text-sage-500">
+                {n.category} · {n.visibility}
+                {n.parentId ? ` · sous-note de ${notesById[n.parentId]?.title || '…'}` : ''}
+              </p>
+            </div>
+            <div className="flex gap-1">
+              {canEditEntity(user, n) && (
+                <button type="button" className={btnGhost + ' !px-2'} onClick={() => openEdit(n)}>
+                  <Pencil size={14} />
+                </button>
+              )}
+              {canDeleteEntity(user, n) && (
+                <button
+                  type="button"
+                  className={btnGhost + ' !px-2 !text-danger'}
+                  onClick={() => setConfirmId(n.id)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+          <p className="mt-3 line-clamp-4 whitespace-pre-wrap text-sm text-sage-700">
+            {n.content || '—'}
+          </p>
+          {(n.tags || []).length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1">
+              {n.tags.map((t) => (
+                <span key={t} className="rounded-md bg-sage-100 px-2 py-0.5 text-xs text-sage-700">
+                  #{t}
+                </span>
+              ))}
+            </div>
+          )}
+          {related.length > 0 && (
+            <p className="mt-2 flex items-center gap-1 text-xs text-sage-500">
+              <Link2 size={12} /> {related.length} lien{related.length > 1 ? 's' : ''}
+            </p>
+          )}
+        </article>
+        {children.map((child) => renderNoteCard(child, depth + 1))}
+      </div>
+    )
+  }
+
+  const parentOptions = notes.filter((n) => {
+    if (editing && (n.id === editing.id || isNoteAncestor(notesById, n.id, editing.id))) return false
+    return true
+  })
+
+  const toggleId = (key, id) => {
+    setForm((f) => ({
+      ...f,
+      [key]: f[key].includes(id) ? f[key].filter((x) => x !== id) : [...f[key], id],
+    }))
+  }
+
   return (
     <div className="space-y-4 animate-fade-up">
+      <LocalBanner />
       <div className="flex flex-wrap items-center gap-2">
         {canWriteRole(user) && (
-          <button type="button" className={btnPrimary} onClick={openCreate}>
-            <Plus size={16} /> Nouvelle note
-          </button>
+          <>
+            <button type="button" className={btnPrimary} onClick={openCreate}>
+              <Plus size={16} /> Nouvelle note
+            </button>
+            <button type="button" className={btnGhost} onClick={onImport}>
+              <Upload size={16} /> Importer
+            </button>
+          </>
         )}
         <select
           className={inputClass + ' max-w-full md:!w-auto'}
@@ -3274,49 +3487,7 @@ function NotesView({ user, notes, users, projects, flash }) {
         />
       ) : (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((n) => (
-            <article
-              key={n.id}
-              className="rounded-2xl border border-sage-200 bg-white/80 p-4 transition hover:border-sage-400"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <h3 className="font-display text-lg text-sage-900">{n.title}</h3>
-                  <p className="text-xs text-sage-500">
-                    {n.category} · {n.visibility}
-                  </p>
-                </div>
-                <div className="flex gap-1">
-                  {canEditEntity(user, n) && (
-                    <button type="button" className={btnGhost + ' !px-2'} onClick={() => openEdit(n)}>
-                      <Pencil size={14} />
-                    </button>
-                  )}
-                  {canDeleteEntity(user, n) && (
-                    <button
-                      type="button"
-                      className={btnGhost + ' !px-2 !text-danger'}
-                      onClick={() => setConfirmId(n.id)}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                </div>
-              </div>
-              <p className="mt-3 line-clamp-4 whitespace-pre-wrap text-sm text-sage-700">
-                {n.content || '—'}
-              </p>
-              {(n.tags || []).length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-1">
-                  {n.tags.map((t) => (
-                    <span key={t} className="rounded-md bg-sage-100 px-2 py-0.5 text-xs text-sage-700">
-                      #{t}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </article>
-          ))}
+          {(filterCat === 'Tous' ? treeNotes : filtered).map((n) => renderNoteCard(n))}
         </div>
       )}
 
@@ -3382,6 +3553,93 @@ function NotesView({ user, notes, users, projects, flash }) {
               ))}
             </select>
           </Field>
+          <Field label="Note parente (sous-note)">
+            <select
+              className={inputClass}
+              value={form.parentId}
+              onChange={(e) => setForm({ ...form, parentId: e.target.value })}
+            >
+              <option value="">Aucune (note racine)</option>
+              {parentOptions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="rounded-xl border border-sage-200 bg-white p-3">
+            <p className="mb-2 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-sage-500">
+              <Link2 size={12} /> Liens
+            </p>
+            <Field label="Fichiers">
+              <div className="flex max-h-28 flex-wrap gap-1 overflow-auto xx-scroll">
+                {files.length === 0 && <span className="text-xs text-sage-500">Aucun fichier visible.</span>}
+                {files.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className={`min-h-9 rounded-lg px-2 py-1 text-xs ${
+                      form.linkFileIds.includes(f.id) ? 'bg-sage-700 text-white' : 'bg-sage-100 text-sage-700'
+                    }`}
+                    onClick={() => toggleId('linkFileIds', f.id)}
+                  >
+                    {f.name}
+                  </button>
+                ))}
+              </div>
+            </Field>
+            <Field label="Risques">
+              <div className="flex max-h-28 flex-wrap gap-1 overflow-auto xx-scroll">
+                {risks.length === 0 && <span className="text-xs text-sage-500">Aucun risque visible.</span>}
+                {risks.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    className={`min-h-9 rounded-lg px-2 py-1 text-xs ${
+                      form.linkRiskIds.includes(r.id) ? 'bg-sage-700 text-white' : 'bg-sage-100 text-sage-700'
+                    }`}
+                    onClick={() => toggleId('linkRiskIds', r.id)}
+                  >
+                    {r.title}
+                  </button>
+                ))}
+              </div>
+            </Field>
+            <Field label="Dépenses (lignes budget)">
+              <div className="flex max-h-28 flex-wrap gap-1 overflow-auto xx-scroll">
+                {budgetLines.length === 0 && <span className="text-xs text-sage-500">Aucune ligne visible.</span>}
+                {budgetLines.map((l) => (
+                  <button
+                    key={l.id}
+                    type="button"
+                    className={`min-h-9 rounded-lg px-2 py-1 text-xs ${
+                      form.linkExpenseIds.includes(l.id) ? 'bg-sage-700 text-white' : 'bg-sage-100 text-sage-700'
+                    }`}
+                    onClick={() => toggleId('linkExpenseIds', l.id)}
+                  >
+                    {l.name}
+                  </button>
+                ))}
+              </div>
+            </Field>
+            <Field label="Idées">
+              <div className="flex max-h-28 flex-wrap gap-1 overflow-auto xx-scroll">
+                {ideas.length === 0 && <span className="text-xs text-sage-500">Aucune idée visible.</span>}
+                {ideas.map((i) => (
+                  <button
+                    key={i.id}
+                    type="button"
+                    className={`min-h-9 rounded-lg px-2 py-1 text-xs ${
+                      form.linkIdeaIds.includes(i.id) ? 'bg-sage-700 text-white' : 'bg-sage-100 text-sage-700'
+                    }`}
+                    onClick={() => toggleId('linkIdeaIds', i.id)}
+                  >
+                    {i.title}
+                  </button>
+                ))}
+              </div>
+            </Field>
+          </div>
           {form.visibility !== 'Privée' && (
             <ShareEditor
               users={users}
@@ -3399,7 +3657,9 @@ function NotesView({ user, notes, users, projects, flash }) {
       </Modal>
 
       <Modal open={Boolean(confirmId)} title="Confirmer la suppression" onClose={() => setConfirmId(null)}>
-        <p className="text-sm text-sage-700">Cette action est définitive.</p>
+        <p className="text-sm text-sage-700">
+          Cette action est définitive. Les sous-notes seront rattachées au parent supérieur.
+        </p>
         <ModalActions>
           <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirmId(null)}>
             Annuler
@@ -3422,7 +3682,7 @@ function fileIconFor(ext) {
   return FileText
 }
 
-function FilesView({ user, files, folders, foldersMap, projects, users, flash }) {
+function FilesView({ user, files, folders, foldersMap, projects, users, flash, onImport }) {
   const ctx = useMemo(
     () => ({ folders: foldersMap || {}, projects: Object.fromEntries(projects.map((p) => [p.id, p])) }),
     [foldersMap, projects],
@@ -3901,8 +4161,11 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash })
       <div className="flex flex-wrap items-center gap-2">
         {canWriteRole(user) && canAddHere && (
           <>
-            <button type="button" className={btnPrimary} onClick={openImport}>
+            <button type="button" className={btnPrimary} onClick={() => onImport?.(folderId)}>
               <Upload size={16} /> Importer
+            </button>
+            <button type="button" className={btnGhost} onClick={openImport}>
+              <Upload size={16} /> Téléverser
             </button>
             <button type="button" className={btnGhost} onClick={openNewFolder}>
               <FolderPlus size={16} /> Nouveau dossier
@@ -4002,7 +4265,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash })
           }
           action={
             canWriteRole(user) && canAddHere ? (
-              <button type="button" className={btnPrimary + ' mt-4'} onClick={openImport}>
+              <button type="button" className={btnPrimary + ' mt-4'} onClick={() => onImport?.(folderId)}>
                 <Upload size={16} /> Importer un fichier
               </button>
             ) : null
@@ -4016,7 +4279,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash })
           hint="Ajoutez un fichier ou un sous-dossier."
           action={
             canWriteRole(user) && canAddHere ? (
-              <button type="button" className={btnPrimary + ' mt-4'} onClick={openImport}>
+              <button type="button" className={btnPrimary + ' mt-4'} onClick={() => onImport?.(folderId)}>
                 <Upload size={16} /> Importer
               </button>
             ) : null
@@ -4642,7 +4905,91 @@ function IdeasView({ user, ideas, users, flash }) {
   )
 }
 
-function ProjectsView({ user, projects, notes, ideas, users, flash }) {
+function projectLinked(entity, projectId, links, type) {
+  if (entity.projectId === projectId || entity.id === projectId) return true
+  return relatedLinkEnds(links, type, entity.id).some((r) => r.type === 'project' && r.id === projectId)
+}
+
+function NoteTreeList({ notes, parentId = null, depth = 0 }) {
+  const ids = new Set(notes.map((n) => n.id))
+  let children = noteChildList(notes, parentId)
+  if (depth === 0) {
+    const orphans = notes.filter((n) => n.parentId && !ids.has(n.parentId))
+    const seen = new Set(children.map((n) => n.id))
+    children = [...children, ...orphans.filter((n) => !seen.has(n.id))]
+  }
+  if (!children.length && depth === 0) return <p className="text-sage-500">Aucune</p>
+  return (
+    <ul className={depth ? 'mt-1 space-y-1 border-l border-sage-200 pl-3' : 'mt-2 space-y-1'}>
+      {children.map((n) => (
+        <li key={n.id}>
+          <span className="text-sage-800">{n.title}</span>
+          <NoteTreeList notes={notes} parentId={n.id} depth={depth + 1} />
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function ProjectDetailBody({ detail, notes, ideas, files, events, budgets, risks, links }) {
+  const related = relatedLinkEnds(links, 'project', detail.id)
+  const linkedNotes = notes.filter(
+    (n) => n.projectId === detail.id || related.some((r) => r.type === 'note' && r.id === n.id),
+  )
+  const linkedFiles = files.filter((f) => projectLinked(f, detail.id, links, 'file'))
+  const linkedIdeas = ideas.filter(
+    (i) => i.id === detail.linkedIdeaId || projectLinked(i, detail.id, links, 'idea'),
+  )
+  const linkedEvents = events.filter((e) => projectLinked(e, detail.id, links, 'event'))
+  const linkedBudgets = budgets.filter((b) => projectLinked(b, detail.id, links, 'budget'))
+  const linkedRisks = risks.filter((r) => projectLinked(r, detail.id, links, 'risk'))
+  const sections = [
+    ['Fichiers', linkedFiles.map((f) => f.name)],
+    ['Idées', linkedIdeas.map((i) => `${i.title} (${i.status})`)],
+    ['Événements', linkedEvents.map((e) => `${e.title} · ${e.date || ''}`)],
+    ['Budgets', linkedBudgets.map((b) => b.name)],
+    ['Risques', linkedRisks.map((r) => r.title)],
+  ]
+  return (
+    <div className="space-y-4 text-sm">
+      <p className="text-sage-700">{detail.description}</p>
+      <p className="text-sage-500">
+        {detail.startDate || '—'} → {detail.dueDate || '—'} · {detail.progress ?? 0}%
+      </p>
+      <div>
+        <h4 className="font-semibold text-sage-800">Notes rattachées</h4>
+        <NoteTreeList notes={linkedNotes} />
+      </div>
+      {sections.map(([label, items]) => (
+        <div key={label}>
+          <h4 className="font-semibold text-sage-800">{label}</h4>
+          <ul className="mt-2 space-y-1">
+            {items.length === 0 && <li className="text-sage-500">Aucun</li>}
+            {items.map((item, idx) => (
+              <li key={`${label}-${idx}`}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      <p className="text-xs text-sage-500">Les discussions d’équipe restent dans le module Chat.</p>
+    </div>
+  )
+}
+
+function ProjectsView({
+  user,
+  projects,
+  notes,
+  ideas,
+  files = [],
+  events = [],
+  budgets = [],
+  risks = [],
+  links = [],
+  users,
+  flash,
+  onImport,
+}) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [detail, setDetail] = useState(null)
@@ -4718,10 +5065,16 @@ function ProjectsView({ user, projects, notes, ideas, users, flash }) {
 
   return (
     <div className="space-y-4 animate-fade-up">
+      <LocalBanner />
       {canWriteRole(user) && (
-        <button type="button" className={btnPrimary} onClick={openCreate}>
-          <Plus size={16} /> Nouveau projet
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className={btnPrimary} onClick={openCreate}>
+            <Plus size={16} /> Nouveau projet
+          </button>
+          <button type="button" className={btnGhost} onClick={onImport}>
+            <Upload size={16} /> Importer
+          </button>
+        </div>
       )}
 
       {projects.length === 0 ? (
@@ -4959,39 +5312,16 @@ function ProjectsView({ user, projects, notes, ideas, users, flash }) {
 
       <Modal open={Boolean(detail)} title={detail?.title || ''} onClose={() => setDetail(null)} wide>
         {detail && (
-          <div className="space-y-4 text-sm">
-            <p className="text-sage-700">{detail.description}</p>
-            <p className="text-sage-500">
-              {detail.startDate || '—'} → {detail.dueDate || '—'} · {detail.progress ?? 0}%
-            </p>
-            <div>
-              <h4 className="font-semibold text-sage-800">Notes rattachées</h4>
-              <ul className="mt-2 space-y-1">
-                {notes.filter((n) => n.projectId === detail.id).length === 0 && (
-                  <li className="text-sage-500">Aucune</li>
-                )}
-                {notes
-                  .filter((n) => n.projectId === detail.id)
-                  .map((n) => (
-                    <li key={n.id}>{n.title}</li>
-                  ))}
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-semibold text-sage-800">Idées liées</h4>
-              <ul className="mt-2 space-y-1">
-                {ideas.filter((i) => i.id === detail.linkedIdeaId || i.projectId === detail.id)
-                  .length === 0 && <li className="text-sage-500">Aucune</li>}
-                {ideas
-                  .filter((i) => i.id === detail.linkedIdeaId || i.projectId === detail.id)
-                  .map((i) => (
-                    <li key={i.id}>
-                      {i.title} ({i.status})
-                    </li>
-                  ))}
-              </ul>
-            </div>
-          </div>
+          <ProjectDetailBody
+            detail={detail}
+            notes={notes}
+            ideas={ideas}
+            files={files}
+            events={events}
+            budgets={budgets}
+            risks={risks}
+            links={links}
+          />
         )}
       </Modal>
     </div>
@@ -5195,7 +5525,7 @@ function CalendarView({ user, events, users, flash }) {
   )
 }
 
-function SearchView({ notes, ideas, projects, events, files = [] }) {
+function SearchView({ notes, ideas, projects, events, files = [], budgets = [], risks = [] }) {
   const [q, setQ] = useState('')
   const [category, setCategory] = useState('')
   const [status, setStatus] = useState('')
@@ -5217,24 +5547,36 @@ function SearchView({ notes, ideas, projects, events, files = [] }) {
     let p = projects.filter(matchText)
     let e = events.filter(matchText)
     let f = files.filter(matchText)
+    let b = budgets.filter(matchText)
+    let r = risks.filter(matchText)
     if (category) n = n.filter((x) => x.category === category)
     if (status) {
       i = i.filter((x) => x.status === status)
       p = p.filter((x) => x.status === status)
+      r = r.filter((x) => x.status === status)
     }
     if (tag) n = n.filter((x) => (x.tags || []).some((t) => t.toLowerCase().includes(tag.toLowerCase())))
     if (projectId) {
       n = n.filter((x) => x.projectId === projectId)
       f = f.filter((x) => x.projectId === projectId)
+      b = b.filter((x) => x.projectId === projectId)
+      r = r.filter((x) => x.projectId === projectId)
     }
+    const notesById = Object.fromEntries(notes.map((x) => [x.id, x]))
     return [
-      ...n.map((x) => ({ kind: 'Note', ...x })),
+      ...n.map((x) => ({
+        kind: x.parentId ? 'Sous-note' : 'Note',
+        parentTitle: x.parentId ? notesById[x.parentId]?.title : '',
+        ...x,
+      })),
       ...i.map((x) => ({ kind: 'Idée', ...x })),
       ...p.map((x) => ({ kind: 'Projet', ...x })),
       ...e.map((x) => ({ kind: 'Événement', ...x })),
       ...f.map((x) => ({ kind: 'Fichier', title: x.name, ...x })),
+      ...b.map((x) => ({ kind: 'Budget', title: x.name, ...x })),
+      ...r.map((x) => ({ kind: 'Risque', ...x })),
     ]
-  }, [notes, ideas, projects, events, files, query, category, status, tag, projectId])
+  }, [notes, ideas, projects, events, files, budgets, risks, query, category, status, tag, projectId])
 
   const runExternal = async () => {
     if (!query) return
@@ -5293,7 +5635,7 @@ function SearchView({ notes, ideas, projects, events, files = [] }) {
             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sage-400" size={16} />
             <input
               className={inputClass + ' pl-9'}
-              placeholder="Rechercher notes, idées, projets, fichiers…"
+              placeholder="Rechercher notes, sous-notes, fichiers, budgets, risques…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
@@ -5345,6 +5687,7 @@ function SearchView({ notes, ideas, projects, events, files = [] }) {
                 <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">{item.kind}</p>
                 <p className="font-medium text-sage-900">{item.title}</p>
                 <p className="line-clamp-2 text-sm text-sage-600">
+                  {item.parentTitle ? `Sous « ${item.parentTitle} » · ` : ''}
                   {item.description || item.content || item.status || ''}
                 </p>
               </li>

@@ -18,19 +18,21 @@ Nazix est un espace de travail collaboratif en temps réel : notes, idées (Kanb
 ## Modules
 
 - Tableau de bord
-- Notes
+- **Espace visuel** (canvas — ne remplace pas les modules)
+- Notes (sous-notes `parentId`, liens)
 - Kanban (boîte à idées)
 - Projets
 - **Budget**
 - **Risques et solutions**
 - **Fichiers**
 - Calendrier
-- Recherche
+- Recherche (notes, sous-notes, fichiers, budgets, risques)
 - Export
 - Notifications
 - Équipe
 - Chat / groupes
 - Paramètres
+- **Import** (assistant réutilisable, visibilité privée)
 
 ## Auth Firebase + repli local
 
@@ -115,3 +117,19 @@ Collections `xx_risks` et `xx_risk_actions`. Priorité **calculée** : élevée 
 **Action** : titre, assigné, échéance, statut (à faire / en cours / terminée), commentaires. Une action en retard à la création ou mise à jour notifie l’assigné et le propriétaire via `notifyUsers`.
 
 Échéance dépassée ou dans les 7 jours : mise en évidence. Tableau de bord : compteur de risques ouverts, % du premier budget, bloc « Risques en retard » et reste budgétaire.
+
+## Sous-notes et liens
+
+Les notes portent un `parentId` (null = racine) en plus de `projectId`. Collection `xx_links` : `{id, fromType, fromId, toType, toId, createdBy, createdAt}`. Types : `note`, `file`, `idea`, `project`, `budget_line`, `risk`, `event`, `task` (alias d’idée). La fiche projet affiche l’arbre des notes liées, plus fichiers, idées, événements, budgets, risques. L’éditeur de note choisit une note parente et des liens fichier / risque / dépense / idée.
+
+## Assistant d’import
+
+`ImportModal` : txt, md, docx, pdf, xlsx, csv. Taille max `MAX_FILE_BYTES` (20 Mo). Extraction txt/md/csv/xlsx ; pdf/docx : fichier original + collage. Jamais de partage automatique (Privée). Destinations : Notes (+ original dans Fichiers lié), Projets, Fichiers, Budget (lignes prévisionnelles éditables), Risques. Bouton **Importer** sur Notes, Projets, Fichiers, Budget, Risques et l’espace visuel.
+
+## Espace visuel
+
+Navigation **Espace visuel** (`BoxSelect`). Cartes filtrables (projet / type / recherche), glisser-déposer souris et tactile, traits SVG pour `xx_links`. Positions : `xx_canvas_layout` `{userId, positions:{entityKey:{x,y}}, updatedAt}`. Lecture si l’entité est lisible ; déplacement si `canWriteRole`. N’enlève aucun module.
+
+## Règles Firestore à recoller
+
+Collections `xx_links` et `xx_canvas_layout` : connecté, lecture/écriture de ses documents (ou admin). **Recoller `firestore.rules` dans Firebase Console → Firestore → Règles** après déploiement.

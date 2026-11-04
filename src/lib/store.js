@@ -41,6 +41,8 @@ import {
   canManageBudgetRisk,
   canDeleteBudgetRisk,
   computeRiskPriority,
+  isNoteAncestor,
+  LINK_TYPES,
   BUDGET_CURRENCIES,
   BUDGET_CATEGORIES,
   BUDGET_LINE_KINDS,
@@ -122,6 +124,8 @@ const COLLECTIONS = [
   'xx_budget_lines',
   'xx_risks',
   'xx_risk_actions',
+  'xx_links',
+  'xx_canvas_layout',
 ]
 
 function emptyDb() {
@@ -282,6 +286,8 @@ async function remapUserReferences(fromId, toId) {
     'xx_budget_lines',
     'xx_risks',
     'xx_risk_actions',
+    'xx_links',
+    'xx_canvas_layout',
   ]
   for (const col of entityCols) {
     for (const row of Object.values(memory[col] || {})) {
@@ -305,6 +311,10 @@ async function remapUserReferences(fromId, toId) {
       }
       if (next.createdBy === fromId) {
         next.createdBy = toId
+        changed = true
+      }
+      if (next.userId === fromId) {
+        next.userId = toId
         changed = true
       }
       if (Array.isArray(next.memberIds) && next.memberIds.includes(fromId)) {
@@ -1500,17 +1510,35 @@ async function destroy(col, id, user) {
 }
 
 export async function saveNote(data, user) {
-  return upsert('xx_notes', data, user)
+  const existing = data.id ? memory.xx_notes[data.id] : null
+  const parentId = data.parentId !== undefined ? data.parentId || null : existing?.parentId || null
+  if (parentId) {
+    const parent = memory.xx_notes[parentId]
+    if (!parent) throw new Error('Note parente introuvable.')
+    if (data.id && (parentId === data.id || isNoteAncestor(memory.xx_notes, parentId, data.id))) {
+      throw new Error('Lien parent invalide.')
+    }
+  }
+  return upsert('xx_notes', { ...data, parentId }, user)
 }
 export async function deleteNote(id, user) {
-  return destroy('xx_notes', id, user)
+  const existing = memory.xx_notes[id]
+  const parentId = existing?.parentId || null
+  await destroy('xx_notes', id, user)
+  for (const child of Object.values(memory.xx_notes || {})) {
+    if (child.parentId === id) {
+      await persistDoc('xx_notes', child.id, { ...child, parentId, updatedAt: new Date().toISOString() })
+    }
+  }
+  await removeLinksFor('note', id)
 }
 export async function saveIdea(data, user) {
   const idea = await upsert('xx_ideas', data, user)
   return idea
 }
 export async function deleteIdea(id, user) {
-  return destroy('xx_ideas', id, user)
+  await destroy('xx_ideas', id, user)
+  await removeLinksFor('idea', id)
 }
 export async function saveProject(data, user) {
   const prev = data.id ? memory.xx_projects[data.id] : null
@@ -1522,13 +1550,15 @@ export async function saveProject(data, user) {
   return saved
 }
 export async function deleteProject(id, user) {
-  return destroy('xx_projects', id, user)
+  await destroy('xx_projects', id, user)
+  await removeLinksFor('project', id)
 }
 export async function saveEvent(data, user) {
   return upsert('xx_events', data, user)
 }
 export async function deleteEvent(id, user) {
-  return destroy('xx_events', id, user)
+  await destroy('xx_events', id, user)
+  await removeLinksFor('event', id)
 }
 
 export async function appendIdeaHistory(ideaId, entry) {
@@ -2191,6 +2221,7 @@ export async function deleteFile(id, user) {
     }
   }
   await removeDoc('xx_files', id)
+  await removeLinksFor('file', id)
 }
 
 export async function getFileBlob(fileId, user) {
@@ -2377,7 +2408,10 @@ export async function deleteBudget(id, user) {
   if (!existing) throw new Error('Budget introuvable.')
   requireBudgetRiskDelete(user, existing)
   for (const line of Object.values(memory.xx_budget_lines || {})) {
-    if (line.budgetId === id) await removeDoc('xx_budget_lines', line.id)
+    if (line.budgetId === id) {
+      await removeDoc('xx_budget_lines', line.id)
+      await removeLinksFor('budget_line', line.id)
+    }
   }
   await removeDoc('xx_budgets', id)
 }
@@ -2434,6 +2468,7 @@ export async function deleteBudgetLine(id, user) {
   if (!budget) throw new Error('Budget introuvable.')
   requireBudgetRiskManage(user, budget)
   await removeDoc('xx_budget_lines', id)
+  await removeLinksFor('budget_line', id)
 }
 
 export async function addBudgetLineComment(lineId, body, user) {
@@ -2525,6 +2560,7 @@ export async function deleteRisk(id, user) {
     if (action.riskId === id) await removeDoc('xx_risk_actions', action.id)
   }
   await removeDoc('xx_risks', id)
+  await removeLinksFor('risk', id)
 }
 
 export async function addRiskComment(riskId, body, user) {
@@ -2615,3 +2651,119 @@ export async function addRiskActionComment(actionId, body, user) {
   await persistDoc('xx_risk_actions', actionId, updated)
   return updated
 }
+
+/* ─── Liens + canvas ─── */
+
+function linkTypeOk(type) {
+  return LINK_TYPES.includes(type)
+}
+
+async function removeLinksFor(type, id) {
+  const types = type === 'idea' ? ['idea', 'task'] : [type]
+  for (const link of Object.values(memory.xx_links || {})) {
+    const hitFrom = types.includes(link.fromType) && link.fromId === id
+    const hitTo = types.includes(link.toType) && link.toId === id
+    if (hitFrom || hitTo) await removeDoc('xx_links', link.id)
+  }
+}
+
+export async function saveLink(data, user) {
+  if (!user) throw new Error('Permission refusée.')
+  if (!canWriteRole(user)) {
+    throw new Error('Permission refusée (rôle Lecteur : création interdite).')
+  }
+  const fromType = data.fromType
+  const toType = data.toType
+  if (!linkTypeOk(fromType) || !linkTypeOk(toType)) throw new Error('Type de lien invalide.')
+  if (!data.fromId || !data.toId) throw new Error('Lien incomplet.')
+  if (fromType === toType && data.fromId === data.toId) throw new Error('Lien circulaire refusé.')
+  const dup = Object.values(memory.xx_links || {}).find(
+    (l) =>
+      l.fromType === fromType &&
+      l.fromId === data.fromId &&
+      l.toType === toType &&
+      l.toId === data.toId,
+  )
+  if (dup) return dup
+  const now = new Date().toISOString()
+  const id = data.id || uid('lnk')
+  const row = {
+    id,
+    fromType,
+    fromId: data.fromId,
+    toType,
+    toId: data.toId,
+    createdBy: user.id,
+    ownerId: user.id,
+    ownerEmail: user.email,
+    createdAt: now,
+  }
+  await persistDoc('xx_links', id, row)
+  return row
+}
+
+export async function deleteLink(id, user) {
+  const existing = memory.xx_links[id]
+  if (!existing) return
+  if (!isAdmin(user) && existing.createdBy !== user.id && existing.ownerId !== user.id) {
+    throw new Error('Permission refusée.')
+  }
+  await removeDoc('xx_links', id)
+}
+
+export async function syncNoteLinks(noteId, targets, user) {
+  if (!noteId) throw new Error('Note requise.')
+  const wanted = new Set(
+    (targets || [])
+      .filter((t) => t?.id && linkTypeOk(t.type))
+      .map((t) => `${t.type}:${t.id}`),
+  )
+  const existing = Object.values(memory.xx_links || {}).filter(
+    (l) => l.fromType === 'note' && l.fromId === noteId,
+  )
+  for (const link of existing) {
+    if (!wanted.has(`${link.toType}:${link.toId}`)) {
+      try {
+        await deleteLink(link.id, user)
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  const have = new Set(existing.map((l) => `${l.toType}:${l.toId}`))
+  for (const key of wanted) {
+    if (have.has(key)) continue
+    const i = key.indexOf(':')
+    await saveLink(
+      {
+        fromType: 'note',
+        fromId: noteId,
+        toType: key.slice(0, i),
+        toId: key.slice(i + 1),
+      },
+      user,
+    )
+  }
+}
+
+export async function saveCanvasLayout(positions, user) {
+  if (!user) throw new Error('Permission refusée.')
+  if (!canWriteRole(user)) {
+    throw new Error('Permission refusée (rôle Lecteur : positions en lecture seule).')
+  }
+  const now = new Date().toISOString()
+  const id = user.id
+  const existing = memory.xx_canvas_layout[id]
+  const row = {
+    id,
+    userId: user.id,
+    ownerId: user.id,
+    ownerEmail: user.email,
+    positions: positions && typeof positions === 'object' ? positions : {},
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  }
+  await persistDoc('xx_canvas_layout', id, row)
+  return row
+}
+
