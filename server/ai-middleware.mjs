@@ -1,10 +1,11 @@
-/** Vite connect middleware for POST /api/ai and POST /api/ai-search.
+/** Vite connect middleware for POST /api/ai, POST /api/ai/stream and POST /api/ai-search.
  * Keys stay on the server (OPENAI_API_KEY | ANTHROPIC_API_KEY | GROK_API_KEY).
- * Never expose secrets to the client. */
+ * Never expose secrets to the client. Never prefix VITE_. */
 
 const MAX_BODY = 256 * 1024
-const LLM_TIMEOUT_MS = 25000
+const LLM_TIMEOUT_MS = 30000
 const SEARCH_TIMEOUT_MS = 8000
+const LAST_N = 20
 
 function json(res, status, body) {
   const payload = JSON.stringify(body)
@@ -60,53 +61,99 @@ function detectProvider(env) {
 
 function statusPayload(env) {
   const provider = detectProvider(env)
-  if (!provider) return { mode: 'local', ok: false, hasKey: false }
-  return { mode: 'ready', ok: true, hasKey: true, provider: provider.name }
+  if (!provider) {
+    return {
+      mode: 'local',
+      ok: false,
+      hasKey: false,
+      error: 'OPENAI_API_KEY manquante',
+    }
+  }
+  return { mode: provider.name, ok: true, hasKey: true, provider: provider.name }
 }
 
-const SYSTEM_PROMPT = `Tu es l’assistant Nazix, un espace de travail collaboratif (notes, idées, projets, budget, risques, fichiers, calendrier).
-Réponds en français, de façon structurée et concise.
-N’utilise que le contexte fourni : ne fabule pas. Cite les titres des notes / entités entre « ».
-Distingue clairement les faits Nazix des résultats web.
+const SYSTEM_PROMPT = `Tu es Nazix, l’assistant conversationnel de l’espace de travail collaboratif Nazix.
+Réponds en français, clairement, de façon utile et naturelle — comme un assistant ChatGPT, mais ancré dans Nazix.
+Utilise uniquement le contexte fourni (notes, idées, projets, budget, risques, fichiers, calendrier auxquels l’utilisateur a accès).
+Cite les titres entre « ». N’invente jamais de données privées absentes du contexte.
+Si tu manques d’information : dis-le clairement (« je n’ai pas trouvé ») plutôt que de fabuler.
+Distingue les faits Nazix des résultats web (libellé Web).
 Ne propose jamais de supprimer, de partager, ni de modifier les droits d’accès.
-Tu peux proposer des actions de création (note, sous-note, idée, risque, ligne budgétaire, brouillon de message) sous forme de boutons mentaux — l’humain confirmera.
-Si tu manques d’information : dis « je n’ai pas trouvé ».`
+Tu ne crées rien tout seul : si une création est utile (note, sous-note, idée, risque, ligne budgétaire, brouillon de message), propose-la et ajoute éventuellement un bloc JSON, l’humain confirmera :
+
+\`\`\`json
+{"kind":"create_note","label":"Créer une note","draft":{"title":"…","content":"…"}}
+\`\`\`
+
+Kinds possibles : create_note, create_subnote, create_idea, create_risk, create_budget_line, draft_message.`
 
 function toChatMessages(body) {
   const incoming = Array.isArray(body.messages) ? body.messages : []
   const mapped = incoming
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && m.content)
-    .slice(-16)
+    .slice(-LAST_N)
     .map((m) => ({
       role: m.role,
       content: String(m.content).slice(0, 8000),
     }))
   const context = body.context && typeof body.context === 'object' ? body.context : {}
   const contextText = JSON.stringify(context).slice(0, 24000)
+  const parts = []
   if (contextText && contextText !== '{}') {
+    parts.push(`Contexte Nazix (uniquement des éléments déjà lisibles par l’utilisateur) :\n${contextText}`)
+  }
+  if (body.web && typeof body.web === 'object') {
+    parts.push(`Résultats web (DuckDuckGo, ce ne sont pas des faits Nazix) :\n${JSON.stringify(body.web).slice(0, 8000)}`)
+  }
+  if (parts.length) {
     mapped.unshift({
       role: 'user',
-      content: `Contexte Nazix (uniquement des éléments déjà lisibles par l’utilisateur) :\n${contextText}`,
+      content: parts.join('\n\n'),
     })
     mapped.splice(1, 0, {
       role: 'assistant',
-      content: 'J’ai bien le contexte. Je m’appuierai uniquement sur ces éléments et je citerai les titres.',
+      content: 'J’ai bien le contexte. Je m’appuierai uniquement sur ces éléments, je citerai les titres, et je distinguerai le web le cas échéant.',
     })
   }
   return mapped
 }
 
-async function fetchWithTimeout(url, options, ms) {
+function sanitizeLlmError(prefix, errText = '') {
+  const clipped = String(errText || '')
+    .replace(/sk-[a-zA-Z0-9_-]+/g, '[redacted]')
+    .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+    .slice(0, 180)
+  return clipped ? `${prefix} — ${clipped}` : prefix
+}
+
+function combinedAbort(req, ms) {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), ms)
-  try {
-    return await fetch(url, { ...options, signal: ctrl.signal })
-  } finally {
-    clearTimeout(timer)
+  const onClose = () => ctrl.abort()
+  req.on('close', onClose)
+  return {
+    signal: ctrl.signal,
+    cleanup() {
+      clearTimeout(timer)
+      req.off?.('close', onClose)
+    },
   }
 }
 
-async function callOpenAI(key, messages) {
+async function fetchWithTimeout(url, options, ms, req) {
+  const { signal, cleanup } = combinedAbort(req || { on() {}, off() {} }, ms)
+  try {
+    return await fetch(url, { ...options, signal })
+  } finally {
+    cleanup()
+  }
+}
+
+function openaiMessages(messages) {
+  return [{ role: 'system', content: SYSTEM_PROMPT }, ...messages]
+}
+
+async function callOpenAI(key, messages, req) {
   const res = await fetchWithTimeout(
     'https://api.openai.com/v1/chat/completions',
     {
@@ -117,16 +164,17 @@ async function callOpenAI(key, messages) {
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
-        temperature: 0.3,
-        max_tokens: 1200,
-        messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
+        temperature: 0.4,
+        max_tokens: 1400,
+        messages: openaiMessages(messages),
       }),
     },
     LLM_TIMEOUT_MS,
+    req,
   )
   if (!res.ok) {
     const errText = await res.text().catch(() => '')
-    throw new Error(`OpenAI ${res.status}${errText ? ` — ${errText.slice(0, 180)}` : ''}`)
+    throw new Error(sanitizeLlmError(`OpenAI ${res.status}`, errText))
   }
   const data = await res.json()
   const text = data?.choices?.[0]?.message?.content
@@ -134,7 +182,7 @@ async function callOpenAI(key, messages) {
   return String(text)
 }
 
-async function callAnthropic(key, messages) {
+async function callAnthropic(key, messages, req) {
   const res = await fetchWithTimeout(
     'https://api.anthropic.com/v1/messages',
     {
@@ -146,24 +194,25 @@ async function callAnthropic(key, messages) {
       },
       body: JSON.stringify({
         model: 'claude-3-5-haiku-latest',
-        max_tokens: 1200,
+        max_tokens: 1400,
         system: SYSTEM_PROMPT,
         messages,
       }),
     },
     LLM_TIMEOUT_MS,
+    req,
   )
   if (!res.ok) {
     const errText = await res.text().catch(() => '')
-    throw new Error(`Anthropic ${res.status}${errText ? ` — ${errText.slice(0, 180)}` : ''}`)
+    throw new Error(sanitizeLlmError(`Anthropic ${res.status}`, errText))
   }
   const data = await res.json()
-  const text = (data?.content || []).map((c) => c.text || '').join('\n').trim()
+  const text = (data.content || []).map((c) => c.text || '').join('\n').trim()
   if (!text) throw new Error('Réponse Anthropic vide.')
   return text
 }
 
-async function callGrok(key, messages) {
+async function callGrok(key, messages, req) {
   const res = await fetchWithTimeout(
     'https://api.x.ai/v1/chat/completions',
     {
@@ -174,21 +223,102 @@ async function callGrok(key, messages) {
       },
       body: JSON.stringify({
         model: 'grok-2-latest',
-        temperature: 0.3,
-        max_tokens: 1200,
-        messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
+        temperature: 0.4,
+        max_tokens: 1400,
+        messages: openaiMessages(messages),
       }),
     },
     LLM_TIMEOUT_MS,
+    req,
   )
   if (!res.ok) {
     const errText = await res.text().catch(() => '')
-    throw new Error(`Grok ${res.status}${errText ? ` — ${errText.slice(0, 180)}` : ''}`)
+    throw new Error(sanitizeLlmError(`Grok ${res.status}`, errText))
   }
   const data = await res.json()
   const text = data?.choices?.[0]?.message?.content
   if (!text) throw new Error('Réponse Grok vide.')
   return String(text)
+}
+
+async function callLlm(provider, messages, req) {
+  if (provider.name === 'openai') return callOpenAI(provider.key, messages, req)
+  if (provider.name === 'anthropic') return callAnthropic(provider.key, messages, req)
+  return callGrok(provider.key, messages, req)
+}
+
+function startSse(res) {
+  res.statusCode = 200
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+  res.setHeader('Cache-Control', 'no-store')
+  res.setHeader('Connection', 'keep-alive')
+  res.setHeader('X-Accel-Buffering', 'no')
+  if (typeof res.flushHeaders === 'function') res.flushHeaders()
+}
+
+function sseWrite(res, obj) {
+  res.write(`data: ${JSON.stringify(obj)}\n\n`)
+}
+
+async function streamOpenAI(key, messages, req, res) {
+  const openaiRes = await fetchWithTimeout(
+    'https://api.openai.com/v1/chat/completions',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0.4,
+        max_tokens: 1400,
+        stream: true,
+        messages: openaiMessages(messages),
+      }),
+    },
+    LLM_TIMEOUT_MS,
+    req,
+  )
+  if (!openaiRes.ok) {
+    const errText = await openaiRes.text().catch(() => '')
+    throw new Error(sanitizeLlmError(`OpenAI ${openaiRes.status}`, errText))
+  }
+  if (!openaiRes.body || typeof openaiRes.body.getReader !== 'function') {
+    throw new Error('Flux OpenAI indisponible.')
+  }
+  const reader = openaiRes.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let full = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('data:')) continue
+      const raw = trimmed.slice(5).trim()
+      if (!raw || raw === '[DONE]') continue
+      let parsed
+      try {
+        parsed = JSON.parse(raw)
+      } catch {
+        continue
+      }
+      const delta = parsed?.choices?.[0]?.delta?.content || ''
+      if (delta) {
+        full += delta
+        sseWrite(res, { delta })
+      }
+    }
+  }
+  sseWrite(res, { done: true, text: full, provider: 'openai', ok: true })
+  res.end()
+  return full
 }
 
 async function handleAi(req, res, env) {
@@ -202,20 +332,60 @@ async function handleAi(req, res, env) {
   }
   const provider = detectProvider(env)
   if (!provider) {
-    json(res, 200, { mode: 'local', ok: false, hasKey: false })
+    json(res, 200, {
+      mode: 'local',
+      ok: false,
+      hasKey: false,
+      error: 'OPENAI_API_KEY manquante',
+    })
     return
   }
   const body = await readBody(req)
-  if (!body.allowExternal) {
-    json(res, 200, { mode: 'local', ok: false, hasKey: true, reason: 'external_not_allowed' })
+  const messages = toChatMessages(body)
+  const text = await callLlm(provider, messages, req)
+  json(res, 200, { ok: true, mode: 'external', provider: provider.name, text })
+}
+
+async function handleAiStream(req, res, env) {
+  if (req.method === 'GET') {
+    json(res, 200, statusPayload(env))
     return
   }
+  if (req.method !== 'POST') {
+    json(res, 405, { ok: false, error: 'Méthode non autorisée.' })
+    return
+  }
+  const provider = detectProvider(env)
+  if (!provider) {
+    json(res, 200, {
+      mode: 'local',
+      ok: false,
+      hasKey: false,
+      error: 'OPENAI_API_KEY manquante',
+    })
+    return
+  }
+  const body = await readBody(req)
   const messages = toChatMessages(body)
-  let text
-  if (provider.name === 'openai') text = await callOpenAI(provider.key, messages)
-  else if (provider.name === 'anthropic') text = await callAnthropic(provider.key, messages)
-  else text = await callGrok(provider.key, messages)
-  json(res, 200, { ok: true, mode: 'external', provider: provider.name, text })
+  startSse(res)
+  try {
+    if (provider.name === 'openai') {
+      await streamOpenAI(provider.key, messages, req, res)
+      return
+    }
+    const text = await callLlm(provider, messages, req)
+    sseWrite(res, { delta: text })
+    sseWrite(res, { done: true, text, provider: provider.name, ok: true })
+    res.end()
+  } catch (err) {
+    const error = err?.name === 'AbortError' ? 'délai dépassé (30 s)' : err.message || 'Erreur flux IA.'
+    try {
+      sseWrite(res, { error, ok: false })
+      res.end()
+    } catch {
+      /* headers may already be closed */
+    }
+  }
 }
 
 function collectDdgResults(data, q) {
@@ -252,12 +422,14 @@ function collectDdgResults(data, q) {
     }
   }
   const seen = new Set()
-  return items.filter((item) => {
-    const key = item.url || item.title
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  }).slice(0, 8)
+  return items
+    .filter((item) => {
+      const key = item.url || item.title
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, 8)
 }
 
 async function handleSearch(req, res) {
@@ -314,17 +486,23 @@ async function handleSearch(req, res) {
 export function attachAiMiddleware(server, env = process.env) {
   server.middlewares.use((req, res, next) => {
     const path = pathname(req)
-    if (path !== '/api/ai' && path !== '/api/ai-search') {
+    if (path !== '/api/ai' && path !== '/api/ai/stream' && path !== '/api/ai-search') {
       next()
       return
     }
-    const run = path === '/api/ai' ? handleAi(req, res, env) : handleSearch(req, res)
+    const run =
+      path === '/api/ai/stream'
+        ? handleAiStream(req, res, env)
+        : path === '/api/ai'
+          ? handleAi(req, res, env)
+          : handleSearch(req, res)
     Promise.resolve(run).catch((err) => {
       const status = err.status || 500
-      json(res, status, {
+      const aborted = err?.name === 'AbortError'
+      json(res, aborted ? 504 : status, {
         ok: false,
-        mode: 'local',
-        error: err.message || 'Erreur serveur IA.',
+        mode: 'error',
+        error: aborted ? 'délai dépassé (30 s)' : err.message || 'Erreur serveur IA.',
       })
     })
   })

@@ -1270,7 +1270,7 @@ const LANDING_MODULES = [
   { id: 'calendrier', title: 'Calendrier', hint: 'Échéances d’équipe au même endroit.', icon: CalendarDays },
   { id: 'fichiers', title: 'Fichiers', hint: 'Dossiers, 20 Mo, pdf et images.', icon: FolderOpen },
   { id: 'canvas', title: 'Espace visuel', hint: 'Carte, liens, notes et import.', icon: BoxSelect },
-  { id: 'assistant', title: 'Assistant IA', hint: 'Local par défaut, actions à confirmer.', icon: Sparkles },
+  { id: 'assistant', title: 'Assistant IA', hint: 'Conversation OpenAI, actions à confirmer.', icon: Sparkles },
   { id: 'equipe', title: 'Équipe', hint: 'Présence, profils, invitations.', icon: Users },
   { id: 'chat', title: 'Chat', hint: 'Groupes, Général, messages en direct.', icon: MessageCircle },
   { id: 'export', title: 'Export', hint: 'CSV, XLSX, DOCX, PDF, JSON.', icon: Download },

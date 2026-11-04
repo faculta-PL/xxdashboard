@@ -1,4 +1,4 @@
-/** Assistant extractif local Nazix — aucun appel réseau, aucun secret. */
+/** Assistant Nazix — client : OpenAI via /api/ai (serveur). Repli extractif local si la clé manque. */
 
 const STOP = new Set(
   `le la les un une des de du et ou à a au aux en ce cet cette ces je tu il elle on nous vous ils elles
@@ -520,6 +520,50 @@ export function localAnswer(query, ctx, style = '') {
 }
 
 const ACTION_KINDS = ['create_note', 'create_subnote', 'create_idea', 'create_risk', 'create_budget_line', 'draft_message']
+const LAST_N = 20
+
+function extractJsonActions(text) {
+  const actions = []
+  const push = (parsed) => {
+    if (!parsed || typeof parsed !== 'object') return
+    const list = Array.isArray(parsed) ? parsed : [parsed]
+    for (const item of list) {
+      if (item && ACTION_KINDS.includes(item.kind)) {
+        actions.push({
+          kind: item.kind,
+          label: item.label || item.kind,
+          draft: item.draft || item,
+        })
+      }
+    }
+  }
+  const src = String(text || '')
+  for (const m of src.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
+    try {
+      push(JSON.parse(m[1].trim()))
+    } catch {
+      /* ignore */
+    }
+  }
+  const loose = src.match(
+    /\{[^{}]*"kind"\s*:\s*"(create_note|create_subnote|create_idea|create_risk|create_budget_line|draft_message)"[^{}]*\}/g,
+  )
+  if (loose) {
+    for (const raw of loose) {
+      try {
+        push(JSON.parse(raw))
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  return actions
+}
+
+export function openAiUnavailable(reason) {
+  const r = String(reason || 'erreur inconnue').trim() || 'erreur inconnue'
+  return `OpenAI indisponible: ${r}`
+}
 
 function quotedTitle(query) {
   const m = String(query || '').match(/[«"]([^»"]+)[»"]/)
@@ -603,23 +647,7 @@ export function parseActions(query, ctx = {}) {
     })
   }
 
-  const jsonBlocks = q.match(/\{[^{}]*"kind"\s*:\s*"(create_note|create_subnote|create_idea|create_risk|create_budget_line|draft_message)"[^{}]*\}/g)
-  if (jsonBlocks) {
-    for (const raw of jsonBlocks) {
-      try {
-        const parsed = JSON.parse(raw)
-        if (ACTION_KINDS.includes(parsed.kind)) {
-          actions.push({
-            kind: parsed.kind,
-            label: parsed.label || parsed.kind,
-            draft: parsed.draft || parsed,
-          })
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-  }
+  for (const a of extractJsonActions(q)) actions.push(a)
   const seen = new Set()
   return actions.filter((a) => {
     if (seen.has(a.kind)) return false
@@ -629,7 +657,14 @@ export function parseActions(query, ctx = {}) {
 }
 
 export function parseActionsFromAssistant(text, ctx) {
-  return parseActions(String(text || ''), ctx)
+  const fromText = extractJsonActions(text)
+  const heuristic = parseActions(String(text || ''), ctx)
+  const seen = new Set()
+  return [...fromText, ...heuristic].filter((a) => {
+    if (seen.has(a.kind)) return false
+    seen.add(a.kind)
+    return true
+  })
 }
 
 export function stripExternalContext(ctx) {
@@ -667,26 +702,111 @@ export function stripExternalContext(ctx) {
 export async function fetchAiStatus() {
   try {
     const res = await fetch('/api/ai', { method: 'GET' })
-    if (!res.ok) return { mode: 'local', ok: false, hasKey: false }
+    if (!res.ok) return { mode: 'local', ok: false, hasKey: false, error: `HTTP ${res.status}` }
     return await res.json()
   } catch {
-    return { mode: 'local', ok: false, hasKey: false }
+    return { mode: 'local', ok: false, hasKey: false, error: 'serveur IA injoignable' }
   }
 }
 
-export async function askExternal({ messages, context, allowExternal }) {
+function slimMessages(messages) {
+  return (messages || [])
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && m.content)
+    .slice(-LAST_N)
+    .map((m) => ({ role: m.role, content: m.content }))
+}
+
+export async function askExternal({ messages, context, web, signal }) {
   const res = await fetch('/api/ai', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      messages: (messages || []).map((m) => ({ role: m.role, content: m.content })),
+      messages: slimMessages(messages),
       context,
-      allowExternal: Boolean(allowExternal),
+      web: web || undefined,
     }),
+    signal,
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+  if (!data.ok) throw new Error(data.error || 'OPENAI_API_KEY manquante')
   return data
+}
+
+function parseSseBuffer(buffer, onEvent) {
+  const parts = buffer.split('\n\n')
+  const rest = parts.pop() || ''
+  for (const part of parts) {
+    const line = part.split('\n').find((l) => l.startsWith('data:'))
+    if (!line) continue
+    const raw = line.slice(5).trim()
+    if (!raw || raw === '[DONE]') continue
+    try {
+      onEvent(JSON.parse(raw))
+    } catch {
+      /* ignore malformed chunk */
+    }
+  }
+  return rest
+}
+
+export async function askExternalStream({ messages, context, web, signal, onDelta }) {
+  const res = await fetch('/api/ai/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify({
+      messages: slimMessages(messages),
+      context,
+      web: web || undefined,
+    }),
+    signal,
+  })
+  const ct = res.headers.get('content-type') || ''
+  if (!ct.includes('text/event-stream')) {
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    if (data.text && onDelta) onDelta(data.text, data.text)
+    return data
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || `HTTP ${res.status}`)
+  }
+  if (!res.body) throw new Error('flux vide')
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let full = ''
+  let provider = 'openai'
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    buffer = parseSseBuffer(buffer, (evt) => {
+      if (evt.error) throw new Error(evt.error)
+      if (evt.provider) provider = evt.provider
+      if (evt.delta) {
+        full += evt.delta
+        if (onDelta) onDelta(evt.delta, full)
+      }
+      if (evt.done && evt.text && !full) {
+        full = evt.text
+        if (onDelta) onDelta(evt.text, full)
+      }
+    })
+  }
+  if (buffer.trim()) {
+    parseSseBuffer(`${buffer}\n\n`, (evt) => {
+      if (evt.error) throw new Error(evt.error)
+      if (evt.delta) {
+        full += evt.delta
+        if (onDelta) onDelta(evt.delta, full)
+      }
+      if (evt.done && evt.text && !full) full = evt.text
+    })
+  }
+  if (!full) throw new Error('Réponse OpenAI vide.')
+  return { ok: true, text: full, provider, mode: 'external' }
 }
 
 export async function searchWeb(query) {

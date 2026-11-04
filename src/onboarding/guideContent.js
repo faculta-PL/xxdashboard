@@ -25,7 +25,7 @@ export const FIRST_LOGIN_STEPS = [
   {
     id: 'tools',
     title: 'Assistant et exports',
-    body: 'L’Assistant IA répond d’abord en local. Recherche et Exports (CSV, PDF, DOCX) sont dans Outils. Un point d’interrogation sur chaque module rappelle à quoi il sert.',
+    body: 'L’Assistant IA parle via OpenAI (clé serveur). Recherche et Exports (CSV, PDF, DOCX) sont dans Outils. Un point d’interrogation sur chaque module rappelle à quoi il sert.',
     target: 'assistant',
   },
   {
@@ -120,9 +120,9 @@ export const MODULE_GUIDES = {
   },
   assistant: {
     title: 'Assistant IA',
-    lead: 'Réponses extractives sur vos données visibles. Aucune clé API dans le navigateur.',
+    lead: 'Conversation OpenAI sur vos données visibles. Aucune clé API dans le navigateur.',
     bullets: [
-      'Par défaut, rien n’est envoyé à un service externe.',
+      'Réponses via OpenAI. N’envoyez que le contexte de vos contenus autorisés.',
       'Chaque action (créer une note, un risque…) demande confirmation.',
       'Le bouton flottant n’empêche pas d’ouvrir un formulaire : le modal passe devant.',
     ],

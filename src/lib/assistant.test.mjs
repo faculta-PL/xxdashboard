@@ -3,8 +3,10 @@ import {
   contextLabel,
   localAnswer,
   parseActions,
+  parseActionsFromAssistant,
   budgetMath,
   wantsWebSearch,
+  openAiUnavailable,
 } from './assistant.js'
 
 function assert(cond, msg) {
@@ -71,6 +73,13 @@ assert(sum.text.includes('Compte-rendu sprint'), sum.text)
 
 const actions = parseActions('crée une note « Suivi fournisseur »', ctx)
 assert(actions.some((a) => a.kind === 'create_note'), JSON.stringify(actions))
+
+const jsonActions = parseActionsFromAssistant(
+  'Voici une proposition :\n```json\n{"kind":"create_note","label":"Créer une note","draft":{"title":"Suivi","content":"ok"}}\n```',
+  ctx,
+)
+assert(jsonActions.some((a) => a.kind === 'create_note' && a.draft?.title === 'Suivi'), JSON.stringify(jsonActions))
+assert(openAiUnavailable('clé absente') === 'OpenAI indisponible: clé absente', 'error format')
 
 assert(wantsWebSearch('cherche en ligne React', false) === true, 'web intent')
 assert(wantsWebSearch('résume', false) === false, 'no web')

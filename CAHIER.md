@@ -33,7 +33,7 @@ Nazix est un espace de travail collaboratif en temps réel : notes, idées (Kanb
 - Chat / groupes
 - Paramètres
 - **Import** (assistant réutilisable, visibilité privée)
-- **Assistant IA** (extractif local par défaut, optionnel clé serveur)
+- **Assistant IA** (OpenAI par défaut si `OPENAI_API_KEY` serveur ; repli local seulement si indisponible)
 - **Jeux** (arcade distincte : KingX Cueillette, Zianotix Vol, Relais Duo)
 
 ## Guide in-app
@@ -147,10 +147,9 @@ Navigation **Assistant IA** (`Sparkles`) : liste des conversations + chat. Bouto
 ### Sécurité
 
 - Le client **n’a jamais** de clé API. Pas de `VITE_OPENAI_*` ni secret dans le bundle.
-- Middleware Vite `POST /api/ai` et `POST /api/ai-search` (`configureServer` **et** `configurePreviewServer`) : lit `OPENAI_API_KEY` ou `ANTHROPIC_API_KEY` ou `GROK_API_KEY` **côté serveur**. Sans clé : `{ mode:'local', ok:false }` — l’assistant extractif tourne sur l’appareil.
-- Par défaut, **aucun** corps de note / fichier n’est envoyé au service externe. Case **« Autoriser l’envoi au service IA »** (panneau + Paramètres). Préférence `xx_settings.aiExternalEnabled` et repli `localStorage nazix_ai_external`.
-- Bannière locale : « IA locale, pas de sync, pas d’envoi auto. »
-- Recherche web : fetch **serveur** DuckDuckGo Instant Answer (pas de CORS). Sources + date, libellé **Web** distinct de **Nazix**.
+- Middleware Vite `POST /api/ai`, `POST /api/ai/stream` (SSE) et `POST /api/ai-search` (`configureServer` **et** `configurePreviewServer`) : lit `OPENAI_API_KEY` (prioritaire) ou `ANTHROPIC_API_KEY` / `GROK_API_KEY` **côté serveur**. Avec clé : `{ ok:true }` — conversation OpenAI (`gpt-4o-mini`, ~30 s, multi-tour). Sans clé : `{ ok:false, error:'OPENAI_API_KEY manquante' }` et repli extractif local, avec le message **« OpenAI indisponible: {raison} »**.
+- Par défaut, si le serveur a une clé, OpenAI est utilisé automatiquement. Bannière : « Réponses via OpenAI. N’envoyez que le contexte de vos contenus autorisés. »
+- Recherche web : fetch **serveur** DuckDuckGo Instant Answer (pas de CORS). Sources + date, libellé **Web** distinct de **Nazix**. L’assistant peut l’utiliser si l’utilisateur le demande.
 - Contexte : uniquement `canReadEntity` (ids, titres, extraits). Affiché : « Contexte : Notes (3) · Projet X ».
 - Pas de mémoire croisée. L’IA ne supprime pas, ne partage pas, ne change pas les ACL. Toute action (note, sous-note, idée, risque, ligne budgétaire, message) est un **aperçu + confirmation**. Lecteur : actions d’écriture désactivées. Message à un membre : destinataire + brouillon + confirmer, puis notification et/ou chat Général.
 
@@ -158,7 +157,7 @@ Navigation **Assistant IA** (`Sparkles`) : liste des conversations + chat. Bouto
 
 `xx_ai_threads` : `{id, userId, title, section, contextLabel, messages:[{role, content, sources?, at}], createdAt, updatedAt}` — **propriétaire uniquement** (lecture / écriture / suppression). `xx_settings` : préférences utilisateur (`aiExternalEnabled`).
 
-Sans clé LLM, l’assistant local (`src/lib/assistant.js`) résume les notes, liste les risques en retard, calcule le restant budgétaire, les prochains événements, et répond « je n’ai pas trouvé » si le contexte ne suffit pas.
+Sans clé LLM, le repli local (`src/lib/assistant.js`) résume les notes, liste les risques en retard, calcule le restant budgétaire, les prochains événements, et répond « je n’ai pas trouvé » si le contexte ne suffit pas — ce n’est pas le mode produit.
 
 ## Navigation groupée
 

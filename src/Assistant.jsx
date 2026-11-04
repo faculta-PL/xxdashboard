@@ -8,13 +8,13 @@ import {
   Copy,
   Trash2,
   ChevronRight,
-  Loader2,
   Globe,
   Shield,
   List,
   AlignLeft,
   Rows3,
   Check,
+  Square,
 } from 'lucide-react'
 import {
   FAB_VIEWS,
@@ -24,12 +24,13 @@ import {
   wantsWebSearch,
   webQueryFrom,
   askExternal,
+  askExternalStream,
   searchWeb,
   formatWebBlock,
   fetchAiStatus,
   writeExternalPref,
   writeWebPref,
-  stripExternalContext,
+  openAiUnavailable,
 } from './lib/assistant'
 import {
   saveAiThread,
@@ -72,15 +73,20 @@ export function AssistantFab({ view, open, onOpen }) {
   )
 }
 
-function LocalAiBanner({ hasKey, allowExternal }) {
-  if (hasKey && allowExternal) return null
+function OpenAiBanner({ openaiOk, openaiError }) {
+  if (openaiOk) {
+    return (
+      <div className="rounded-xl border border-sage-300 bg-sage-100/80 px-3 py-2 text-xs text-sage-800">
+        <p className="font-semibold">Réponses via OpenAI. N’envoyez que le contexte de vos contenus autorisés.</p>
+      </div>
+    )
+  }
   return (
-    <div className="rounded-xl border border-sage-300 bg-sage-100/80 px-3 py-2 text-xs text-sage-800">
-      <p className="font-semibold">IA locale, pas de sync, pas d’envoi auto.</p>
+    <div className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-sage-800">
+      <p className="font-semibold">{openAiUnavailable(openaiError || 'OPENAI_API_KEY manquante')}</p>
       <p className="mt-0.5 text-sage-600">
-        {hasKey
-          ? 'Cochez « Autoriser l’envoi au service IA » pour utiliser la clé serveur.'
-          : 'Aucune clé serveur — réponses extractives sur l’appareil.'}
+        Définissez <code className="rounded bg-white/70 px-1">OPENAI_API_KEY</code> sur le serveur. Repli extractif local
+        uniquement en cas d’indisponibilité — ce n’est pas le mode produit.
       </p>
     </div>
   )
@@ -114,6 +120,10 @@ function Bubble({ msg, onCopy }) {
           )}
         </div>
         {msg.content}
+        {msg.streaming && <span className="ml-0.5 inline-block animate-pulse text-sage-500">▍</span>}
+        {msg.fallback && (
+          <p className="mt-2 text-[11px] font-medium text-warn">Repli extractif local — ce n’est pas le mode prévu.</p>
+        )}
         {msg.sources?.length > 0 && (
           <p className="mt-2 text-[11px] text-sage-600">
             Nazix : {msg.sources.map((s) => `« ${s.title} »`).join(', ')}
@@ -354,20 +364,38 @@ function useAiChat({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [hasKey, setHasKey] = useState(false)
+  const [openaiOk, setOpenaiOk] = useState(false)
+  const [openaiError, setOpenaiError] = useState('')
+  const [statusReady, setStatusReady] = useState(false)
+  const [pendingUser, setPendingUser] = useState(null)
+  const [streamText, setStreamText] = useState('')
   const [pendingAction, setPendingAction] = useState(null)
   const [actionBusy, setActionBusy] = useState(false)
   const bottomRef = useRef(null)
+  const abortRef = useRef(null)
+  const streamRef = useRef('')
 
   const thread = threads.find((t) => t.id === threadId) || null
   const messages = thread?.messages || []
 
   useEffect(() => {
-    fetchAiStatus().then((s) => setHasKey(Boolean(s.hasKey))).catch(() => setHasKey(false))
+    fetchAiStatus()
+      .then((s) => {
+        setHasKey(Boolean(s.hasKey))
+        setOpenaiOk(Boolean(s.ok))
+        setOpenaiError(s.ok ? '' : s.error || 'OPENAI_API_KEY manquante')
+      })
+      .catch(() => {
+        setHasKey(false)
+        setOpenaiOk(false)
+        setOpenaiError('serveur IA injoignable')
+      })
+      .finally(() => setStatusReady(true))
   }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages.length, busy])
+  }, [messages.length, busy, streamText, pendingUser])
 
   const persist = async (id, patch) => {
     const saved = await saveAiThread({ id, section, contextLabel: context.contextLabel, ...patch }, user)
@@ -388,6 +416,7 @@ function useAiChat({
     setThreadId(saved.id)
     setError('')
     setDraft('')
+    abortRef.current?.abort()
   }
 
   const copy = async (text) => {
@@ -399,14 +428,25 @@ function useAiChat({
     }
   }
 
+  const stop = () => {
+    abortRef.current?.abort()
+  }
+
   const runTurn = async (userText, style = '') => {
     const text = String(userText || '').trim()
     if (!text || busy) return
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
     setBusy(true)
     setError('')
+    streamRef.current = ''
+    setStreamText('')
     const userMsg = { role: 'user', content: text, at: nowIso() }
+    setPendingUser(userMsg)
     let id = threadId
     let history = messages
+    let usedExternal = false
+    let fallback = false
     try {
       if (!id) {
         const created = await saveAiThread(
@@ -425,53 +465,93 @@ function useAiChat({
         history = [...messages, userMsg]
         await persist(id, { messages: history })
       }
+      setPendingUser(null)
 
       const wantWeb = wantsWebSearch(text, webSearch)
+      let webPayload = null
+      let webSources = []
+      let webSearchedAt = ''
+      if (wantWeb) {
+        try {
+          const web = await searchWeb(webQueryFrom(text))
+          webPayload = web
+          webSources = web.results || []
+          webSearchedAt = web.searchedAt || nowIso()
+        } catch {
+          flash?.('Recherche web indisponible.', 'warn')
+        }
+      }
+
       let answerText = ''
       let sources = []
-      let origin = 'nazix'
-      let usedExternal = false
 
-      try {
-        if (allowExternal && hasKey) {
-          const payloadCtx = allowExternal ? context : stripExternalContext(context)
-          const ext = await askExternal({
+      const onDelta = (_delta, full) => {
+        streamRef.current = full
+        setStreamText(full)
+      }
+
+      const skipOpenAi = statusReady && !hasKey && !openaiOk
+      const canCallOpenAi = !skipOpenAi
+      if (canCallOpenAi) {
+        try {
+          const ext = await askExternalStream({
             messages: history.filter((m) => m.role === 'user' || m.role === 'assistant'),
-            context: payloadCtx,
-            allowExternal: true,
+            context,
+            web: webPayload,
+            signal: ctrl.signal,
+            onDelta,
           })
           if (ext.ok && ext.text) {
             answerText = ext.text
             usedExternal = true
-            origin = 'nazix'
+          }
+        } catch (err) {
+          if (ctrl.signal.aborted && streamRef.current) {
+            answerText = streamRef.current
+            usedExternal = true
+          } else if (ctrl.signal.aborted) {
+            setError('Génération interrompue.')
+            setBusy(false)
+            setStreamText('')
+            abortRef.current = null
+            return
+          } else {
+            try {
+              const ext = await askExternal({
+                messages: history.filter((m) => m.role === 'user' || m.role === 'assistant'),
+                context,
+                web: webPayload,
+                signal: ctrl.signal,
+              })
+              if (ext.ok && ext.text) {
+                answerText = ext.text
+                usedExternal = true
+                streamRef.current = ext.text
+                setStreamText(ext.text)
+              }
+            } catch (err2) {
+              const reason = err2?.message || err?.message || 'erreur inconnue'
+              const msg = openAiUnavailable(reason)
+              setError(msg)
+              flash?.(msg, 'warn')
+            }
           }
         }
-      } catch {
-        const msg = 'Service IA indisponible — repli local.'
-        setError(msg)
-        flash?.(msg, 'warn')
+      } else {
+        setError(openAiUnavailable(openaiError || 'OPENAI_API_KEY manquante'))
       }
 
       if (!answerText) {
         const local = localAnswer(style ? `${style}: ${text}` : text, context, style)
         answerText = local.text
         sources = local.sources
+        fallback = true
       } else {
         sources = localAnswer(text, context).sources
       }
 
-      let webSources = []
-      let webSearchedAt = ''
-      if (wantWeb) {
-        try {
-          const web = await searchWeb(webQueryFrom(text))
-          webSources = web.results || []
-          webSearchedAt = web.searchedAt || nowIso()
-          answerText += formatWebBlock(web)
-        } catch {
-          answerText += '\n\n---\n**Web** — recherche indisponible.'
-          flash?.('Recherche web indisponible.', 'warn')
-        }
+      if (webPayload && !usedExternal) {
+        answerText += formatWebBlock(webPayload)
       }
 
       const heuristicActions = [
@@ -492,25 +572,36 @@ function useAiChat({
         webSources,
         webSearchedAt,
         actions,
-        origin: usedExternal ? 'external' : origin,
+        origin: usedExternal ? 'external' : 'local',
+        fallback,
         at: nowIso(),
       }
       await persist(id, { messages: [...history, aiMsg], contextLabel: context.contextLabel, section })
     } catch (err) {
-      const msg = toUserMessage(err, 'Service IA indisponible.')
+      const msg = openAiUnavailable(toUserMessage(err, 'erreur inconnue'))
       setError(msg)
       flash?.(msg, 'err')
     } finally {
       setBusy(false)
+      setStreamText('')
+      setPendingUser(null)
+      abortRef.current = null
     }
   }
 
   const send = async (e) => {
     e?.preventDefault?.()
     const text = draft.trim()
-    if (!text) return
+    if (!text || busy) return
     setDraft('')
     await runTurn(text)
+  }
+
+  const onComposerKey = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      send(e)
+    }
   }
 
   const followUp = (style, label) => runTurn(label, style)
@@ -621,6 +712,12 @@ function useAiChat({
     error,
     setError,
     hasKey,
+    openaiOk,
+    openaiError,
+    pendingUser,
+    streamText,
+    stop,
+    onComposerKey,
     pendingAction,
     setPendingAction,
     actionBusy,
@@ -662,15 +759,16 @@ function ChatPane({
 }) {
   const canWrite = canWriteRole(user)
   const lastAi = [...chat.messages].reverse().find((m) => m.role === 'assistant')
+  const pendingAlreadySaved = chat.pendingUser && chat.messages.some((m) => m.at === chat.pendingUser.at)
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3 xx-scroll">
-        <LocalAiBanner hasKey={chat.hasKey} allowExternal={chat.allowExternal} />
+        <OpenAiBanner openaiOk={chat.openaiOk} openaiError={chat.openaiError} />
         <p className="text-[11px] font-medium text-sage-600">{context.contextLabel}</p>
-        {chat.messages.length === 0 && (
+        {chat.messages.length === 0 && !chat.pendingUser && (
           <p className="text-sm text-sage-600">
-            Posez une question sur vos notes, le budget restant, les risques en retard ou les prochains événements.
-            Rien n’est envoyé hors de l’appareil tant que vous n’autorisez pas le service IA.
+            Posez une question sur vos notes, le budget, les risques ou le web. Entrée envoie, Maj+Entrée passe à la ligne.
+            Les créations (notes, messages) demandent toujours confirmation.
           </p>
         )}
         {chat.messages.map((m, i) => (
@@ -685,10 +783,16 @@ function ChatPane({
             )}
           </div>
         ))}
-        {chat.busy && (
-          <div className="flex items-center gap-2 rounded-2xl border border-sage-300 bg-sage-100 px-3 py-2 text-sm text-sage-700">
-            <Loader2 size={14} className="animate-spin" /> Réflexion…
-          </div>
+        {chat.pendingUser && !pendingAlreadySaved && <Bubble msg={chat.pendingUser} onCopy={chat.copy} />}
+        {chat.busy && chat.messages[chat.messages.length - 1]?.role !== 'assistant' && (
+          <Bubble
+            msg={{
+              role: 'assistant',
+              content: chat.streamText || (chat.openaiOk ? 'Réflexion…' : 'Repli local…'),
+              streaming: true,
+            }}
+            onCopy={chat.copy}
+          />
         )}
         {chat.error && (
           <div className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
@@ -719,15 +823,6 @@ function ChatPane({
             <input
               type="checkbox"
               className="h-3.5 w-3.5 accent-sage-700"
-              checked={chat.allowExternal}
-              onChange={(e) => chat.persistAllow(e.target.checked)}
-            />
-            Autoriser l’envoi au service IA
-          </label>
-          <label className="flex items-center gap-1.5">
-            <input
-              type="checkbox"
-              className="h-3.5 w-3.5 accent-sage-700"
               checked={chat.webSearch}
               onChange={(e) => chat.persistWeb(e.target.checked)}
             />
@@ -735,16 +830,24 @@ function ChatPane({
           </label>
         </div>
         <div className="flex gap-2">
-          <input
-            className={inputClass}
+          <textarea
+            className={inputClass + ' min-h-11 max-h-32 resize-none'}
+            rows={1}
             placeholder={compact ? 'Votre question…' : 'Résume mes notes, risques en retard, budget restant…'}
             value={chat.draft}
             onChange={(e) => chat.setDraft(e.target.value)}
-            disabled={chat.busy}
+            onKeyDown={chat.onComposerKey}
+            disabled={false}
           />
-          <button type="submit" className={btnPrimary + ' !px-3'} disabled={chat.busy || !chat.draft.trim()} aria-label="Envoyer">
-            <Send size={16} />
-          </button>
+          {chat.busy ? (
+            <button type="button" className={btnPrimary + ' !px-3'} onClick={chat.stop} aria-label="Arrêter">
+              <Square size={14} />
+            </button>
+          ) : (
+            <button type="submit" className={btnPrimary + ' !px-3'} disabled={!chat.draft.trim()} aria-label="Envoyer">
+              <Send size={16} />
+            </button>
+          )}
         </div>
       </form>
       {chat.pendingAction && (
@@ -939,45 +1042,23 @@ export function AssistantView({
   )
 }
 
-export function AiSettingsBlock({ user, allowExternal, onChange }) {
+export function AiSettingsBlock({ user: _user, allowExternal: _allowExternal, onChange: _onChange }) {
   return (
     <section className="rounded-2xl border border-sage-200 bg-white/80 p-5">
       <h2 className="flex items-center gap-2 font-display text-lg text-sage-900">
         <Sparkles size={18} /> Assistant IA
       </h2>
-      <p className="mt-2 text-sm text-sage-600">
-        Les clés API restent côté serveur (<code className="rounded bg-sage-100 px-1">OPENAI_API_KEY</code>,{' '}
-        <code className="rounded bg-sage-100 px-1">ANTHROPIC_API_KEY</code> ou{' '}
-        <code className="rounded bg-sage-100 px-1">GROK_API_KEY</code>) — jamais dans <code className="rounded bg-sage-100 px-1">VITE_*</code>.
-        Sans clé, l’assistant extractif fonctionne hors ligne.
+      <p className="mt-2 text-sm text-sage-800">
+        Réponses via OpenAI. N’envoyez que le contexte de vos contenus autorisés.
       </p>
-      <label className="mt-3 flex items-start gap-2 rounded-xl border border-sage-200 bg-white p-3 text-sm">
-        <input
-          type="checkbox"
-          className="mt-1 h-4 w-4 accent-sage-700"
-          checked={allowExternal}
-          onChange={async (e) => {
-            const value = e.target.checked
-            writeExternalPref(value)
-            onChange(value)
-            try {
-              await saveUserSettings(user, { aiExternalEnabled: value })
-            } catch {
-              /* ignore */
-            }
-          }}
-        />
-        <span>
-          <span className="font-medium text-sage-800">Autoriser l’envoi au service IA</span>
-          <span className="mt-0.5 block text-xs text-sage-500">
-            Désactivé par défaut. Les corps de notes / fichiers ne quittent pas l’appareil tant que cette case n’est pas cochée
-            ({/* */}préférences <code className="rounded bg-sage-100 px-1">xx_settings.aiExternalEnabled</code>
-            {' '}et <code className="rounded bg-sage-100 px-1">nazix_ai_external</code>).
-          </span>
-        </span>
-      </label>
+      <p className="mt-2 text-sm text-sage-600">
+        La clé <code className="rounded bg-sage-100 px-1">OPENAI_API_KEY</code> reste côté serveur (middleware Vite{' '}
+        <code className="rounded bg-sage-100 px-1">POST /api/ai</code> et <code className="rounded bg-sage-100 px-1">/api/ai/stream</code>)
+        — jamais dans <code className="rounded bg-sage-100 px-1">VITE_*</code> ni le bundle. Sans clé, le chat affiche clairement
+        « OpenAI indisponible » et bascule sur un repli extractif local.
+      </p>
       <p className="mt-2 flex items-center gap-1 text-xs text-sage-500">
-        <Shield size={12} /> Pas de mémoire croisée. L’IA ne supprime rien, ne partage pas et ne change pas les ACL.
+        <Shield size={12} /> Pas de mémoire croisée. Aucune note ni message n’est créé sans confirmation.
       </p>
     </section>
   )

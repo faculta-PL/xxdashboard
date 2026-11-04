@@ -23,6 +23,8 @@ L’app écoute sur [http://127.0.0.1:3847](http://127.0.0.1:3847).
 
 **Firebase** : si un fichier `.env` est présent (projet partagio), la persistance cloud fonctionne tout de suite. Sinon, copiez `.env.example` vers `.env` et renseignez les variables `VITE_FIREBASE_*` (API key, auth domain, project id, storage bucket, messaging sender id, app id). Sans ces variables, l’app tourne en mode **localStorage**. Redémarrer Vite après toute modification du `.env`.
 
+**OpenAI** : ajoutez `OPENAI_API_KEY=` dans `.env` (serveur uniquement, **jamais** `VITE_OPENAI_*`). Vite charge ce fichier pour `dev` et `preview`. Sans clé, l’assistant affiche « OpenAI indisponible ».
+
 ## Démarrage rapide
 
 ```bash
@@ -102,7 +104,7 @@ Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, 
 11. Export CSV / XLSX / DOCX / JSON / PDF
 12. Centre de notifications
 13. Paramètres, sessions, diagnostic Firebase, kit d’exportation
-14. Assistant IA (extractif local ; clé `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GROK_API_KEY` **serveur uniquement**, jamais `VITE_*`)
+14. Assistant IA (OpenAI `gpt-4o-mini` via `POST /api/ai` + flux `POST /api/ai/stream` ; clé `OPENAI_API_KEY` **serveur uniquement**, jamais `VITE_*`. Repli extractif local seulement si la clé manque ou si l’API échoue.)
 
 ## Rôles (RBAC)
 
