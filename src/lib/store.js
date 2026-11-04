@@ -25,8 +25,8 @@ import { auth, db, firebaseConfigured, getFirebaseStatus } from './firebase'
 import { sha256, randomToken, randomCode6, uid } from './crypto'
 import { ROLES, canWriteRole, canEditEntity, canDeleteEntity, isAdmin } from './rbac'
 
-const ADMIN_EMAIL = 'admin@xxdashboard.fr'
-const ADMIN_PASSWORD = 'Admin123!'
+const ADMIN_EMAIL = 'facultamalika@gmail.com'
+const ADMIN_PASSWORD = 'Malika2026!'
 const AUTH_MIN_PASSWORD = firebaseConfigured ? 6 : 4
 
 const LOCAL_KEY = 'xxdashboard_v1'
@@ -473,7 +473,7 @@ async function ensureDefaultAdmin({ skipRemote = false } = {}) {
     const id = authUser?.uid || uid('user')
     user = {
       id,
-      fullName: 'Administrateur XX',
+      fullName: 'Administrateur',
       email: ADMIN_EMAIL,
       passwordHash,
       role: ROLES.ADMIN,
@@ -500,6 +500,8 @@ async function ensureDefaultAdmin({ skipRemote = false } = {}) {
   const patch = {}
   if (authUser?.uid && user.firebaseUid !== authUser.uid) patch.firebaseUid = authUser.uid
   if (!user.passwordHash) patch.passwordHash = passwordHash
+  if (!user.emailVerified) patch.emailVerified = true
+  if (user.role !== ROLES.ADMIN) patch.role = ROLES.ADMIN
   if (Object.keys(patch).length) {
     await persistDoc(
       'xx_users',

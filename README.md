@@ -36,11 +36,11 @@ L’app écoute sur [http://127.0.0.1:3847](http://127.0.0.1:3847).
 
 | E-mail | Mot de passe |
 |--------|--------------|
-| `admin@xxdashboard.fr` | `Admin123!` |
+| `facultamalika@gmail.com` | `Malika2026!` |
 
 ## Firebase (Auth + Firestore)
 
-Sans clés, l’app tourne en **mode local** (bandeau sur l’écran de connexion + mention dans Paramètres). Aucune clé fictive n’est embarquée.
+Sans clés, l’app tourne en **mode local** (mention dans Paramètres). Aucune clé fictive n’est embarquée.
 
 ### Brancher un projet Firebase
 
@@ -70,7 +70,7 @@ La barre latérale affiche alors **Firebase** (via `getBackendMode()`).
 |--------|---------------|-----------|
 | Inscription | `createUserWithEmailAndPassword` + `sendEmailVerification` | `xx_users` (id = Auth uid, rôle Membre, code 6 chiffres de secours) + notification |
 | Connexion | `signInWithEmailAndPassword` **et/ou** SHA-256 Firestore | `xx_sessions` (jeton 24 h, `userId` = Auth uid) |
-| Premier démarrage | création du compte `admin@xxdashboard.fr` / `Admin123!` si possible | seed du même admin dans `xx_users` |
+| Premier démarrage | création du compte `facultamalika@gmail.com` / `Malika2026!` si possible | seed du même admin dans `xx_users` |
 | Reset 2 étapes | `sendPasswordResetEmail` puis `confirmPasswordReset` (oobCode) ou `updatePassword` si session | `xx_reset_tokens` + notification de secours |
 | Déconnexion / révocation | `signOut` | `xx_sessions.active = false` |
 

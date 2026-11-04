@@ -62,7 +62,6 @@ import {
   getBackendMode,
   getMinPasswordLength,
   getBootHint,
-  getFirestoreSyncState,
   pushLocalToFirebase,
   pullFirebaseToLocal,
 } from './lib/store'
@@ -213,7 +212,6 @@ export default function App() {
   })
   const [authBusy, setAuthBusy] = useState(false)
   const [showPass, setShowPass] = useState(false)
-  const [bootHint, setBootHint] = useState(null)
 
   const flash = (message, type = 'ok') => {
     setToast({ message, type })
@@ -244,7 +242,6 @@ export default function App() {
         }
         const hint = getBootHint()
         if (!cancelled && hint) {
-          setBootHint(hint)
           setToast({ message: hint, type: 'err' })
           setTimeout(() => setToast(null), 5200)
         }
@@ -257,7 +254,6 @@ export default function App() {
         }
         const hint = getBootHint() || 'Démarrage local — Firestore n’a pas répondu.'
         if (!cancelled) {
-          setBootHint(hint)
           setToast({ message: hint, type: 'err' })
           setTimeout(() => setToast(null), 5200)
         }
@@ -389,38 +385,11 @@ export default function App() {
             <p className="font-display text-4xl tracking-tight text-sage-800 sm:text-5xl">
               XXDashboard
             </p>
-            <p className="mt-2 text-sage-600">
-              Notes, idées Kanban, projets et activités — en temps réel.
-            </p>
           </div>
           <form
             onSubmit={handleAuth}
             className="rounded-3xl border border-sage-200 bg-white/80 p-6 shadow-sm backdrop-blur"
           >
-            {firebaseConfigured ? (
-              <div className="mb-4 rounded-xl border border-sage-200 bg-sage-50 px-3 py-2 text-xs text-sage-700">
-                Backend <strong>Firebase</strong> — connexion et inscription écrivent dans Auth
-                et Firestore
-                {getFirestoreSyncState() === 'ok' ? '.' : ' (sync Firestore en attente ou indisponible).'}
-              </div>
-            ) : (
-              <div className="mb-4 rounded-xl border border-warn/40 bg-warn/10 px-3 py-2.5 text-sm text-sage-800">
-                <p className="font-semibold">Mode local — Firebase n’est pas configuré.</p>
-                <p className="mt-1 text-xs text-sage-600">
-                  Copiez <code className="rounded bg-white px-1">.env.example</code> vers{' '}
-                  <code className="rounded bg-white px-1">.env</code>, renseignez{' '}
-                  <code className="rounded bg-white px-1">VITE_FIREBASE_*</code> (console
-                  Firebase → paramètres du projet), activez E-mail/mot de passe, puis
-                  redémarrez Vite. Les comptes resteront ensuite dans Auth + Firestore.
-                  Variables manquantes : {missingFirebaseVars.join(', ') || 'aucune'}.
-                </p>
-              </div>
-            )}
-            {bootHint && (
-              <div className="mb-4 rounded-xl border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-sage-800">
-                {bootHint}
-              </div>
-            )}
             <div className="mb-5 flex gap-2 text-sm">
               {[
                 ['login', 'Connexion'],
@@ -443,7 +412,7 @@ export default function App() {
             </div>
 
             {authMode === 'register' && (
-              <Field label="Nom complet">
+              <Field label="Nom">
                 <input
                   className={inputClass}
                   value={authForm.fullName}
@@ -460,14 +429,13 @@ export default function App() {
                   className={inputClass}
                   value={authForm.email}
                   onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
-                  placeholder="vous@entreprise.fr"
                   required
                 />
               </Field>
             )}
 
             {(authMode === 'login' || authMode === 'register') && (
-              <Field label={`Mot de passe (min. ${getMinPasswordLength()} caractères)`}>
+              <Field label="Mot de passe">
                 <div className="relative">
                   <input
                     type={showPass ? 'text' : 'password'}
@@ -490,21 +458,14 @@ export default function App() {
 
             {authMode === 'reset' && (
               <>
-                <Field label="Jeton ou code e-mail Firebase">
+                <Field label="Code">
                   <input
                     className={inputClass}
                     value={authForm.resetToken}
                     onChange={(e) => setAuthForm({ ...authForm, resetToken: e.target.value })}
-                    placeholder="Jeton in-app ou oobCode de l’e-mail"
                     required
                   />
                 </Field>
-                <p className="mb-3 text-xs text-sage-600">
-                  Collez le jeton reçu en notification, ou le paramètre <code>oobCode</code> du lien
-                  « Réinitialiser le mot de passe » envoyé par Firebase. Le lien Firebase met à jour
-                  Auth via <code>confirmPasswordReset</code> ; le jeton in-app met à jour le hash
-                  Firestore, et Auth si une session est ouverte.
-                </p>
                 <Field label="Nouveau mot de passe">
                   <input
                     type="password"
@@ -526,13 +487,9 @@ export default function App() {
                   : authMode === 'register'
                     ? "S'inscrire"
                     : authMode === 'forgot'
-                      ? 'Envoyer l’e-mail de réinitialisation'
+                      ? 'Envoyer'
                       : 'Réinitialiser'}
             </button>
-
-            <p className="mt-4 text-center text-xs text-sage-500">
-              Admin par défaut : admin@xxdashboard.fr / Admin123!
-            </p>
           </form>
         </div>
         {toast && <Toast toast={toast} />}
