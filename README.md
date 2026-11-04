@@ -75,7 +75,7 @@ La barre latérale affiche alors **Firebase** (via `getBackendMode()`).
 | Déconnexion / révocation | `signOut` | `xx_sessions.active = false` |
 | Chat / groupes | — | `xx_groups`, `xx_messages` (membres uniquement) |
 
-Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, `xx_events`, `xx_notifications`, `xx_reset_tokens`, `xx_groups`, `xx_messages`, `xx_files`, `xx_folders`, `xx_ai_threads`, `xx_settings`.
+Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, `xx_events`, `xx_notifications`, `xx_reset_tokens`, `xx_groups`, `xx_messages`, `xx_files`, `xx_folders`, `xx_ai_threads`, `xx_settings`, `xx_dashboard_prefs`, `xx_game_profiles`, `xx_game_scores`.
 
 **Fichiers** : activer **Storage** dans Firebase Console (choisir la région **avant** de créer le bucket — le client ne peut pas la définir). Coller `storage.rules` et `firestore.rules`. Bucket : `partagio.firebasestorage.app`. Taille max 20 Mo (`MAX_FILE_BYTES`). En mode local, blobs IndexedDB `nazix_files` (non synchronisés entre appareils).
 

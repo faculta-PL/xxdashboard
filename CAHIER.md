@@ -17,7 +17,7 @@ Nazix est un espace de travail collaboratif en temps réel : notes, idées (Kanb
 
 ## Modules
 
-- Tableau de bord
+- Tableau de bord (widgets réels, disposition `xx_dashboard_prefs`)
 - **Espace visuel** (canvas — ne remplace pas les modules)
 - Notes (sous-notes `parentId`, liens)
 - Kanban (boîte à idées)
@@ -34,6 +34,7 @@ Nazix est un espace de travail collaboratif en temps réel : notes, idées (Kanb
 - Paramètres
 - **Import** (assistant réutilisable, visibilité privée)
 - **Assistant IA** (extractif local par défaut, optionnel clé serveur)
+- **Jeux** (arcade distincte : KingX Cueillette, Zianotix Vol, Relais Duo)
 
 ## Auth Firebase + repli local
 
@@ -151,6 +152,22 @@ Navigation **Assistant IA** (`Sparkles`) : liste des conversations + chat. Bouto
 
 Sans clé LLM, l’assistant local (`src/lib/assistant.js`) résume les notes, liste les risques en retard, calcule le restant budgétaire, les prochains événements, et répond « je n’ai pas trouvé » si le contexte ne suffit pas.
 
+## Navigation groupée
+
+- **Espace de travail** : Tableau de bord, Projets, Notes, Kanban, Calendrier, Fichiers, Budget, Risques, Espace visuel
+- **Collaboration** : Équipe, Chat, Notifications
+- **Outils** : Recherche, Exports, Assistant IA
+- **Détente** : Jeux
+- Rail repliable (icônes) sur bureau ; tiroir mobile inchangé.
+
+## Tableau de bord
+
+Widgets (données `canReadEntity` uniquement) : projets + progression, kanban à faire, événements, notes, fichiers, reste budgétaire, risques élevés + actions en retard, extrait de chat, raccourcis de création. Disposition `xx_dashboard_prefs` `{userId, hidden, order, favoriteProjectId}` — Firestore + local.
+
+## Jeux (hors travail)
+
+Vue `games` : coque arcade crème / sauge, bouton « Retour au travail », sans widgets métier. Personnages officiels **KingX** et **Zianotix**. Pseudo `xx_game_profiles` unique (pas KingX / Zianotix). Scores `xx_game_scores` **append-only** (création de son score, pas de mise à jour). Classement global / par jeu / records / récents — libellé « Classement local » si `getBackendMode()==='local'`.
+
 ## Règles Firestore à recoller
 
-Collections `xx_links`, `xx_canvas_layout`, `xx_ai_threads` (propriétaire uniquement) et `xx_settings`. **Recoller `firestore.rules` dans Firebase Console → Firestore → Règles** après déploiement.
+Collections `xx_links`, `xx_canvas_layout`, `xx_ai_threads` (propriétaire), `xx_settings`, `xx_dashboard_prefs` (propriétaire), `xx_game_profiles` (lecture connectée, écriture du sien), `xx_game_scores` (lecture connectée, create si `userId == auth.uid` et `score` number, **pas d’update**). **Recoller `firestore.rules` dans Firebase Console → Firestore → Règles** après déploiement.

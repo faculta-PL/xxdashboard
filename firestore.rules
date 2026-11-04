@@ -330,5 +330,39 @@ service cloud.firestore {
       allow update, delete: if isAdmin()
         || (isSignedIn() && resource.data.authorId == request.auth.uid);
     }
+
+    // Disposition du tableau de bord : propriétaire uniquement.
+    match /xx_dashboard_prefs/{id} {
+      allow read: if isSignedIn() && (
+        resource.id == request.auth.uid
+        || resource.data.userId == request.auth.uid
+      );
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && (id == request.auth.uid || request.resource.data.userId == request.auth.uid);
+      allow update, delete: if isSignedIn()
+        && resource.data.userId == request.auth.uid;
+    }
+
+    // Pseudos arcade : lecture connectée, écriture du sien uniquement.
+    match /xx_game_profiles/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && (id == request.auth.uid || request.resource.data.userId == request.auth.uid);
+      allow update: if isSignedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // Scores arcade : création de son propre score, pas de mise à jour (append-only).
+    match /xx_game_scores/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.score is number;
+      allow update, delete: if false;
+    }
   }
 }

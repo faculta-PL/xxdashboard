@@ -1,0 +1,257 @@
+import { useEffect, useState } from 'react'
+import {
+  LayoutDashboard,
+  StickyNote,
+  Lightbulb,
+  FolderKanban,
+  CalendarDays,
+  Search,
+  Download,
+  Bell,
+  Settings,
+  LogOut,
+  X,
+  Users,
+  MessageCircle,
+  FolderOpen,
+  Wallet,
+  ShieldAlert,
+  BoxSelect,
+  Sparkles,
+  Gamepad2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  ChevronDown,
+} from 'lucide-react'
+import { getBackendMode } from '../lib/store'
+
+export const NAV_GROUPS = [
+  {
+    id: 'workspace',
+    label: 'Espace de travail',
+    items: [
+      { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
+      { id: 'projects', label: 'Projets', icon: FolderKanban },
+      { id: 'notes', label: 'Notes', icon: StickyNote },
+      { id: 'ideas', label: 'Kanban', icon: Lightbulb },
+      { id: 'calendar', label: 'Calendrier', icon: CalendarDays },
+      { id: 'files', label: 'Fichiers', icon: FolderOpen },
+      { id: 'budget', label: 'Budget', icon: Wallet },
+      { id: 'risks', label: 'Risques', icon: ShieldAlert },
+      { id: 'canvas', label: 'Espace visuel', icon: BoxSelect },
+    ],
+  },
+  {
+    id: 'collab',
+    label: 'Collaboration',
+    items: [
+      { id: 'team', label: 'Équipe', icon: Users },
+      { id: 'chat', label: 'Chat', icon: MessageCircle },
+      { id: 'notifications', label: 'Notifications', icon: Bell },
+    ],
+  },
+  {
+    id: 'tools',
+    label: 'Outils',
+    items: [
+      { id: 'search', label: 'Recherche', icon: Search },
+      { id: 'export', label: 'Exports', icon: Download },
+      { id: 'assistant', label: 'Assistant IA', icon: Sparkles },
+    ],
+  },
+  {
+    id: 'fun',
+    label: 'Détente',
+    items: [{ id: 'games', label: 'Jeux', icon: Gamepad2 }],
+  },
+]
+
+export const NAV_FLAT = [
+  ...NAV_GROUPS.flatMap((g) => g.items),
+  { id: 'settings', label: 'Paramètres', icon: Settings },
+]
+
+const GROUPS_KEY = 'nazix_nav_groups'
+const COLLAPSE_KEY = 'nazix_nav_collapsed'
+
+function readGroups() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(GROUPS_KEY) || '{}')
+    return raw && typeof raw === 'object' ? raw : {}
+  } catch {
+    return {}
+  }
+}
+
+export function Sidebar({
+  user,
+  view,
+  onView,
+  onCloseMobile,
+  onLogout,
+  unread,
+  chatUnread,
+  collapsed,
+  onCollapsed,
+}) {
+  const [closedGroups, setClosedGroups] = useState(readGroups)
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(GROUPS_KEY, JSON.stringify(closedGroups))
+    } catch {
+      /* ignore */
+    }
+  }, [closedGroups])
+
+  const toggleGroup = (id) => {
+    setClosedGroups((prev) => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  const toggleRail = () => {
+    const next = !collapsed
+    onCollapsed(next)
+    try {
+      localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0')
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return (
+    <aside className="flex h-full w-[min(260px,100vw)] flex-col border-r border-sage-200 bg-sage-800 text-sage-50 lg:w-full">
+      <div className="flex h-full flex-col p-3 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <div className={`mb-4 flex items-center gap-2 px-1 pt-1 ${collapsed ? 'lg:justify-center' : 'justify-between'}`}>
+          <div className={`min-w-0 ${collapsed ? 'lg:hidden' : ''}`}>
+            <p className="font-display text-2xl leading-none">Nazix</p>
+            <p className="mt-1 truncate text-xs text-sage-300">
+              {getBackendMode() === 'firebase' ? 'Firebase' : 'Mode local'} · {user.role}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg hover:bg-sage-700 lg:hidden"
+            onClick={onCloseMobile}
+            aria-label="Fermer le menu"
+          >
+            <X size={20} />
+          </button>
+          <button
+            type="button"
+            className="hidden min-h-11 min-w-11 items-center justify-center rounded-lg hover:bg-sage-700 lg:inline-flex"
+            onClick={toggleRail}
+            aria-label={collapsed ? 'Déplier la navigation' : 'Replier la navigation'}
+            aria-pressed={collapsed}
+            title={collapsed ? 'Déplier' : 'Replier'}
+          >
+            {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
+        </div>
+
+        <nav className="flex-1 space-y-3 overflow-y-auto xx-scroll" aria-label="Navigation principale">
+          {NAV_GROUPS.map((group) => {
+            const closed = Boolean(closedGroups[group.id]) && !collapsed
+            return (
+              <div key={group.id}>
+                <button
+                  type="button"
+                  className={`flex w-full items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sage-300 hover:text-sage-50 ${
+                    collapsed ? 'lg:hidden' : ''
+                  }`}
+                  onClick={() => toggleGroup(group.id)}
+                  aria-expanded={!closed}
+                >
+                  <span className="min-w-0 flex-1 truncate text-left">{group.label}</span>
+                  <ChevronDown size={14} className={`shrink-0 transition ${closed ? '-rotate-90' : ''}`} />
+                </button>
+                {collapsed && <div className="hidden h-px bg-sage-600/80 lg:block" aria-hidden />}
+                {!closed && (
+                  <div className="mt-1 space-y-0.5">
+                    {group.items.map((item) => {
+                      const Icon = item.icon
+                      const active = view === item.id
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => onView(item.id)}
+                          title={item.label}
+                          aria-current={active ? 'page' : undefined}
+                          aria-label={item.label}
+                          className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
+                            collapsed ? 'lg:justify-center lg:px-0' : ''
+                          } ${active ? 'bg-sage-600 text-white' : 'text-sage-100 hover:bg-sage-700'}`}
+                        >
+                          <Icon size={18} className="shrink-0" />
+                          <span className={`min-w-0 flex-1 truncate ${collapsed ? 'lg:hidden' : ''}`}>
+                            {item.label}
+                          </span>
+                          {item.id === 'notifications' && unread > 0 && (
+                            <span
+                              className={`rounded-full bg-cream-green px-2 py-0.5 text-[11px] font-bold text-sage-800 ${
+                                collapsed ? 'lg:hidden' : ''
+                              }`}
+                            >
+                              {unread}
+                            </span>
+                          )}
+                          {item.id === 'chat' && chatUnread > 0 && (
+                            <span
+                              className={`rounded-full bg-cream-green px-2 py-0.5 text-[11px] font-bold text-sage-800 ${
+                                collapsed ? 'lg:hidden' : ''
+                              }`}
+                            >
+                              {chatUnread}
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </nav>
+
+        <div className={`mt-3 border-t border-sage-600 pt-3 ${collapsed ? 'lg:px-0' : ''}`}>
+          <button
+            type="button"
+            onClick={() => onView('settings')}
+            title="Paramètres"
+            aria-label="Paramètres"
+            aria-current={view === 'settings' ? 'page' : undefined}
+            className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
+              collapsed ? 'lg:justify-center lg:px-0' : ''
+            } ${view === 'settings' ? 'bg-sage-600 text-white' : 'text-sage-100 hover:bg-sage-700'}`}
+          >
+            <Settings size={18} className="shrink-0" />
+            <span className={`min-w-0 flex-1 truncate ${collapsed ? 'lg:hidden' : ''}`}>Paramètres</span>
+          </button>
+          <p className={`mt-2 truncate px-2 text-sm font-medium ${collapsed ? 'lg:hidden' : ''}`}>{user.fullName}</p>
+          <p className={`truncate px-2 text-xs text-sage-300 ${collapsed ? 'lg:hidden' : ''}`}>{user.email}</p>
+          <button
+            type="button"
+            onClick={onLogout}
+            aria-label="Déconnexion"
+            title="Déconnexion"
+            className={`mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-sage-600 bg-sage-700 px-3 py-2 text-sm font-medium text-sage-50 hover:bg-sage-600 ${
+              collapsed ? 'lg:px-0' : ''
+            }`}
+          >
+            <LogOut size={16} />
+            <span className={collapsed ? 'lg:hidden' : ''}>Déconnexion</span>
+          </button>
+        </div>
+      </div>
+    </aside>
+  )
+}
+
+export function readNavCollapsed() {
+  try {
+    return localStorage.getItem(COLLAPSE_KEY) === '1'
+  } catch {
+    return false
+  }
+}

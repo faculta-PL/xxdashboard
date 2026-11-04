@@ -202,8 +202,10 @@ canvas {
   .animate-fade-up-d1,
   .animate-fade-up-d2,
   .animate-fade-up-d3,
-  .animate-fade-up-d4 {
-    animation: none;
-    transform: none;
+  .animate-fade-up-d4,
+  .animate-slide-in,
+  .animate-soft-pulse {
+    animation: none !important;
+    transform: none !important;
   }
 }

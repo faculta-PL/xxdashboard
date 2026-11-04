@@ -128,6 +128,9 @@ const COLLECTIONS = [
   'xx_canvas_layout',
   'xx_ai_threads',
   'xx_settings',
+  'xx_dashboard_prefs',
+  'xx_game_profiles',
+  'xx_game_scores',
 ]
 
 function emptyDb() {
@@ -292,6 +295,8 @@ async function remapUserReferences(fromId, toId) {
     'xx_canvas_layout',
     'xx_ai_threads',
     'xx_settings',
+    'xx_dashboard_prefs',
+    'xx_game_profiles',
   ]
   for (const col of entityCols) {
     for (const row of Object.values(memory[col] || {})) {
@@ -365,7 +370,14 @@ async function remapUserReferences(fromId, toId) {
               ? memory.xx_budgets[next.budgetId]
               : memory.xx_risks[next.riskId]
           Object.assign(next, parent ? inheritScopedAccess(parent, next) : shareFields(next, memory.xx_users[toId]))
-        } else if (col !== 'xx_groups' && col !== 'xx_ai_threads' && col !== 'xx_settings' && col !== 'xx_canvas_layout') {
+        } else if (
+          col !== 'xx_groups'
+          && col !== 'xx_ai_threads'
+          && col !== 'xx_settings'
+          && col !== 'xx_canvas_layout'
+          && col !== 'xx_dashboard_prefs'
+          && col !== 'xx_game_profiles'
+        ) {
           Object.assign(next, shareFields(next, memory.xx_users[toId]))
         }
         await persistDoc(col, next.id, next)
@@ -377,13 +389,21 @@ async function remapUserReferences(fromId, toId) {
       await persistDoc('xx_messages', row.id, { ...row, authorId: toId })
     }
   }
-  for (const col of ['xx_sessions', 'xx_notifications', 'xx_reset_tokens', 'xx_ai_threads', 'xx_settings']) {
+  for (const col of ['xx_sessions', 'xx_notifications', 'xx_reset_tokens', 'xx_ai_threads', 'xx_settings', 'xx_dashboard_prefs', 'xx_game_profiles']) {
     for (const row of Object.values(memory[col] || {})) {
       if (row.userId === fromId) {
         await persistDoc(col, row.id, { ...row, userId: toId, ownerId: row.ownerId === fromId ? toId : row.ownerId })
       }
     }
   }
+  for (const row of Object.values(memory.xx_game_scores || {})) {
+    if (row.userId === fromId) {
+      const next = { ...row, userId: toId, ownerId: row.ownerId === fromId ? toId : row.ownerId }
+      memory.xx_game_scores[row.id] = next
+    }
+  }
+  saveLocal(memory)
+  notify()
 }
 
 async function stampOwnedEntities(user) {
@@ -1635,7 +1655,16 @@ export async function pushLocalToFirebase() {
   if (!firebaseConfigured || !db) throw new Error('Firebase non configuré.')
   for (const col of COLLECTIONS) {
     for (const [id, value] of Object.entries(memory[col])) {
-      await setDoc(doc(db, col, id), value, { merge: true })
+      try {
+        if (col === 'xx_game_scores') {
+          // Append-only : pas de merge / update d’un score existant.
+          await setDoc(doc(db, col, id), value)
+        } else {
+          await setDoc(doc(db, col, id), value, { merge: true })
+        }
+      } catch (err) {
+        console.warn(`push ${col}/${id}:`, err.message)
+      }
     }
   }
   return diagnoseDatabase()
@@ -2848,6 +2877,124 @@ export async function saveUserSettings(user, patch) {
     updatedAt: now,
   }
   await persistDoc('xx_settings', id, row)
+  return row
+}
+
+/* ─── Dashboard prefs + arcade (KingX / Zianotix) ─── */
+
+const RESERVED_GAME_NAMES = new Set(['kingx', 'zianotix'])
+
+function foldGameName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, '')
+}
+
+async function persistCreateOnly(col, id, value) {
+  if (!memory[col]) memory[col] = {}
+  if (memory[col][id]) throw new Error('Enregistrement déjà présent (ajout seul).')
+  memory[col][id] = value
+  saveLocal(memory)
+  notify()
+  if (firebaseConfigured && db) {
+    try {
+      await withTimeout(
+        setDoc(doc(db, col, id), value),
+        FIRESTORE_OP_TIMEOUT_MS,
+        `Firestore create ${col}/${id}`,
+      )
+    } catch (err) {
+      console.warn(`Firestore create ${col}/${id} failed:`, err.message)
+    }
+  }
+  return value
+}
+
+export function getDashboardPrefs(user) {
+  if (!user) return null
+  return memory.xx_dashboard_prefs?.[user.id] || null
+}
+
+export async function saveDashboardPrefs(user, patch) {
+  if (!user) throw new Error('Permission refusée.')
+  const now = new Date().toISOString()
+  const id = user.id
+  const existing = memory.xx_dashboard_prefs[id] || {}
+  const hidden = Array.isArray(patch.hidden) ? patch.hidden.map(String) : existing.hidden || []
+  const order = Array.isArray(patch.order) ? patch.order.map(String) : existing.order || []
+  const row = {
+    id,
+    userId: user.id,
+    ownerId: user.id,
+    hidden,
+    order,
+    favoriteProjectId:
+      patch.favoriteProjectId !== undefined ? patch.favoriteProjectId || '' : existing.favoriteProjectId || '',
+    updatedAt: now,
+    createdAt: existing.createdAt || now,
+  }
+  await persistDoc('xx_dashboard_prefs', id, row)
+  return row
+}
+
+export function getGameProfile(user) {
+  if (!user) return null
+  return memory.xx_game_profiles?.[user.id] || null
+}
+
+export async function saveGameProfile(displayName, user) {
+  if (!user) throw new Error('Permission refusée.')
+  const name = String(displayName || '').trim()
+  if (name.length < 2) throw new Error('Le pseudo doit contenir au moins 2 caractères.')
+  if (name.length > 32) throw new Error('Le pseudo est trop long (32 caractères max).')
+  const folded = foldGameName(name)
+  if (!folded) throw new Error('Pseudo invalide.')
+  if (RESERVED_GAME_NAMES.has(folded)) {
+    throw new Error('Ce nom est réservé aux personnages officiels KingX et Zianotix.')
+  }
+  for (const row of Object.values(memory.xx_game_profiles || {})) {
+    if (row.userId !== user.id && foldGameName(row.displayName) === folded) {
+      throw new Error('Ce pseudo est déjà utilisé par un autre membre.')
+    }
+  }
+  const now = new Date().toISOString()
+  const id = user.id
+  const existing = memory.xx_game_profiles[id] || {}
+  const row = {
+    id,
+    userId: user.id,
+    ownerId: user.id,
+    displayName: name,
+    updatedAt: now,
+    createdAt: existing.createdAt || now,
+  }
+  await persistDoc('xx_game_profiles', id, row)
+  return row
+}
+
+export async function createGameScore({ gameId, score, displayName }, user) {
+  if (!user) throw new Error('Permission refusée.')
+  const n = Number(score)
+  if (!Number.isFinite(n)) throw new Error('Score invalide.')
+  const gid = String(gameId || '').trim()
+  if (!gid) throw new Error('Jeu inconnu.')
+  const profile = memory.xx_game_profiles[user.id]
+  const name = String(displayName || profile?.displayName || '').trim()
+  if (!name) throw new Error('Pseudo de jeu requis.')
+  const id = uid('gscore')
+  const row = {
+    id,
+    userId: user.id,
+    ownerId: user.id,
+    displayName: name,
+    gameId: gid,
+    score: n,
+    at: new Date().toISOString(),
+  }
+  await persistCreateOnly('xx_game_scores', id, row)
   return row
 }
 

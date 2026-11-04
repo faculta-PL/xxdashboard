@@ -1,5 +1,5 @@
 /** Nazix — notes, idées, projets, équipe */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import {
   LayoutDashboard,
   StickyNote,
@@ -8,9 +8,6 @@ import {
   CalendarDays,
   Search,
   Download,
-  Bell,
-  Settings,
-  LogOut,
   Menu,
   X,
   Plus,
@@ -44,16 +41,20 @@ import {
   Image as ImageIcon,
   Share2,
   Folder,
-  Wallet,
-  ShieldAlert,
   AlertTriangle,
   BoxSelect,
   Link2,
   Sparkles,
+  Gamepad2,
 } from 'lucide-react'
 import ImportModal from './ImportModal'
 import CanvasView from './CanvasView'
 import { AssistantFab, AssistantPanel, AssistantView, AiSettingsBlock } from './Assistant'
+import { EmptyState, PriorityBadge } from './components/ui'
+import { Sidebar, NAV_FLAT, readNavCollapsed } from './components/Sidebar'
+import DashboardView from './components/DashboardView'
+
+const GamesHub = lazy(() => import('./games/GamesHub.jsx'))
 import {
   bootStore,
   subscribeStore,
@@ -135,7 +136,6 @@ import {
   computeRiskPriority,
   isDateOverdue,
   isDateNearDue,
-  isOpenRisk,
   BUDGET_CURRENCIES,
   BUDGET_CATEGORIES,
   BUDGET_ACTUAL_STATUSES,
@@ -204,24 +204,6 @@ const SHARE_PERMS = [
   ['Édition', 'Édition'],
 ]
 
-const NAV = [
-  { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
-  { id: 'assistant', label: 'Assistant IA', icon: Sparkles },
-  { id: 'canvas', label: 'Espace visuel', icon: BoxSelect },
-  { id: 'notes', label: 'Notes', icon: StickyNote },
-  { id: 'ideas', label: 'Boîte à idées', icon: Lightbulb },
-  { id: 'projects', label: 'Projets', icon: FolderKanban },
-  { id: 'budget', label: 'Budget', icon: Wallet },
-  { id: 'risks', label: 'Risques et solutions', icon: ShieldAlert },
-  { id: 'files', label: 'Fichiers', icon: FolderOpen },
-  { id: 'calendar', label: 'Calendrier', icon: CalendarDays },
-  { id: 'team', label: 'Équipe', icon: Users },
-  { id: 'chat', label: 'Chat', icon: MessageCircle },
-  { id: 'search', label: 'Recherche', icon: Search },
-  { id: 'export', label: 'Exportation', icon: Download },
-  { id: 'notifications', label: 'Notifications', icon: Bell },
-  { id: 'settings', label: 'Paramètres', icon: Settings },
-]
 
 const CHAT_READ_KEY = 'nazix_chat_read'
 
@@ -235,16 +217,6 @@ function readChatMap() {
 
 function writeChatMap(map) {
   localStorage.setItem(CHAT_READ_KEY, JSON.stringify(map))
-}
-
-function EmptyState({ title, hint, action }) {
-  return (
-    <div className="rounded-2xl border border-dashed border-sage-300 bg-white/50 px-6 py-14 text-center animate-fade-up">
-      <p className="font-display text-xl text-sage-800">{title}</p>
-      <p className="mt-2 text-sm text-sage-600">{hint}</p>
-      {action}
-    </div>
-  )
 }
 
 function Modal({ open, title, onClose, children, wide }) {
@@ -373,6 +345,7 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [view, setView] = useState('dashboard')
   const [mobileNav, setMobileNav] = useState(false)
+  const [navCollapsed, setNavCollapsed] = useState(readNavCollapsed)
   const [toast, setToast] = useState(null)
   const [authMode, setAuthMode] = useState('login')
   const [authForm, setAuthForm] = useState({
@@ -591,6 +564,12 @@ export default function App() {
         : [],
     [db, user],
   )
+  const dashboardPrefs = useMemo(
+    () => (db && user ? db.xx_dashboard_prefs?.[user.id] || null : null),
+    [db, user],
+  )
+  const gameProfiles = useMemo(() => (db ? Object.values(db.xx_game_profiles || {}) : []), [db])
+  const gameScores = useMemo(() => (db ? Object.values(db.xx_game_scores || {}) : []), [db])
   const assistantContext = useMemo(
     () =>
       buildContextPayload({
@@ -719,71 +698,55 @@ export default function App() {
     )
   }
 
+  if (view === 'games') {
+    return (
+      <>
+        <Suspense
+          fallback={
+            <div className="flex min-h-[100dvh] items-center justify-center bg-cream-green">
+              <p className="font-display text-2xl text-sage-800">Arcade…</p>
+            </div>
+          }
+        >
+          <GamesHub
+            user={user}
+            profiles={gameProfiles}
+            scores={gameScores}
+            flash={flash}
+            onBack={() => setView('dashboard')}
+          />
+        </Suspense>
+        {toast && <Toast toast={toast} />}
+      </>
+    )
+  }
+
   return (
-    <div className="min-h-[100dvh] overflow-x-hidden lg:grid lg:grid-cols-[minmax(0,260px)_minmax(0,1fr)]">
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 w-[min(260px,100%)] border-r border-sage-200 bg-sage-800 text-sage-50 transition lg:static ${
+    <div
+      className={`min-h-[100dvh] overflow-x-hidden lg:grid ${
+        navCollapsed ? 'lg:grid-cols-[72px_minmax(0,1fr)]' : 'lg:grid-cols-[minmax(0,260px)_minmax(0,1fr)]'
+      }`}
+    >
+      <div
+        className={`fixed inset-y-0 left-0 z-40 h-full w-[min(260px,100%)] transition motion-reduce:transition-none lg:static lg:h-auto lg:w-auto ${
           mobileNav ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
-        <div className="flex h-full flex-col p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <div className="mb-6 flex items-center justify-between gap-2 px-2 pt-2">
-            <div className="min-w-0">
-              <p className="font-display text-2xl leading-none">Nazix</p>
-              <p className="mt-1 truncate text-xs text-sage-300">
-                {getBackendMode() === 'firebase' ? 'Firebase' : 'Mode local'} · {user.role}
-              </p>
-            </div>
-            <button
-              type="button"
-              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg hover:bg-sage-700 lg:hidden"
-              onClick={() => setMobileNav(false)}
-              aria-label="Fermer le menu"
-            >
-              <X size={20} />
-            </button>
-          </div>
-          <nav className="flex-1 space-y-1 overflow-y-auto xx-scroll">
-            {NAV.map((item) => {
-              const Icon = item.icon
-              const active = view === item.id
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => {
-                    setView(item.id)
-                    setMobileNav(false)
-                  }}
-                  className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
-                    active ? 'bg-sage-600 text-white' : 'text-sage-100 hover:bg-sage-700'
-                  }`}
-                >
-                  <Icon size={18} className="shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                  {item.id === 'notifications' && unread > 0 && (
-                    <span className="rounded-full bg-cream-green px-2 py-0.5 text-[11px] font-bold text-sage-800">
-                      {unread}
-                    </span>
-                  )}
-                  {item.id === 'chat' && chatUnread > 0 && (
-                    <span className="rounded-full bg-cream-green px-2 py-0.5 text-[11px] font-bold text-sage-800">
-                      {chatUnread}
-                    </span>
-                  )}
-                </button>
-              )
-            })}
-          </nav>
-          <div className="mt-4 border-t border-sage-600 pt-4">
-            <p className="truncate px-2 text-sm font-medium">{user.fullName}</p>
-            <p className="truncate px-2 text-xs text-sage-300">{user.email}</p>
-            <button type="button" onClick={handleLogout} className={`${btnGhost} mt-3 w-full !bg-sage-700 !text-sage-50 !border-sage-600`}>
-              <LogOut size={16} /> Déconnexion
-            </button>
-          </div>
-        </div>
-      </aside>
+        <Sidebar
+          user={user}
+          view={view}
+          onView={(id) => {
+            setView(id)
+            setMobileNav(false)
+          }}
+          onCloseMobile={() => setMobileNav(false)}
+          onLogout={handleLogout}
+          unread={unread}
+          chatUnread={chatUnread}
+          collapsed={navCollapsed}
+          onCollapsed={setNavCollapsed}
+        />
+      </div>
 
       {mobileNav && (
         <button
@@ -806,7 +769,7 @@ export default function App() {
           </button>
           <div className="min-w-0 flex-1">
             <h1 className="truncate font-display text-xl text-sage-900 md:text-2xl">
-              {NAV.find((n) => n.id === view)?.label}
+              {NAV_FLAT.find((n) => n.id === view)?.label}
             </h1>
           </div>
           {!user.emailVerified && (
@@ -838,6 +801,7 @@ export default function App() {
           )}
           {view === 'dashboard' && (
             <DashboardView
+              user={user}
               notes={notes}
               ideas={ideas}
               projects={projects}
@@ -846,7 +810,13 @@ export default function App() {
               budgets={budgets}
               budgetLines={budgetLines}
               risks={risks}
+              riskActions={riskActions}
+              chatMessages={chatMessages}
+              groups={groups}
+              users={users}
+              storedPrefs={dashboardPrefs}
               onQuick={(v) => setView(v)}
+              onImport={() => openImport({ destination: 'notes' })}
             />
           )}
           {view === 'canvas' && (
@@ -1041,6 +1011,7 @@ const LANDING_MODULES = [
   { id: 'equipe', title: 'Équipe', hint: 'Présence, profils, invitations.', icon: Users },
   { id: 'chat', title: 'Chat', hint: 'Groupes, Général, messages en direct.', icon: MessageCircle },
   { id: 'export', title: 'Export', hint: 'CSV, XLSX, DOCX, PDF, JSON.', icon: Download },
+  { id: 'jeux', title: 'Jeux', hint: 'KingX, Zianotix, Relais Duo.', icon: Gamepad2 },
 ]
 
 const LANDING_PLANS = [
@@ -1770,170 +1741,6 @@ function Toast({ toast }) {
   )
 }
 
-function DashboardView({
-  notes,
-  ideas,
-  projects,
-  files = [],
-  events,
-  budgets = [],
-  budgetLines = [],
-  risks = [],
-  onQuick,
-}) {
-  const byStatus = PROJECT_STATUSES.map((s) => ({
-    status: s,
-    count: projects.filter((p) => p.status === s).length,
-  }))
-  const upcoming = events
-    .filter((e) => e.date && new Date(`${e.date}T${e.time || '00:00'}`) >= new Date(Date.now() - 86400000))
-    .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
-    .slice(0, 5)
-
-  const openRisks = risks.filter(isOpenRisk)
-  const overdueRisks = openRisks.filter((r) => isDateOverdue(r.dueDate))
-  const firstBudget = budgets[0]
-  const firstPaid = firstBudget
-    ? budgetLines
-        .filter((l) => l.budgetId === firstBudget.id && l.kind === 'actual' && l.status === 'paid')
-        .reduce((sum, l) => sum + Number(l.amount || 0), 0)
-    : 0
-  const firstPlanned = Number(firstBudget?.plannedTotal || 0)
-  const firstRemaining = firstPlanned - firstPaid
-  const firstPct = firstPlanned > 0 ? Math.round((firstPaid / firstPlanned) * 100) : 0
-
-  const cards = [
-    { label: 'Notes', value: notes.length, tone: 'bg-sage-100' },
-    { label: 'Idées', value: ideas.length, tone: 'bg-sage-200/70' },
-    { label: 'Projets', value: projects.length, tone: 'bg-sage-100' },
-    { label: 'Fichiers', value: files.length, tone: 'bg-sage-200/70' },
-    { label: 'Risques ouverts', value: openRisks.length, tone: 'bg-sage-100' },
-    {
-      label: firstBudget ? `Budget « ${firstBudget.name} »` : 'Budget consommé',
-      value: firstBudget ? `${firstPct} %` : '—',
-      tone: 'bg-sage-200/70',
-    },
-  ]
-
-  return (
-    <div className="space-y-6 animate-fade-up">
-      <section className="rounded-3xl border border-sage-200 bg-gradient-to-br from-sage-700 to-sage-900 p-5 text-sage-50 md:p-8">
-        <p className="font-display text-3xl md:text-4xl">Vue d’ensemble</p>
-        <p className="mt-2 max-w-2xl text-sage-200">
-          Indicateurs synchronisés depuis la base — aucune donnée fictive. Créez vos premiers
-          contenus via les raccourcis.
-        </p>
-        <div className="mt-5 flex flex-wrap gap-2">
-          {[
-            ['notes', 'Nouvelle note'],
-            ['ideas', 'Nouvelle idée'],
-            ['projects', 'Nouveau projet'],
-            ['files', 'Fichiers'],
-            ['canvas', 'Espace visuel'],
-            ['budget', 'Budget'],
-            ['risks', 'Risques'],
-            ['calendar', 'Nouvel événement'],
-          ].map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => onQuick(id)}
-              className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-cream-green px-3 py-2 text-sm font-semibold text-sage-900 hover:bg-white"
-            >
-              <Plus size={16} /> {label}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {cards.map((c) => (
-          <div key={c.label} className={`rounded-2xl ${c.tone} border border-sage-200 p-5`}>
-            <p className="text-sm text-sage-600">{c.label}</p>
-            <p className="mt-1 font-display text-3xl text-sage-900">{c.value}</p>
-          </div>
-        ))}
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-sage-200 bg-white/70 p-5">
-          <h2 className="font-display text-lg text-sage-900">Projets par statut</h2>
-          <ul className="mt-4 space-y-2">
-            {byStatus.map((row) => (
-              <li key={row.status} className="flex items-center justify-between text-sm">
-                <span className="text-sage-700">{row.status}</span>
-                <span className="rounded-full bg-sage-100 px-2.5 py-0.5 font-semibold text-sage-800">
-                  {row.count}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="rounded-2xl border border-sage-200 bg-white/70 p-5">
-          <h2 className="font-display text-lg text-sage-900">Événements à venir</h2>
-          {upcoming.length === 0 ? (
-            <p className="mt-4 text-sm text-sage-500">Aucun événement planifié.</p>
-          ) : (
-            <ul className="mt-4 space-y-3">
-              {upcoming.map((e) => (
-                <li key={e.id} className="border-b border-sage-100 pb-2 text-sm last:border-0">
-                  <p className="font-medium text-sage-900">{e.title}</p>
-                  <p className="text-sage-500">
-                    {e.date} {e.time}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-sage-200 bg-white/70 p-5">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="font-display text-lg text-sage-900">Risques en retard</h2>
-            <button type="button" className={btnGhost + ' !py-1 text-xs'} onClick={() => onQuick('risks')}>
-              Voir
-            </button>
-          </div>
-          {overdueRisks.length === 0 ? (
-            <p className="mt-4 text-sm text-sage-500">Aucun risque en retard.</p>
-          ) : (
-            <ul className="mt-4 space-y-2">
-              {overdueRisks.slice(0, 5).map((r) => (
-                <li key={r.id} className="flex items-center justify-between gap-2 text-sm">
-                  <span className="min-w-0 truncate font-medium text-sage-900">{r.title}</span>
-                  <span className="shrink-0 text-xs font-semibold text-danger">{r.dueDate}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <div className="rounded-2xl border border-sage-200 bg-white/70 p-5">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="font-display text-lg text-sage-900">Reste budgétaire</h2>
-            <button type="button" className={btnGhost + ' !py-1 text-xs'} onClick={() => onQuick('budget')}>
-              Voir
-            </button>
-          </div>
-          {firstBudget ? (
-            <div className="mt-4">
-              <p className="font-display text-2xl text-sage-900">
-                {formatMoney(firstRemaining, firstBudget.currency)}
-              </p>
-              <p className="mt-1 text-sm text-sage-600">
-                {firstBudget.name} · {firstPct} % consommé (payé)
-              </p>
-            </div>
-          ) : (
-            <p className="mt-4 text-sm text-sage-500">Aucun budget pour le moment.</p>
-          )}
-        </div>
-      </section>
-    </div>
-  )
-}
-
 function formatMoney(amount, currency = 'EUR') {
   try {
     return new Intl.NumberFormat('fr-FR', {
@@ -1968,20 +1775,6 @@ function LocalBanner() {
     <div className="rounded-xl border border-warn/30 bg-warn/10 px-4 py-3 text-sm text-sage-800">
       Mode local — données non synchronisées entre appareils
     </div>
-  )
-}
-
-function PriorityBadge({ value }) {
-  const tone =
-    value === 'élevée'
-      ? 'bg-danger/15 text-danger'
-      : value === 'moyenne'
-        ? 'bg-warn/15 text-warn'
-        : 'bg-ok/15 text-ok'
-  return (
-    <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize ${tone}`}>
-      {value || 'faible'}
-    </span>
   )
 }
 
