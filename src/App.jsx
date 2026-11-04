@@ -336,9 +336,19 @@ export default function App() {
   useEffect(() => {
     let unsub = () => {}
     let cancelled = false
+    let bootCap
     ;(async () => {
       try {
-        await bootStore()
+        await Promise.race([
+          bootStore(),
+          new Promise((resolve) => {
+            bootCap = setTimeout(() => {
+              console.warn('Boot wait capped at 8s — splash released')
+              resolve()
+            }, 8000)
+          }),
+        ])
+        if (bootCap) clearTimeout(bootCap)
         if (cancelled) return
         unsub = subscribeStore(setDb)
         let restored = null
@@ -374,6 +384,7 @@ export default function App() {
     })()
     return () => {
       cancelled = true
+      if (bootCap) clearTimeout(bootCap)
       unsub()
     }
   }, [])
@@ -382,28 +393,28 @@ export default function App() {
   const notes = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_notes).filter((n) => canReadEntity(user, n))
+        ? Object.values(db.xx_notes || {}).filter((n) => canReadEntity(user, n))
         : [],
     [db, user],
   )
   const ideas = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_ideas).filter((i) => canReadEntity(user, i))
+        ? Object.values(db.xx_ideas || {}).filter((i) => canReadEntity(user, i))
         : [],
     [db, user],
   )
   const projects = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_projects).filter((p) => canReadEntity(user, p))
+        ? Object.values(db.xx_projects || {}).filter((p) => canReadEntity(user, p))
         : [],
     [db, user],
   )
   const events = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_events).filter((e) => canReadEntity(user, e))
+        ? Object.values(db.xx_events || {}).filter((e) => canReadEntity(user, e))
         : [],
     [db, user],
   )
@@ -428,7 +439,7 @@ export default function App() {
   const notifications = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_notifications)
+        ? Object.values(db.xx_notifications || {})
             .filter((n) => n.userId === user.id)
             .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
         : [],
@@ -511,10 +522,19 @@ export default function App() {
   }
 
   const handleLogout = async () => {
-    await logoutCurrentSession()
+    try {
+      localStorage.removeItem('xxdashboard_session_token')
+    } catch {
+      /* ignore */
+    }
     setUser(null)
     setSession(null)
     setView('dashboard')
+    try {
+      await logoutCurrentSession()
+    } catch (err) {
+      console.warn('logout:', err)
+    }
   }
 
   if (booting) {
@@ -1298,7 +1318,10 @@ function AuthModal({
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-end sm:items-stretch">
       <button type="button" className="absolute inset-0 bg-ink/40" aria-label="Fermer" onClick={onClose} />
-      <div className="landing-drawer relative z-10 flex max-h-[min(94dvh,100%)] w-full max-w-full flex-col overflow-hidden rounded-t-2xl bg-[#f5f6f1] shadow-2xl sm:max-h-none sm:w-[26.5rem] sm:rounded-none">
+      <div
+        className="landing-drawer relative z-10 flex max-h-[min(94dvh,100%)] w-full max-w-full flex-col overflow-hidden rounded-t-2xl bg-[#f5f6f1] shadow-2xl sm:h-full sm:max-h-none sm:w-[26.5rem] sm:rounded-none"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-start justify-between gap-3 border-b border-sage-200 px-5 py-4 pt-[max(1rem,env(safe-area-inset-top))]">
           <div>
             <p className="font-display text-2xl text-sage-900">{title}</p>
@@ -3675,7 +3698,7 @@ function SearchView({ notes, ideas, projects, events, files = [] }) {
       }
       setExternal(items.slice(0, 12))
       if (!items.length) setExtErr('Aucun résultat externe.')
-    } catch (err) {
+    } catch {
       setExtErr(
         'Recherche externe bloquée (CORS ou réseau). Essayez depuis un navigateur avec accès réseau, ou reformulez la requête interne.',
       )
@@ -4252,6 +4275,12 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
     ensureGeneralGroup(user).catch((err) => flash(err.message || 'Chat indisponible.', 'err'))
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per user session
   }, [user.id])
+
+  useEffect(() => {
+    if (selectedId) return
+    const general = groups.find((g) => g.isGeneral) || groups[0]
+    if (general) setSelectedId(general.id)
+  }, [groups, selectedId])
 
   const selected = groups.find((g) => g.id === selectedId) || null
   const thread = selected

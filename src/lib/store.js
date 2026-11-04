@@ -171,23 +171,23 @@ export function getStoreSnapshot() {
 }
 
 async function persistDoc(col, id, value, { required = false, remote = true } = {}) {
+  if (!memory[col]) memory[col] = {}
   memory[col][id] = value
   saveLocal(memory)
+  notify()
   if (remote && firebaseConfigured && db) {
-    try {
-      await withTimeout(
-        setDoc(doc(db, col, id), value, { merge: true }),
-        FIRESTORE_OP_TIMEOUT_MS,
-        `Firestore write ${col}/${id}`,
-      )
-    } catch (err) {
+    const write = withTimeout(
+      setDoc(doc(db, col, id), value, { merge: true }),
+      FIRESTORE_OP_TIMEOUT_MS,
+      `Firestore write ${col}/${id}`,
+    ).catch((err) => {
       console.warn(`Firestore write ${col}/${id} failed:`, err.message)
       if (required) {
         throw new Error(`Écriture Firebase impossible (${col}) : ${err.message}`)
       }
-    }
+    })
+    if (required) await write
   }
-  notify()
 }
 
 async function removeDoc(col, id) {
@@ -533,19 +533,14 @@ async function signOutAuthSafe() {
 async function ensureDefaultAdmin({ skipRemote = false } = {}) {
   const passwordHash = await sha256(ADMIN_PASSWORD)
   const now = new Date().toISOString()
-  let user = skipRemote
-    ? Object.values(memory.xx_users || {}).find((d) => d.email === ADMIN_EMAIL) || null
-    : await findUserByEmail(ADMIN_EMAIL)
-  let authUser = null
-  if (!skipRemote && firebaseConfigured && auth) {
-    authUser = await withTimeout(
-      ensureAuthUser(ADMIN_EMAIL, ADMIN_PASSWORD),
-      FIRESTORE_OP_TIMEOUT_MS,
-      'Firebase Auth admin seed',
-    )
+  let user = Object.values(memory.xx_users || {}).find((d) => d.email === ADMIN_EMAIL) || null
+  if (!user && !skipRemote) {
+    user = await findUserByEmail(ADMIN_EMAIL)
   }
+  // Never sign in during boot: createUser/signIn would silently authenticate
+  // every visitor as admin (accounts:signUp 400 + Auth persistence on landing).
   if (!user) {
-    const id = authUser?.uid || uid('user')
+    const id = uid('user')
     user = {
       id,
       fullName: 'Administrateur',
@@ -554,26 +549,17 @@ async function ensureDefaultAdmin({ skipRemote = false } = {}) {
       role: ROLES.ADMIN,
       emailVerified: true,
       verificationCode: null,
-      firebaseUid: authUser?.uid || null,
+      firebaseUid: null,
       createdAt: now,
       updatedAt: now,
     }
     await persistDoc('xx_users', id, user, {
-      required: !skipRemote && firebaseConfigured,
+      required: false,
       remote: !skipRemote,
     })
     return
   }
-  if (!skipRemote && authUser?.uid && user.id !== authUser.uid) {
-    try {
-      await alignUserWithAuth(user, authUser)
-      return
-    } catch (err) {
-      console.warn('Admin uid alignment:', err.message)
-    }
-  }
   const patch = {}
-  if (authUser?.uid && user.firebaseUid !== authUser.uid) patch.firebaseUid = authUser.uid
   if (!user.passwordHash) patch.passwordHash = passwordHash
   if (!user.emailVerified) patch.emailVerified = true
   if (user.role !== ROLES.ADMIN) patch.role = ROLES.ADMIN
@@ -582,7 +568,7 @@ async function ensureDefaultAdmin({ skipRemote = false } = {}) {
       'xx_users',
       user.id,
       { ...user, ...patch, updatedAt: now },
-      { required: !skipRemote && firebaseConfigured, remote: !skipRemote },
+      { required: false, remote: !skipRemote },
     )
   }
 }
@@ -610,11 +596,17 @@ function attachRealtimeListeners() {
       onSnapshot(
         collection(db, col),
         (snap) => {
-          const map = {}
-          snap.forEach((d) => {
-            map[d.id] = { id: d.id, ...d.data() }
-          })
-          memory[col] = map
+          if (!memory[col]) memory[col] = {}
+          // Merge docChanges so a partial/empty snapshot cannot wipe local-only docs
+          // (admin seed, unsynced writes) the way replacing the whole map did.
+          for (const change of snap.docChanges()) {
+            const d = change.doc
+            if (change.type === 'removed') {
+              delete memory[col][d.id]
+            } else {
+              memory[col][d.id] = { id: d.id, ...d.data() }
+            }
+          }
           saveLocal(memory)
           notify()
           firestoreSyncState = 'ok'
@@ -641,6 +633,14 @@ export function bootStore() {
       return ms
     }
     try {
+      // Landing must not inherit a leftover Auth session from a previous boot seed.
+      if (!localStorage.getItem(SESSION_KEY) && auth?.currentUser) {
+        try {
+          await withTimeout(signOutAuthSafe(), 2000, 'boot Auth signOut')
+        } catch (err) {
+          console.warn('boot Auth signOut:', err.message)
+        }
+      }
       if (firebaseConfigured && db) {
         try {
           await withTimeout(
@@ -770,7 +770,7 @@ export async function registerUser({ fullName, email, password }) {
     createdAt: now,
     updatedAt: now,
   }
-  await persistDoc('xx_users', id, user, { required: firebaseConfigured })
+  await persistDoc('xx_users', id, user)
   try {
     await addUserToGeneralGroup(id)
   } catch (err) {
@@ -778,22 +778,17 @@ export async function registerUser({ fullName, email, password }) {
   }
 
   const notifId = uid('notif')
-  await persistDoc(
-    'xx_notifications',
-    notifId,
-    {
-      id: notifId,
-      userId: id,
-      type: 'email_verification',
-      email: normalized,
-      title: 'Code de vérification e-mail',
-      body: `Votre code de vérification est ${verificationCode}. Un e-mail Firebase a aussi été envoyé. Saisissez le code ici ou cliquez le lien, puis confirmez dans Paramètres.`,
-      read: false,
-      createdAt: now,
-      meta: { verificationCode },
-    },
-    { required: firebaseConfigured },
-  )
+  await persistDoc('xx_notifications', notifId, {
+    id: notifId,
+    userId: id,
+    type: 'email_verification',
+    email: normalized,
+    title: 'Code de vérification e-mail',
+    body: `Votre code de vérification est ${verificationCode}. Un e-mail Firebase a aussi été envoyé. Saisissez le code ici ou cliquez le lien, puis confirmez dans Paramètres.`,
+    read: false,
+    createdAt: now,
+    meta: { verificationCode },
+  })
 
   return { user: publicUser(user), verificationCode }
 }
@@ -851,13 +846,31 @@ export async function loginUser(email, password) {
 
   let authUser = null
   if (firebaseConfigured && auth) {
-    authUser = await signInAuth(normalized, password)
+    try {
+      authUser = await withTimeout(
+        signInAuth(normalized, password),
+        FIRESTORE_OP_TIMEOUT_MS,
+        'Firebase Auth sign-in',
+      )
+    } catch (err) {
+      console.warn('Firebase Auth sign-in:', err.message)
+      authUser = null
+      if (!hashOk) throw new Error(mapAuthError(err))
+    }
     if (!user && authUser) {
       user = await findUserByFirebaseUid(authUser.uid)
     }
     if (hashOk && !authUser) {
-      // Compte Firestore existant (ex. reset SHA-256) sans Auth, ou Auth pas encore créé.
-      authUser = await ensureAuthUser(normalized, password)
+      try {
+        authUser = await withTimeout(
+          ensureAuthUser(normalized, password),
+          FIRESTORE_OP_TIMEOUT_MS,
+          'Firebase Auth ensure user',
+        )
+      } catch (err) {
+        console.warn('Firebase Auth ensure user:', err.message)
+        authUser = null
+      }
     }
   }
 
@@ -877,7 +890,7 @@ export async function loginUser(email, password) {
       createdAt: now,
       updatedAt: now,
     }
-    await persistDoc('xx_users', user.id, user, { required: true })
+    await persistDoc('xx_users', user.id, user)
   }
 
   if (!user) throw new Error('Identifiants incorrects.')
@@ -889,7 +902,11 @@ export async function loginUser(email, password) {
 
   if (authUser) {
     try {
-      user = await alignUserWithAuth(user, authUser)
+      user = await withTimeout(
+        alignUserWithAuth(user, authUser),
+        FIRESTORE_OP_TIMEOUT_MS,
+        'Auth uid alignment',
+      )
     } catch (err) {
       console.warn('User Auth uid alignment:', err.message)
       if (user.firebaseUid !== authUser.uid) {
@@ -897,12 +914,6 @@ export async function loginUser(email, password) {
         await persistDoc('xx_users', user.id, user)
       }
     }
-    try {
-      await stampOwnedEntities(user)
-    } catch (err) {
-      console.warn('Ownership stamp:', err.message)
-    }
-    await refreshRemoteAfterAuth()
   }
 
   const token = randomToken(32)
@@ -919,8 +930,16 @@ export async function loginUser(email, password) {
     active: true,
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
   }
-  await persistDoc('xx_sessions', sessionId, session, { required: firebaseConfigured })
   localStorage.setItem(SESSION_KEY, token)
+  try {
+    await persistDoc('xx_sessions', sessionId, session)
+  } catch (err) {
+    console.warn('session persist:', err.message)
+    if (!memory.xx_sessions) memory.xx_sessions = {}
+    memory.xx_sessions[sessionId] = session
+    saveLocal(memory)
+    notify()
+  }
   try {
     const seen = new Date().toISOString()
     user = { ...user, lastSeenAt: seen, updatedAt: seen }
@@ -928,29 +947,33 @@ export async function loginUser(email, password) {
   } catch (err) {
     console.warn('lastSeenAt:', err.message)
   }
+  if (authUser) {
+    const synced = user
+    stampOwnedEntities(synced).catch((err) => console.warn('Ownership stamp:', err.message))
+    refreshRemoteAfterAuth().catch((err) => console.warn('post-login sync:', err.message))
+  }
   return { user: publicUser(user), session }
 }
 
 export async function logoutCurrentSession() {
   const token = localStorage.getItem(SESSION_KEY)
-  if (token) {
-    const session =
-      Object.values(memory.xx_sessions).find((s) => s.token === token) ||
-      (await queryOne('xx_sessions', 'token', token))
-    if (session) {
-      await persistDoc(
-        'xx_sessions',
-        session.id,
-        {
+  localStorage.removeItem(SESSION_KEY)
+  try {
+    if (token) {
+      const session =
+        Object.values(memory.xx_sessions || {}).find((s) => s.token === token) ||
+        (await queryOne('xx_sessions', 'token', token))
+      if (session) {
+        await persistDoc('xx_sessions', session.id, {
           ...session,
           active: false,
           revokedAt: new Date().toISOString(),
-        },
-        { required: firebaseConfigured },
-      )
+        })
+      }
     }
+  } catch (err) {
+    console.warn('logout session:', err.message)
   }
-  localStorage.removeItem(SESSION_KEY)
   await signOutAuthSafe()
 }
 
