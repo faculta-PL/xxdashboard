@@ -27,6 +27,41 @@ const AUTH_MIN_PASSWORD = firebaseConfigured ? 6 : 4
 const LOCAL_KEY = 'xxdashboard_v1'
 const SESSION_KEY = 'xxdashboard_session_token'
 const SESSION_HOURS = 24
+/** Fail-open budget so splash never waits on a hung Firestore/Auth call. */
+const FIRESTORE_BOOT_TIMEOUT_MS = 5000
+const FIRESTORE_OP_TIMEOUT_MS = 4000
+
+function withTimeout(promise, ms, label) {
+  let timer
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`${label} timed out after ${ms}ms`))
+      }, ms)
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
+
+/** idle | ok | timeout | error | skipped */
+let firestoreSyncState = 'idle'
+let realtimeAttached = false
+
+export function getFirestoreSyncState() {
+  return firestoreSyncState
+}
+
+export function getBootHint() {
+  if (firestoreSyncState === 'timeout') {
+    return 'Firestore n’a pas répondu à temps — poursuite avec les données locales. La connexion reste possible.'
+  }
+  if (firestoreSyncState === 'error') {
+    return 'Firestore indisponible — poursuite avec les données locales. La connexion reste possible.'
+  }
+  return null
+}
 
 const COLLECTIONS = [
   'xx_users',
@@ -83,12 +118,16 @@ export function getStoreSnapshot() {
   return snapshotState()
 }
 
-async function persistDoc(col, id, value, { required = false } = {}) {
+async function persistDoc(col, id, value, { required = false, remote = true } = {}) {
   memory[col][id] = value
   saveLocal(memory)
-  if (firebaseConfigured && db) {
+  if (remote && firebaseConfigured && db) {
     try {
-      await setDoc(doc(db, col, id), value, { merge: true })
+      await withTimeout(
+        setDoc(doc(db, col, id), value, { merge: true }),
+        FIRESTORE_OP_TIMEOUT_MS,
+        `Firestore write ${col}/${id}`,
+      )
     } catch (err) {
       console.warn(`Firestore write ${col}/${id} failed:`, err.message)
       if (required) {
@@ -147,7 +186,11 @@ async function queryOne(col, field, value) {
   if (local) return local
   if (!firebaseConfigured || !db) return null
   try {
-    const snap = await getDocs(query(collection(db, col), where(field, '==', value), limit(1)))
+    const snap = await withTimeout(
+      getDocs(query(collection(db, col), where(field, '==', value), limit(1))),
+      FIRESTORE_OP_TIMEOUT_MS,
+      `Firestore query ${col}.${field}`,
+    )
     if (snap.empty) return null
     const d = snap.docs[0]
     return cacheDoc(col, { id: d.id, ...d.data() })
@@ -235,13 +278,19 @@ async function signOutAuthSafe() {
   }
 }
 
-async function ensureDefaultAdmin() {
+async function ensureDefaultAdmin({ skipRemote = false } = {}) {
   const passwordHash = await sha256(ADMIN_PASSWORD)
   const now = new Date().toISOString()
-  let user = await findUserByEmail(ADMIN_EMAIL)
+  let user = skipRemote
+    ? Object.values(memory.xx_users || {}).find((d) => d.email === ADMIN_EMAIL) || null
+    : await findUserByEmail(ADMIN_EMAIL)
   let authUser = null
-  if (firebaseConfigured && auth) {
-    authUser = await ensureAuthUser(ADMIN_EMAIL, ADMIN_PASSWORD)
+  if (!skipRemote && firebaseConfigured && auth) {
+    authUser = await withTimeout(
+      ensureAuthUser(ADMIN_EMAIL, ADMIN_PASSWORD),
+      FIRESTORE_OP_TIMEOUT_MS,
+      'Firebase Auth admin seed',
+    )
   }
   if (!user) {
     const id = authUser?.uid || uid('user')
@@ -257,7 +306,10 @@ async function ensureDefaultAdmin() {
       createdAt: now,
       updatedAt: now,
     }
-    await persistDoc('xx_users', id, user, { required: firebaseConfigured })
+    await persistDoc('xx_users', id, user, {
+      required: !skipRemote && firebaseConfigured,
+      remote: !skipRemote,
+    })
     return
   }
   const patch = {}
@@ -268,8 +320,50 @@ async function ensureDefaultAdmin() {
       'xx_users',
       user.id,
       { ...user, ...patch, updatedAt: now },
-      { required: firebaseConfigured },
+      { required: !skipRemote && firebaseConfigured, remote: !skipRemote },
     )
+  }
+}
+
+async function pullCollectionsOnce() {
+  await Promise.all(
+    COLLECTIONS.map(async (col) => {
+      const snap = await getDocs(collection(db, col))
+      const map = {}
+      snap.forEach((d) => {
+        map[d.id] = { id: d.id, ...d.data() }
+      })
+      if (Object.keys(map).length) memory[col] = { ...memory[col], ...map }
+    }),
+  )
+  saveLocal(memory)
+  notify()
+}
+
+function attachRealtimeListeners() {
+  if (!firebaseConfigured || !db || realtimeAttached) return
+  realtimeAttached = true
+  for (const col of COLLECTIONS) {
+    try {
+      onSnapshot(
+        collection(db, col),
+        (snap) => {
+          const map = {}
+          snap.forEach((d) => {
+            map[d.id] = { id: d.id, ...d.data() }
+          })
+          memory[col] = map
+          saveLocal(memory)
+          notify()
+          firestoreSyncState = 'ok'
+        },
+        (err) => {
+          console.warn(`Firestore listener ${col} failed:`, err.message)
+        },
+      )
+    } catch (err) {
+      console.warn(`Firestore onSnapshot ${col} failed:`, err.message)
+    }
   }
 }
 
@@ -278,40 +372,68 @@ let bootPromise = null
 export function bootStore() {
   if (bootPromise) return bootPromise
   bootPromise = (async () => {
-    if (firebaseConfigured && db) {
-      try {
-        for (const col of COLLECTIONS) {
-          const snap = await getDocs(collection(db, col))
-          const map = {}
-          snap.forEach((d) => {
-            map[d.id] = { id: d.id, ...d.data() }
-          })
-          if (Object.keys(map).length) memory[col] = { ...memory[col], ...map }
-        }
-        saveLocal(memory)
-        notify()
-        for (const col of COLLECTIONS) {
-          onSnapshot(collection(db, col), (snap) => {
-            const map = {}
-            snap.forEach((d) => {
-              map[d.id] = { id: d.id, ...d.data() }
-            })
-            memory[col] = map
-            saveLocal(memory)
-            notify()
-          })
-        }
-      } catch (err) {
-        console.warn('Firebase sync unavailable, using local store:', err.message)
-      }
+    const deadline = Date.now() + FIRESTORE_BOOT_TIMEOUT_MS
+    const remaining = (label) => {
+      const ms = deadline - Date.now()
+      if (ms <= 0) throw new Error(`${label} skipped, boot deadline reached`)
+      return ms
     }
     try {
-      await ensureDefaultAdmin()
+      if (firebaseConfigured && db) {
+        try {
+          await withTimeout(
+            pullCollectionsOnce(),
+            remaining('Firestore boot sync'),
+            'Firestore boot sync',
+          )
+          firestoreSyncState = 'ok'
+        } catch (err) {
+          firestoreSyncState = /timed out|deadline/i.test(err.message) ? 'timeout' : 'error'
+          console.warn('Firebase sync unavailable, using local store:', err.message)
+          saveLocal(memory)
+          notify()
+        }
+        // Non-blocking: recover in the background if Firestore later becomes reachable.
+        attachRealtimeListeners()
+      } else {
+        firestoreSyncState = 'skipped'
+      }
+      try {
+        const skipRemote = firestoreSyncState !== 'ok'
+        const adminMs = Math.max(400, remaining('Admin seed'))
+        await withTimeout(ensureDefaultAdmin({ skipRemote }), adminMs, 'Admin seed')
+      } catch (err) {
+        console.warn('Admin seed failed:', err.message)
+        try {
+          await ensureDefaultAdmin({ skipRemote: true })
+        } catch (localErr) {
+          console.warn('Local admin seed failed:', localErr.message)
+        }
+      }
     } catch (err) {
-      console.warn('Admin seed failed:', err.message)
+      console.warn('bootStore fail-open:', err.message)
+      if (firestoreSyncState === 'idle') {
+        firestoreSyncState = firebaseConfigured && db ? 'error' : 'skipped'
+      }
+      try {
+        attachRealtimeListeners()
+      } catch {
+        /* ignore */
+      }
+      try {
+        await ensureDefaultAdmin({ skipRemote: true })
+      } catch (localErr) {
+        console.warn('Local admin seed failed:', localErr.message)
+      }
     }
     return snapshotState()
-  })()
+  })().catch((err) => {
+    console.warn('bootStore rejected:', err?.message || err)
+    if (firestoreSyncState === 'idle') {
+      firestoreSyncState = firebaseConfigured && db ? 'error' : 'skipped'
+    }
+    return snapshotState()
+  })
   return bootPromise
 }
 
@@ -331,6 +453,7 @@ export function diagnoseDatabase() {
     mode: getBackendMode(),
     firebase: getFirebaseStatus(),
     firebaseConfigured,
+    firestoreSync: firestoreSyncState,
     collections: counts,
     totalDocuments: Object.values(counts).reduce((a, b) => a + b, 0),
     localKey: LOCAL_KEY,
@@ -815,6 +938,15 @@ export async function pullFirebaseToLocal() {
 
 export async function getRemoteDoc(col, id) {
   if (!firebaseConfigured || !db) return null
-  const snap = await getDoc(doc(db, col, id))
-  return snap.exists() ? { id: snap.id, ...snap.data() } : null
+  try {
+    const snap = await withTimeout(
+      getDoc(doc(db, col, id)),
+      FIRESTORE_OP_TIMEOUT_MS,
+      `Firestore get ${col}/${id}`,
+    )
+    return snap.exists() ? { id: snap.id, ...snap.data() } : null
+  } catch (err) {
+    console.warn(`Firestore get ${col}/${id} failed:`, err.message)
+    return null
+  }
 }

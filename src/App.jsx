@@ -58,6 +58,8 @@ import {
   exportDeploymentKit,
   getBackendMode,
   getMinPasswordLength,
+  getBootHint,
+  getFirestoreSyncState,
   pushLocalToFirebase,
   pullFirebaseToLocal,
 } from './lib/store'
@@ -208,6 +210,7 @@ export default function App() {
   })
   const [authBusy, setAuthBusy] = useState(false)
   const [showPass, setShowPass] = useState(false)
+  const [bootHint, setBootHint] = useState(null)
 
   const flash = (message, type = 'ok') => {
     setToast({ message, type })
@@ -216,17 +219,53 @@ export default function App() {
 
   useEffect(() => {
     let unsub = () => {}
+    let cancelled = false
     ;(async () => {
-      await bootStore()
-      unsub = subscribeStore(setDb)
-      const current = await getCurrentSession()
-      if (current) {
-        setUser(current.user)
-        setSession(current.session)
+      try {
+        await bootStore()
+        if (cancelled) return
+        unsub = subscribeStore(setDb)
+        try {
+          const current = await Promise.race([
+            getCurrentSession(),
+            new Promise((_, reject) => {
+              setTimeout(() => reject(new Error('Session restore timed out')), 2500)
+            }),
+          ])
+          if (!cancelled && current) {
+            setUser(current.user)
+            setSession(current.session)
+          }
+        } catch (err) {
+          console.warn('Session restore skipped:', err.message)
+        }
+        const hint = getBootHint()
+        if (!cancelled && hint) {
+          setBootHint(hint)
+          setToast({ message: hint, type: 'err' })
+          setTimeout(() => setToast(null), 5200)
+        }
+      } catch (err) {
+        console.warn('Boot failed open:', err)
+        try {
+          if (!cancelled) unsub = subscribeStore(setDb)
+        } catch {
+          /* ignore */
+        }
+        const hint = getBootHint() || 'Démarrage local — Firestore n’a pas répondu.'
+        if (!cancelled) {
+          setBootHint(hint)
+          setToast({ message: hint, type: 'err' })
+          setTimeout(() => setToast(null), 5200)
+        }
+      } finally {
+        if (!cancelled) setBooting(false)
       }
-      setBooting(false)
     })()
-    return () => unsub()
+    return () => {
+      cancelled = true
+      unsub()
+    }
   }, [])
 
   const users = useMemo(() => (db ? listUsers() : []), [db])
@@ -352,7 +391,8 @@ export default function App() {
             {firebaseConfigured ? (
               <div className="mb-4 rounded-xl border border-sage-200 bg-sage-50 px-3 py-2 text-xs text-sage-700">
                 Backend <strong>Firebase</strong> — connexion et inscription écrivent dans Auth
-                et Firestore.
+                et Firestore
+                {getFirestoreSyncState() === 'ok' ? '.' : ' (sync Firestore en attente ou indisponible).'}
               </div>
             ) : (
               <div className="mb-4 rounded-xl border border-warn/40 bg-warn/10 px-3 py-2.5 text-sm text-sage-800">
@@ -365,6 +405,11 @@ export default function App() {
                   redémarrez Vite. Les comptes resteront ensuite dans Auth + Firestore.
                   Variables manquantes : {missingFirebaseVars.join(', ') || 'aucune'}.
                 </p>
+              </div>
+            )}
+            {bootHint && (
+              <div className="mb-4 rounded-xl border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-sage-800">
+                {bootHint}
               </div>
             )}
             <div className="mb-5 flex gap-2 text-sm">
