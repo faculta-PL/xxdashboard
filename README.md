@@ -1,6 +1,6 @@
 # Nazix
 
-Application web collaborative temps réel pour la gestion unifiée des **notes**, **idées (Kanban)**, **projets**, **équipe** et **chat de groupe**.
+Application web collaborative temps réel pour la gestion unifiée des **notes**, **idées (Kanban)**, **projets**, **fichiers**, **équipe** et **chat de groupe**.
 
 Palette vert cassé / sauge · entièrement responsive · **aucune donnée fictive** au démarrage (hors compte administrateur préconfiguré).
 
@@ -75,7 +75,9 @@ La barre latérale affiche alors **Firebase** (via `getBackendMode()`).
 | Déconnexion / révocation | `signOut` | `xx_sessions.active = false` |
 | Chat / groupes | — | `xx_groups`, `xx_messages` (membres uniquement) |
 
-Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, `xx_events`, `xx_notifications`, `xx_reset_tokens`, `xx_groups`, `xx_messages`.
+Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, `xx_events`, `xx_notifications`, `xx_reset_tokens`, `xx_groups`, `xx_messages`, `xx_files`, `xx_folders`.
+
+**Fichiers** : activer **Storage** dans Firebase Console (choisir la région **avant** de créer le bucket — le client ne peut pas la définir). Coller `storage.rules` et `firestore.rules`. Bucket : `partagio.firebasestorage.app`. Taille max 20 Mo (`MAX_FILE_BYTES`). En mode local, blobs IndexedDB `nazix_files` (non synchronisés entre appareils).
 
 **Paramètres → Diagnostic** permet de pousser / tirer les collections (admin) une fois Firebase configuré.
 
@@ -86,19 +88,20 @@ Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, 
 3. Notes (CRUD, catégories, étiquettes, visibilité, droits Lecture/Édition)
 4. Boîte à idées Kanban (5 statuts, votes, historique, transformation Note/Projet)
 5. Projets (responsable, membres, progression 0–100 %, notes/idées liées)
-6. Calendrier (événements + notifications participants)
-7. Équipe (annuaire : nom, e-mail, rôle, présence 24 h)
-8. Chat et groupes (Général + groupes privés, messages temps réel)
-9. Recherche interne multi-filtres + recherche externe (API DuckDuckGo)
-10. Export CSV / XLSX / DOCX / JSON / PDF
-11. Centre de notifications
-12. Paramètres, sessions, diagnostic Firebase, kit d’exportation
+6. Fichiers (dossiers, import 20 Mo, types pdf/docx/xlsx/csv/txt/images, partage membres + équipe, projet optionnel)
+7. Calendrier (événements + notifications participants)
+8. Équipe (annuaire : nom, e-mail, rôle, présence 24 h)
+9. Chat et groupes (Général + groupes privés, messages temps réel)
+10. Recherche interne multi-filtres + recherche externe (API DuckDuckGo)
+11. Export CSV / XLSX / DOCX / JSON / PDF
+12. Centre de notifications
+13. Paramètres, sessions, diagnostic Firebase, kit d’exportation
 
 ## Rôles (RBAC)
 
 Administrateur · Responsable de projet · Membre · Lecteur
 
-Les permissions sont appliquées dans l’UI et à l’écriture des entités (partage explicite requis pour lire / modifier les contenus d’autrui, hors public / admin). Un Lecteur ne peut pas créer de notes, idées, projets, groupes. Les messages d’un groupe ne sont lisibles et écrivables que par ses membres.
+Les permissions sont appliquées dans l’UI et à l’écriture des entités (partage explicite requis pour lire / modifier les contenus d’autrui, hors public / admin / visibilité Équipe). Un Lecteur ne peut pas créer de notes, idées, projets, groupes, fichiers. Les messages d’un groupe ne sont lisibles et écrivables que par ses membres.
 
 ## Build
 

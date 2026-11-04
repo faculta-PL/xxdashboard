@@ -82,6 +82,11 @@ service cloud.firestore {
       return resource.data.visibility == 'Publique';
     }
 
+    function isTeamVisible() {
+      return resource.data.visibility == 'Équipe'
+        || resource.data.inheritedTeam == true;
+    }
+
     function isSharedRead() {
       return isSignedIn() && (
         (resource.data.keys().hasAll(['shareUserIds'])
@@ -102,6 +107,19 @@ service cloud.firestore {
 
     function canReadEntity() {
       return isAdmin() || isOwner() || isPublic() || isSharedRead();
+    }
+
+    function canReadFileEntity() {
+      return isAdmin() || isOwner() || isTeamVisible() || isPublic() || isSharedRead();
+    }
+
+    function isSharedManage() {
+      return isSignedIn() && (
+        (resource.data.keys().hasAll(['shareManageUserIds'])
+          && request.auth.uid in resource.data.shareManageUserIds)
+        || (resource.data.keys().hasAll(['shareManageEmails'])
+          && authEmail() in resource.data.shareManageEmails)
+      );
     }
 
     function canWriteEntity() {
@@ -178,6 +196,20 @@ service cloud.firestore {
       allow create: if isSignedIn() && isOwnerCreate() && isGroupMemberOnWrite();
       allow update: if isAdmin() || isOwner() || isGroupMember();
       allow delete: if isAdmin() || isOwner();
+    }
+
+    match /xx_folders/{id} {
+      allow read: if isSignedIn() && canReadFileEntity();
+      allow create: if isOwnerCreate() || isAdmin();
+      allow update: if canWriteEntity();
+      allow delete: if isAdmin() || isOwner() || isSharedManage();
+    }
+
+    match /xx_files/{id} {
+      allow read: if isSignedIn() && canReadFileEntity();
+      allow create: if isOwnerCreate() || isAdmin();
+      allow update: if canWriteEntity();
+      allow delete: if isAdmin() || isOwner() || isSharedManage();
     }
 
     match /xx_messages/{id} {

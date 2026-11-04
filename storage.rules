@@ -1,0 +1,107 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Collez ce fichier dans Firebase Console → Storage → Règles
+    // (firebase deploy --only storage si la CLI est connectée).
+    // Choisir la région du bucket DANS LA CONSOLE avant de créer le bucket :
+    // le client ne peut pas la définir. Bucket attendu : partagio.firebasestorage.app
+    //
+    // Pas d’objets publics sans jeton. Lecture / écriture uniquement si Auth.
+    // Le client n’utilise getDownloadURL qu’après un contrôle Firestore ;
+    // préférer getBlob / getBytes.
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function authEmail() {
+      return request.auth.token.email;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        authEmail() == 'facultamalika@gmail.com'
+        || (
+          firestore.exists(/databases/(default)/documents/xx_users/$(request.auth.uid))
+          && firestore.get(/databases/(default)/documents/xx_users/$(request.auth.uid)).data.role == 'Administrateur'
+        )
+      );
+    }
+
+    function fileDoc(fileId) {
+      return firestore.get(/databases/(default)/documents/xx_files/$(fileId));
+    }
+
+    function fileExists(fileId) {
+      return firestore.exists(/databases/(default)/documents/xx_files/$(fileId));
+    }
+
+    function canReadFile(fileId) {
+      return fileExists(fileId) && (
+        isAdmin()
+        || fileDoc(fileId).data.ownerId == request.auth.uid
+        || fileDoc(fileId).data.ownerEmail == authEmail()
+        || fileDoc(fileId).data.visibility == 'Équipe'
+        || (
+          fileDoc(fileId).data.keys().hasAll(['shareUserIds'])
+          && request.auth.uid in fileDoc(fileId).data.shareUserIds
+        )
+      );
+    }
+
+    function allowedContentType() {
+      return request.resource.contentType in [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/csv',
+        'text/plain',
+        'image/jpeg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+        'application/octet-stream'
+      ];
+    }
+
+    function blockedContentType() {
+      return request.resource.contentType in [
+        'text/html',
+        'application/xhtml+xml',
+        'image/svg+xml',
+        'application/javascript',
+        'text/javascript',
+        'application/x-msdownload'
+      ];
+    }
+
+    // Chemin principal : files/{uid}/{fileId}/nom
+    match /files/{uid}/{fileId}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin() || canReadFile(fileId));
+      allow create, update: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.size <= 20 * 1024 * 1024
+        && allowedContentType()
+        && !blockedContentType();
+      allow delete: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+    }
+
+    // Variante files/{fileId} + métadonnées ownerId
+    match /files/{fileId} {
+      allow read: if isSignedIn() && (
+        isAdmin()
+        || canReadFile(fileId)
+        || resource.metadata.ownerId == request.auth.uid
+      );
+      allow create, update: if isSignedIn()
+        && request.resource.size <= 20 * 1024 * 1024
+        && allowedContentType()
+        && !blockedContentType()
+        && request.resource.metadata.ownerId == request.auth.uid;
+      allow delete: if isSignedIn() && (
+        isAdmin()
+        || resource.metadata.ownerId == request.auth.uid
+      );
+    }
+  }
+}

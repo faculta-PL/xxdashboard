@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app'
 import { getAuth } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
+import { getStorage } from 'firebase/storage'
 
 const ENV_KEYS = [
   'VITE_FIREBASE_API_KEY',
@@ -32,6 +33,7 @@ export const firebaseConfigured = Boolean(config.apiKey && config.projectId)
 let app = null
 let auth = null
 let db = null
+let storage = null
 let initError = null
 
 if (firebaseConfigured) {
@@ -39,6 +41,7 @@ if (firebaseConfigured) {
     app = initializeApp(config)
     auth = getAuth(app)
     db = getFirestore(app)
+    storage = config.storageBucket ? getStorage(app) : null
   } catch (err) {
     initError = err
     console.warn('Firebase init failed, falling back to local store:', err)
@@ -50,10 +53,16 @@ export function getFirebaseStatus() {
     configured: firebaseConfigured,
     authReady: Boolean(auth),
     firestoreReady: Boolean(db),
+    storageReady: Boolean(storage),
+    storageBucket: config.storageBucket || null,
     missingVars: missingFirebaseVars,
     initError: initError?.message || null,
     projectId: config.projectId || null,
   }
 }
 
-export { app, auth, db, config as firebaseConfig, ENV_KEYS as FIREBASE_ENV_KEYS }
+export function isStorageConfigured() {
+  return Boolean(storage)
+}
+
+export { app, auth, db, storage, config as firebaseConfig, ENV_KEYS as FIREBASE_ENV_KEYS }

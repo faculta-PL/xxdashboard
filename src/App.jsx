@@ -32,6 +32,18 @@ import {
   Send,
   UserPlus,
   ChevronLeft,
+  ChevronDown,
+  Columns3,
+  HelpCircle,
+  FolderOpen,
+  Upload,
+  FolderPlus,
+  LayoutGrid,
+  List,
+  FileText,
+  Image as ImageIcon,
+  Share2,
+  Folder,
 } from 'lucide-react'
 import {
   bootStore,
@@ -75,9 +87,40 @@ import {
   sendMessage,
   listGroupsForUser,
   listPresentUserIds,
+  startFileUpload,
+  saveFolder,
+  deleteFolder,
+  saveFileMeta,
+  deleteFile,
+  getFileBlob,
+  folderDeleteSummary,
+  isRemoteFileStorage,
 } from './lib/store'
 import { firebaseConfigured, missingFirebaseVars, getFirebaseStatus } from './lib/firebase'
-import { canReadEntity, canEditEntity, canDeleteEntity, canWriteRole, canReadGroup, isAdmin, ROLES } from './lib/rbac'
+import {
+  canReadEntity,
+  canEditEntity,
+  canDeleteEntity,
+  canWriteRole,
+  canReadGroup,
+  isAdmin,
+  ROLES,
+  canReadFileOrFolder,
+  canModifyFileOrFolder,
+  canManageFileOrFolder,
+  canDeleteFileOrFolder,
+  canAddInFolder,
+} from './lib/rbac'
+import {
+  MAX_FILE_BYTES,
+  ALLOWED_FILE_EXTS,
+  FILE_PERM_OPTIONS,
+  maxFileSizeLabel,
+  formatFileSize,
+  isImageExt,
+  isPdfExt,
+  validateUploadFile,
+} from './lib/files'
 import {
   exportJSON,
   exportCSV,
@@ -112,6 +155,7 @@ const NAV = [
   { id: 'notes', label: 'Notes', icon: StickyNote },
   { id: 'ideas', label: 'Boîte à idées', icon: Lightbulb },
   { id: 'projects', label: 'Projets', icon: FolderKanban },
+  { id: 'files', label: 'Fichiers', icon: FolderOpen },
   { id: 'calendar', label: 'Calendrier', icon: CalendarDays },
   { id: 'team', label: 'Équipe', icon: Users },
   { id: 'chat', label: 'Chat', icon: MessageCircle },
@@ -195,8 +239,12 @@ const btnPrimary =
 const btnGhost =
   'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-sage-300 bg-white/70 px-3 py-2 text-sm font-medium text-sage-800 transition hover:bg-sage-100'
 
-function ShareEditor({ users, shares, onChange, excludeId }) {
+function ShareEditor({ users, shares, onChange, excludeId, permissions }) {
   const options = users.filter((u) => u.id !== excludeId)
+  const perms = permissions || [
+    ['Lecture seule', 'Lecture seule'],
+    ['Édition', 'Édition'],
+  ]
   return (
     <div className="space-y-2 rounded-xl border border-sage-200 bg-white p-3">
       <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">Partage</p>
@@ -219,12 +267,43 @@ function ShareEditor({ users, shares, onChange, excludeId }) {
               }}
             >
               <option value="">Aucun</option>
-              <option value="Lecture seule">Lecture seule</option>
-              <option value="Édition">Édition</option>
+              {perms.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
             </select>
           </div>
         )
       })}
+    </div>
+  )
+}
+
+function FileShareBlock({ users, user, shares, teamWide, onShares, onTeamWide }) {
+  return (
+    <div className="space-y-3">
+      <label className="flex items-start gap-2 rounded-xl border border-sage-200 bg-white p-3 text-sm">
+        <input
+          type="checkbox"
+          className="mt-1 h-4 w-4 accent-sage-700"
+          checked={Boolean(teamWide)}
+          onChange={(e) => onTeamWide(e.target.checked)}
+        />
+        <span>
+          <span className="font-medium text-sage-800">Toute l’équipe</span>
+          <span className="mt-0.5 block text-xs text-sage-500">
+            Tous les comptes connectés peuvent lire (visibilité Équipe).
+          </span>
+        </span>
+      </label>
+      <ShareEditor
+        users={users}
+        shares={shares}
+        excludeId={user.id}
+        permissions={FILE_PERM_OPTIONS.map((p) => [p, p])}
+        onChange={onShares}
+      />
     </div>
   )
 }
@@ -332,6 +411,24 @@ export default function App() {
         : [],
     [db, user],
   )
+  const fileCtx = useMemo(
+    () => ({ folders: db?.xx_folders || {}, projects: db?.xx_projects || {} }),
+    [db],
+  )
+  const folders = useMemo(
+    () =>
+      db && user
+        ? Object.values(db.xx_folders || {}).filter((f) => canReadFileOrFolder(user, f, fileCtx))
+        : [],
+    [db, user, fileCtx],
+  )
+  const files = useMemo(
+    () =>
+      db && user
+        ? Object.values(db.xx_files || {}).filter((f) => canReadFileOrFolder(user, f, fileCtx))
+        : [],
+    [db, user, fileCtx],
+  )
   const notifications = useMemo(
     () =>
       db && user
@@ -437,7 +534,7 @@ export default function App() {
 
   if (!user) {
     return (
-      <AuthScreen
+      <LandingPage
         authMode={authMode}
         setAuthMode={setAuthMode}
         authForm={authForm}
@@ -556,8 +653,8 @@ export default function App() {
               notes={notes}
               ideas={ideas}
               projects={projects}
+              files={files}
               events={events}
-              users={users}
               onQuick={(v) => setView(v)}
             />
           )}
@@ -573,6 +670,17 @@ export default function App() {
               projects={projects}
               notes={notes}
               ideas={ideas}
+              users={users}
+              flash={flash}
+            />
+          )}
+          {view === 'files' && (
+            <FilesView
+              user={user}
+              files={files}
+              folders={folders}
+              foldersMap={db?.xx_folders || {}}
+              projects={projects}
               users={users}
               flash={flash}
             />
@@ -593,7 +701,7 @@ export default function App() {
             />
           )}
           {view === 'search' && (
-            <SearchView notes={notes} ideas={ideas} projects={projects} events={events} />
+            <SearchView notes={notes} ideas={ideas} projects={projects} events={events} files={files} />
           )}
           {view === 'export' && (
             <ExportView notes={notes} ideas={ideas} projects={projects} events={events} flash={flash} />
@@ -617,7 +725,81 @@ export default function App() {
   )
 }
 
-function AuthScreen({
+const LANDING_MODULES = [
+  { id: 'notes', title: 'Notes', hint: 'Prises rapides, catégories, partage.', icon: StickyNote },
+  { id: 'kanban', title: 'Kanban', hint: 'Boîte à idées, statuts, votes.', icon: Columns3 },
+  { id: 'projets', title: 'Projets', hint: 'Suivi, responsables, pièces jointes.', icon: FolderKanban },
+  { id: 'calendrier', title: 'Calendrier', hint: 'Échéances d’équipe au même endroit.', icon: CalendarDays },
+  { id: 'fichiers', title: 'Fichiers', hint: 'Dossiers, 20 Mo, pdf et images.', icon: FolderOpen },
+  { id: 'equipe', title: 'Équipe', hint: 'Présence, profils, invitations.', icon: Users },
+  { id: 'chat', title: 'Chat', hint: 'Groupes, Général, messages en direct.', icon: MessageCircle },
+  { id: 'export', title: 'Export', hint: 'CSV, XLSX, DOCX, PDF, JSON.', icon: Download },
+]
+
+const LANDING_PLANS = [
+  {
+    name: 'Gratuit',
+    price: '0 €',
+    tag: 'Solo · local',
+    points: [
+      'Notes, idées, projets, calendrier',
+      'Données sur cet appareil (localStorage)',
+      'Fichiers IndexedDB, 20 Mo max',
+      'Un compte, pas de paiement',
+    ],
+    cta: 'Commencer gratuitement',
+  },
+  {
+    name: 'Équipe',
+    price: 'Inclus',
+    tag: 'Collaboration',
+    featured: true,
+    points: [
+      'Tout le plan Gratuit',
+      'Firebase Auth + Firestore temps réel',
+      'Chat, partage, présence',
+      'Fichiers Storage (20 Mo)',
+    ],
+    cta: 'Créer un espace',
+  },
+  {
+    name: 'Orga',
+    price: 'Sur demande',
+    tag: 'Structure',
+    points: [
+      'Tout le plan Équipe',
+      'Rôles Admin, Responsable, Membre, Lecteur',
+      'Diagnostic, export, sessions',
+      'Aucun paiement intégré — inscription simple',
+    ],
+    cta: 'Ouvrir un compte',
+  },
+]
+
+const LANDING_FAQ = [
+  {
+    q: 'Faut-il Firebase ?',
+    a: 'Non. Sans clés, Nazix tourne en local sur cet appareil. Avec les variables VITE_FIREBASE_*, Auth, Firestore et Storage assurent la collaboration en temps réel.',
+  },
+  {
+    q: 'Langue et dates ?',
+    a: 'L’interface est entièrement en français (FR). Les dates s’affichent au format français. Pas de version anglaise pour le moment.',
+  },
+  {
+    q: 'Quels sont les rôles ?',
+    a: 'Administrateur, Responsable de projet, Membre et Lecteur. Un Lecteur consulte ce qui lui est partagé ; il ne crée pas de notes, idées, projets, groupes ou fichiers.',
+  },
+  {
+    q: 'Quelle taille pour les fichiers ?',
+    a: '20 Mo maximum par fichier. Types acceptés : pdf, docx, xlsx, csv, txt, jpg, png, gif, webp. Les exécutables et formats XSS sont refusés.',
+  },
+]
+
+function scrollToId(id) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function LandingPage({
   authMode,
   setAuthMode,
   authForm,
@@ -628,145 +810,639 @@ function AuthScreen({
   handleAuth,
   toast,
 }) {
+  const [authOpen, setAuthOpen] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const [ctaEmail, setCtaEmail] = useState('')
+  const [faqOpen, setFaqOpen] = useState(0)
+
+  const openAuth = (mode, email) => {
+    setAuthMode(mode)
+    if (typeof email === 'string') {
+      setAuthForm((prev) => ({ ...prev, email }))
+    }
+    setAuthOpen(true)
+    setMobileOpen(false)
+  }
+
+  const goSection = (id) => {
+    setMobileOpen(false)
+    scrollToId(id)
+  }
+
   return (
-    <div className="flex min-h-[100dvh] flex-col overflow-x-hidden lg:grid lg:grid-cols-2">
-      <section className="relative overflow-hidden bg-sage-800 px-5 py-6 pt-[max(1.5rem,env(safe-area-inset-top))] text-sage-50 md:px-8 md:py-8 lg:flex lg:flex-col lg:justify-center lg:px-14 lg:py-16">
-        <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-sage-600/40 blur-2xl" />
-        <div className="pointer-events-none absolute -bottom-20 -left-10 h-64 w-64 rounded-full bg-sage-900/50 blur-2xl" />
-        <div className="relative max-w-md">
-          <p className="font-display text-3xl tracking-tight md:text-4xl lg:text-6xl">Nazix</p>
-          <p className="mt-1 text-sm font-medium text-sage-200 md:text-base">
-            notes, idées, projets, équipe
-          </p>
-          <p className="mt-3 max-w-sm text-sm leading-relaxed text-sage-100/90 lg:mt-5 lg:text-base">
-            Un espace sobre pour noter, décider et discuter ensemble.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {['Notes', 'Kanban', 'Chat'].map((pill) => (
-              <span
-                key={pill}
-                className="rounded-full border border-sage-500/70 bg-sage-700/70 px-3 py-1 text-xs font-semibold text-sage-50"
+    <div className="landing min-h-[100dvh] overflow-x-hidden">
+      <header className="landing-header sticky top-0 z-40 border-b border-sage-200/40">
+        <div className="mx-auto grid min-h-[4.25rem] max-w-6xl grid-cols-[1fr_auto] items-center gap-3 px-4 pt-[max(0.5rem,env(safe-area-inset-top))] pb-2 sm:px-6 lg:grid-cols-[1fr_auto_1fr]">
+          <p className="font-display text-[1.65rem] leading-none tracking-tight text-sage-900">Nazix</p>
+          <nav className="hidden items-center gap-8 text-[15px] font-medium text-sage-800 lg:flex">
+            <button type="button" className="hover:text-sage-950" onClick={() => goSection('fonctionnalites')}>
+              Fonctionnalités
+            </button>
+            <button type="button" className="hover:text-sage-950" onClick={() => goSection('tarifs')}>
+              Tarifs
+            </button>
+            <button type="button" className="hover:text-sage-950" onClick={() => goSection('ressources')}>
+              Ressources
+            </button>
+          </nav>
+          <div className="flex items-center justify-end gap-2 sm:gap-3">
+            <button
+              type="button"
+              className="hidden min-h-11 px-2 text-[15px] font-medium text-sage-800 hover:text-sage-950 sm:inline"
+              onClick={() => openAuth('login')}
+            >
+              Se connecter
+            </button>
+            <button
+              type="button"
+              className="inline-flex min-h-10 items-center rounded-full bg-sage-800 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-sage-900 sm:min-h-11 sm:px-5"
+              onClick={() => openAuth('register')}
+            >
+              Essai gratuit
+            </button>
+            <button
+              type="button"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-sage-800 hover:bg-sage-200/70 lg:hidden"
+              onClick={() => setMobileOpen((v) => !v)}
+              aria-label={mobileOpen ? 'Fermer le menu' : 'Ouvrir le menu'}
+            >
+              {mobileOpen ? <X size={22} /> : <Menu size={22} />}
+            </button>
+          </div>
+        </div>
+        {mobileOpen && (
+          <div className="border-t border-sage-200/70 bg-[#f5f6f1] px-4 py-3 lg:hidden">
+            <div className="flex flex-col gap-1">
+              {[
+                ['fonctionnalites', 'Fonctionnalités'],
+                ['tarifs', 'Tarifs'],
+                ['ressources', 'Ressources'],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className="min-h-11 rounded-xl px-3 text-left font-medium text-sage-800 hover:bg-sage-100"
+                  onClick={() => goSection(id)}
+                >
+                  {label}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="min-h-11 rounded-xl px-3 text-left font-medium text-sage-800 hover:bg-sage-100 sm:hidden"
+                onClick={() => openAuth('login')}
               >
-                {pill}
+                Se connecter
+              </button>
+            </div>
+          </div>
+        )}
+      </header>
+
+      <section className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-6 pt-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-8 lg:pb-4 lg:pt-12">
+        <div className="max-w-xl animate-fade-up">
+          <h1 className="font-display text-[2.35rem] font-medium leading-[1.12] tracking-tight text-sage-900 sm:text-5xl lg:text-[3.35rem]">
+            Centralisez vos notes, idées, projets et équipe en un seul endroit.
+            <span className="ml-2 align-middle text-[0.72em] font-display text-sage-700">Nazix</span>
+          </h1>
+          <p className="mt-5 max-w-md text-[1.05rem] leading-relaxed text-sage-700">
+            Un espace sobre et collaboratif pour noter vos idées, gérer vos projets et échanger avec
+            votre équipe sans friction.
+          </p>
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+            <button
+              type="button"
+              className="inline-flex min-h-12 w-full items-center justify-center rounded-full bg-sage-800 px-6 text-[15px] font-semibold text-white shadow-sm transition hover:bg-sage-900 sm:w-auto"
+              onClick={() => openAuth('register')}
+            >
+              Commencer gratuitement
+            </button>
+            <button
+              type="button"
+              className="inline-flex min-h-12 w-full items-center justify-center rounded-full border border-sage-300 bg-transparent px-6 text-[15px] font-semibold text-sage-800 transition hover:bg-white/70 sm:w-auto"
+              onClick={() => goSection('fonctionnalites')}
+            >
+              Voir la démo
+            </button>
+          </div>
+        </div>
+        <div className="relative mx-auto w-full max-w-[640px] animate-fade-up-d4 pb-6 lg:max-w-none lg:pb-10">
+          <ProductMockup />
+        </div>
+      </section>
+
+      <section className="mx-auto grid max-w-6xl gap-8 px-4 py-10 sm:px-6 md:grid-cols-3 md:gap-6 lg:py-12">
+        {[
+          {
+            icon: StickyNote,
+            title: 'Notes & Idées',
+            hint: 'Prenez des notes rapides, organisez vos pensées.',
+          },
+          {
+            icon: Columns3,
+            title: 'Tableau Kanban',
+            hint: 'Suivez l’avancement de vos projets en équipe.',
+          },
+          {
+            icon: MessageCircle,
+            title: 'Chat Intégré',
+            hint: 'Communiquez et décidez ensemble en temps réel.',
+          },
+        ].map((item, i) => {
+          const Icon = item.icon
+          return (
+            <div key={item.title} className={`flex items-start gap-4 animate-fade-up-d${i + 1}`}>
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-sage-200 bg-sage-100 text-sage-700">
+                <Icon size={20} strokeWidth={1.7} />
               </span>
+              <div>
+                <p className="font-display text-lg text-sage-900">{item.title}</p>
+                <p className="mt-1 text-sm leading-relaxed text-sage-600">{item.hint}</p>
+              </div>
+            </div>
+          )
+        })}
+      </section>
+
+      <section className="bg-[#e7ece3]">
+        <div className="mx-auto flex max-w-6xl flex-col items-stretch gap-4 px-4 py-6 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:px-6 sm:py-7">
+          <p className="text-center font-display text-xl text-sage-900 sm:text-left sm:text-[1.35rem]">
+            Prêt à transformer votre façon de travailler ?
+          </p>
+          <form
+            className="flex w-full min-w-0 flex-col gap-2 sm:max-w-md sm:flex-row sm:items-center"
+            onSubmit={(e) => {
+              e.preventDefault()
+              openAuth('register', ctaEmail.trim())
+            }}
+          >
+            <input
+              type="email"
+              className="min-h-12 w-full rounded-full border border-sage-300/80 bg-white px-5 text-sm text-sage-900 outline-none ring-sage-400 placeholder:text-sage-400 focus:ring-2"
+              placeholder="Inscription par e-mail"
+              value={ctaEmail}
+              onChange={(e) => setCtaEmail(e.target.value)}
+              autoComplete="email"
+              required
+            />
+            <button
+              type="submit"
+              className="inline-flex min-h-12 shrink-0 items-center justify-center rounded-full bg-sage-800 px-6 text-sm font-semibold text-white hover:bg-sage-900"
+            >
+              S'inscrire
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <section id="fonctionnalites" className="scroll-mt-24 mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-20">
+        <div className="max-w-2xl">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sage-500">Fonctionnalités</p>
+          <h2 className="mt-2 font-display text-3xl text-sage-900 md:text-4xl">
+            Tout ce qu’il faut, au même endroit.
+          </h2>
+          <p className="mt-3 text-sage-600">
+            Modules réellement présents dans l’app — pas une liste marketing inventée.
+          </p>
+        </div>
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {LANDING_MODULES.map((mod) => {
+            const Icon = mod.icon
+            return (
+              <article
+                key={mod.id}
+                className="rounded-2xl border border-sage-200/80 bg-white/70 p-5 shadow-[0_1px_0_rgba(47,56,44,0.04)]"
+              >
+                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-sage-100 text-sage-700">
+                  <Icon size={18} strokeWidth={1.7} />
+                </span>
+                <h3 className="mt-4 font-display text-lg text-sage-900">{mod.title}</h3>
+                <p className="mt-1 text-sm leading-relaxed text-sage-600">{mod.hint}</p>
+              </article>
+            )
+          })}
+        </div>
+      </section>
+
+      <section id="tarifs" className="scroll-mt-24 bg-[#eef2ea] py-16 lg:py-20">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="max-w-2xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sage-500">Tarifs</p>
+            <h2 className="mt-2 font-display text-3xl text-sage-900 md:text-4xl">Simple, sans paiement fictif.</h2>
+            <p className="mt-3 text-sage-600">
+              Nazix n’intègre pas de caisse. Gratuit en local. Équipe et Orga s’ouvrent par inscription,
+              avec Firebase pour la collaboration.
+            </p>
+          </div>
+          <div className="mt-10 grid gap-4 lg:grid-cols-3">
+            {LANDING_PLANS.map((plan) => (
+              <article
+                key={plan.name}
+                className={`flex flex-col rounded-3xl border p-6 ${
+                  plan.featured
+                    ? 'border-sage-700 bg-sage-800 text-sage-50 shadow-lg'
+                    : 'border-sage-200 bg-white/80 text-sage-900'
+                }`}
+              >
+                <p className={`text-xs font-semibold uppercase tracking-wide ${plan.featured ? 'text-sage-300' : 'text-sage-500'}`}>
+                  {plan.tag}
+                </p>
+                <h3 className="mt-2 font-display text-2xl">{plan.name}</h3>
+                <p className={`mt-1 text-lg font-semibold ${plan.featured ? 'text-white' : 'text-sage-800'}`}>
+                  {plan.price}
+                </p>
+                <ul className="mt-5 flex-1 space-y-2.5 text-sm">
+                  {plan.points.map((p) => (
+                    <li key={p} className="flex gap-2">
+                      <Check size={16} className={`mt-0.5 shrink-0 ${plan.featured ? 'text-sage-200' : 'text-sage-600'}`} />
+                      <span className={plan.featured ? 'text-sage-100' : 'text-sage-700'}>{p}</span>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  className={`mt-6 inline-flex min-h-11 items-center justify-center rounded-full px-4 text-sm font-semibold ${
+                    plan.featured
+                      ? 'bg-cream-green text-sage-900 hover:bg-white'
+                      : 'bg-sage-800 text-white hover:bg-sage-900'
+                  }`}
+                  onClick={() => openAuth('register')}
+                >
+                  {plan.cta}
+                </button>
+              </article>
             ))}
           </div>
         </div>
       </section>
 
-      <section className="flex flex-1 items-start justify-center p-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:items-center md:p-8">
-        <form
-          onSubmit={handleAuth}
-          className="w-full max-w-md animate-fade-up rounded-3xl border border-sage-200 bg-white/85 p-5 shadow-sm backdrop-blur md:p-6"
-        >
-          <div className="mb-5 flex flex-wrap gap-2 text-sm">
-            {[
-              ['login', 'Connexion'],
-              ['register', 'Inscription'],
-              ['forgot', 'Mot de passe'],
-            ].map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setAuthMode(id === 'forgot' ? 'forgot' : id)}
-                className={`min-h-11 rounded-full px-4 py-2 ${
-                  authMode === id || (id === 'forgot' && authMode === 'reset')
-                    ? 'bg-sage-700 text-white'
-                    : 'bg-sage-100 text-sage-700'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {authMode === 'register' && (
-            <Field label="Nom">
-              <input
-                className={inputClass}
-                value={authForm.fullName}
-                onChange={(e) => setAuthForm({ ...authForm, fullName: e.target.value })}
-                autoComplete="name"
-                required
-              />
-            </Field>
-          )}
-
-          {(authMode === 'login' || authMode === 'register' || authMode === 'forgot') && (
-            <Field label="E-mail">
-              <input
-                type="email"
-                className={inputClass}
-                value={authForm.email}
-                onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
-                autoComplete="email"
-                required
-              />
-            </Field>
-          )}
-
-          {(authMode === 'login' || authMode === 'register') && (
-            <Field label="Mot de passe">
-              <div className="relative">
-                <input
-                  type={showPass ? 'text' : 'password'}
-                  className={inputClass + ' pr-12'}
-                  value={authForm.password}
-                  onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
-                  minLength={getMinPasswordLength()}
-                  autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
-                  required
-                />
+      <section id="ressources" className="scroll-mt-24 mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-20">
+        <div className="max-w-2xl">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sage-500">Ressources</p>
+          <h2 className="mt-2 font-display text-3xl text-sage-900 md:text-4xl">Questions fréquentes</h2>
+        </div>
+        <div className="mt-8 divide-y divide-sage-200 overflow-hidden rounded-2xl border border-sage-200 bg-white/70">
+          {LANDING_FAQ.map((item, i) => {
+            const open = faqOpen === i
+            return (
+              <div key={item.q}>
                 <button
                   type="button"
-                  className="absolute right-1 top-1/2 min-h-11 min-w-11 -translate-y-1/2 p-2 text-sage-500"
-                  onClick={() => setShowPass((v) => !v)}
-                  aria-label={showPass ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                  className="flex min-h-14 w-full items-center justify-between gap-4 px-5 py-4 text-left"
+                  onClick={() => setFaqOpen(open ? -1 : i)}
+                  aria-expanded={open}
                 >
-                  {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                  <span className="flex items-center gap-3 font-medium text-sage-900">
+                    <HelpCircle size={18} className="shrink-0 text-sage-500" />
+                    {item.q}
+                  </span>
+                  <ChevronDown size={18} className={`shrink-0 text-sage-500 transition ${open ? 'rotate-180' : ''}`} />
                 </button>
+                {open && <p className="px-5 pb-4 pl-12 text-sm leading-relaxed text-sage-600">{item.a}</p>}
               </div>
-            </Field>
-          )}
-
-          {authMode === 'reset' && (
-            <>
-              <Field label="Code reçu par e-mail">
-                <input
-                  className={inputClass}
-                  value={authForm.resetToken}
-                  onChange={(e) => setAuthForm({ ...authForm, resetToken: e.target.value })}
-                  required
-                />
-              </Field>
-              <Field label="Nouveau mot de passe">
-                <input
-                  type="password"
-                  className={inputClass}
-                  value={authForm.newPassword}
-                  onChange={(e) => setAuthForm({ ...authForm, newPassword: e.target.value })}
-                  minLength={getMinPasswordLength()}
-                  autoComplete="new-password"
-                  required
-                />
-              </Field>
-            </>
-          )}
-
-          <button type="submit" className={btnPrimary + ' mt-2 w-full'} disabled={authBusy}>
-            {authBusy
-              ? 'Patientez…'
-              : authMode === 'login'
-                ? 'Se connecter'
-                : authMode === 'register'
-                  ? "S'inscrire"
-                  : authMode === 'forgot'
-                    ? 'Envoyer'
-                    : 'Réinitialiser'}
-          </button>
-        </form>
+            )
+          })}
+        </div>
       </section>
+
+      <footer className="border-t border-sage-200 bg-[#e8ede4]">
+        <div className="mx-auto grid max-w-6xl gap-8 px-4 py-10 sm:px-6 md:grid-cols-3">
+          <div>
+            <p className="font-display text-2xl text-sage-900">Nazix</p>
+            <p className="mt-2 max-w-xs text-sm leading-relaxed text-sage-600">
+              Notes, idées, projets, fichiers, équipe et chat — un espace sobre pour travailler ensemble.
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">Produit</p>
+            <ul className="mt-3 space-y-2 text-sm text-sage-700">
+              <li>
+                <button type="button" className="hover:text-sage-900" onClick={() => goSection('fonctionnalites')}>
+                  Fonctionnalités
+                </button>
+              </li>
+              <li>
+                <button type="button" className="hover:text-sage-900" onClick={() => goSection('tarifs')}>
+                  Tarifs
+                </button>
+              </li>
+              <li>
+                <button type="button" className="hover:text-sage-900" onClick={() => goSection('ressources')}>
+                  Ressources
+                </button>
+              </li>
+            </ul>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">Compte</p>
+            <ul className="mt-3 space-y-2 text-sm text-sage-700">
+              <li>
+                <button type="button" className="hover:text-sage-900" onClick={() => openAuth('login')}>
+                  Se connecter
+                </button>
+              </li>
+              <li>
+                <button type="button" className="hover:text-sage-900" onClick={() => openAuth('register')}>
+                  Essai gratuit
+                </button>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div className="border-t border-sage-200/80 px-4 py-4 text-center text-xs text-sage-500 sm:px-6">
+          Nazix · {new Date().getFullYear()} · Interface en français
+        </div>
+      </footer>
+
+      <AuthModal
+        open={authOpen}
+        onClose={() => setAuthOpen(false)}
+        authMode={authMode}
+        setAuthMode={setAuthMode}
+        authForm={authForm}
+        setAuthForm={setAuthForm}
+        authBusy={authBusy}
+        showPass={showPass}
+        setShowPass={setShowPass}
+        handleAuth={handleAuth}
+      />
       {toast && <Toast toast={toast} />}
+    </div>
+  )
+}
+
+function ProductMockup() {
+  return (
+    <div className="relative mx-auto aspect-[16/11] w-full max-w-[640px] lg:max-w-none">
+      <div className="pointer-events-none absolute -inset-6 rounded-[2.5rem] bg-gradient-to-br from-sage-200/50 via-transparent to-sage-300/30 blur-2xl" />
+      <div className="landing-float absolute left-0 top-[22%] z-20 flex flex-col gap-2 sm:left-[-8px] lg:left-[-18px]">
+        {['Notes', 'Kanban', 'Chat'].map((label) => (
+          <span
+            key={label}
+            className="landing-pill inline-flex w-fit rounded-full bg-sage-800 px-3 py-1.5 text-[11px] font-semibold text-sage-50 sm:px-3.5 sm:text-xs"
+          >
+            {label}
+          </span>
+        ))}
+      </div>
+      <div className="landing-browser relative h-full overflow-hidden rounded-2xl bg-[#eef2ea]">
+        <div className="flex h-8 items-center gap-2 border-b border-sage-200/80 bg-white/90 px-3">
+          <span className="flex gap-1">
+            <span className="h-2 w-2 rounded-full bg-[#d9b8ae]" />
+            <span className="h-2 w-2 rounded-full bg-[#d8c9a3]" />
+            <span className="h-2 w-2 rounded-full bg-[#b7c4ad]" />
+          </span>
+          <span className="font-display text-[11px] text-sage-800">Nazix</span>
+          <span className="rounded-md bg-sage-100 px-2 py-0.5 text-[10px] font-medium text-sage-600">Dashboard</span>
+          <span className="ml-auto flex -space-x-1">
+            <span className="h-4 w-4 rounded-full bg-sage-300" />
+            <span className="h-4 w-4 rounded-full bg-sage-500" />
+          </span>
+        </div>
+        <div className="grid h-[calc(100%-2rem)] grid-cols-[52px_minmax(0,1fr)] sm:grid-cols-[64px_minmax(0,1.1fr)_minmax(0,1.4fr)_minmax(0,1fr)]">
+          <aside className="flex flex-col gap-2 bg-sage-800 p-2 text-[8px] text-sage-100 sm:p-2.5 sm:text-[9px]">
+            <span className="mb-1 font-display text-[10px] text-white sm:text-[11px]">Nazix</span>
+            {['Tableau', 'Notes', 'Idées', 'Projets', 'Fichiers', 'Chat'].map((item, i) => (
+              <span
+                key={item}
+                className={`truncate rounded-md px-1.5 py-1 ${i === 0 ? 'bg-sage-600 text-white' : 'text-sage-200'}`}
+              >
+                {item}
+              </span>
+            ))}
+          </aside>
+          <div className="hidden flex-col gap-1.5 overflow-hidden border-r border-sage-200/70 bg-[#f7f9f5] p-2 sm:flex">
+            <p className="text-[10px] font-semibold text-sage-800">Notes & Idées</p>
+            {[
+              ['Brief sprint', 'Prioriser les notes partagées.'],
+              ['Idées retenues', 'Kanban mis à jour en réunion.'],
+              ['Compte rendu', 'Décisions du chat Général.'],
+            ].map(([t, d]) => (
+              <div key={t} className="rounded-lg bg-white p-1.5 shadow-sm">
+                <p className="text-[9px] font-semibold text-sage-800">{t}</p>
+                <p className="text-[8px] leading-snug text-sage-500">{d}</p>
+              </div>
+            ))}
+          </div>
+          <div className="flex min-w-0 flex-col overflow-hidden bg-white p-2">
+            <p className="mb-1.5 text-[10px] font-semibold text-sage-800">Tableau Kanban</p>
+            <div className="grid min-h-0 flex-1 grid-cols-3 gap-1.5">
+              {[
+                ['#dce6d4', ['À préparer', 'Cadrer le livrable']],
+                ['#edd8d2', ['En saison', 'Suivi équipe']],
+                ['#efe3c4', ['Retenue', 'Prête à lancer']],
+              ].map(([bg, cards]) => (
+                <div key={cards[0]} className="flex flex-col gap-1 rounded-lg p-1" style={{ background: bg }}>
+                  {cards.map((c) => (
+                    <div key={c} className="rounded-md bg-white/90 px-1.5 py-1 text-[8px] font-medium text-sage-800">
+                      {c}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="hidden min-w-0 flex-col overflow-hidden border-l border-sage-200/70 bg-[#f7f9f5] p-2 sm:flex">
+            <p className="mb-1.5 text-[10px] font-semibold text-sage-800">Chat</p>
+            <div className="space-y-1.5">
+              <div className="max-w-[90%] rounded-xl rounded-tl-sm bg-sage-100 px-2 py-1 text-[8px] text-sage-800">
+                On valide le tableau ce matin ?
+              </div>
+              <div className="ml-auto max-w-[90%] rounded-xl rounded-tr-sm bg-sage-700 px-2 py-1 text-[8px] text-sage-50">
+                Oui — notes déjà partagées.
+              </div>
+              <div className="max-w-[90%] rounded-xl rounded-tl-sm bg-sage-100 px-2 py-1 text-[8px] text-sage-800">
+                Parfait, on avance.
+              </div>
+            </div>
+            <div className="mt-auto flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[8px] text-sage-400">
+              Écrire un message…
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AuthModal({
+  open,
+  onClose,
+  authMode,
+  setAuthMode,
+  authForm,
+  setAuthForm,
+  authBusy,
+  showPass,
+  setShowPass,
+  handleAuth,
+}) {
+  useEffect(() => {
+    if (!open) return undefined
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  if (!open) return null
+
+  const isResetish = authMode === 'forgot' || authMode === 'reset'
+  const title =
+    authMode === 'register'
+      ? 'Créer un compte'
+      : authMode === 'forgot'
+        ? 'Mot de passe oublié'
+        : authMode === 'reset'
+          ? 'Nouveau mot de passe'
+          : 'Connexion'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-end sm:items-stretch">
+      <button type="button" className="absolute inset-0 bg-ink/40" aria-label="Fermer" onClick={onClose} />
+      <div className="relative z-10 flex max-h-[min(94dvh,100%)] w-full max-w-full flex-col overflow-hidden rounded-t-2xl bg-[#f5f6f1] shadow-2xl animate-slide-in sm:max-h-none sm:w-[26.5rem] sm:rounded-none">
+        <div className="flex items-start justify-between gap-3 border-b border-sage-200 px-5 py-4 pt-[max(1rem,env(safe-area-inset-top))]">
+          <div>
+            <p className="font-display text-2xl text-sage-900">{title}</p>
+            <p className="mt-0.5 text-sm text-sage-600">
+              {authMode === 'register' ? 'Quelques champs, puis l’espace de travail.' : 'E-mail et mot de passe.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-sage-600 hover:bg-sage-200"
+            aria-label="Fermer"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 xx-scroll pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+          {!isResetish && (
+            <div className="mb-4 grid grid-cols-2 gap-1 rounded-full bg-sage-100 p-1 text-sm">
+              <button
+                type="button"
+                onClick={() => setAuthMode('login')}
+                className={`min-h-10 rounded-full font-medium ${
+                  authMode === 'login' ? 'bg-sage-800 text-white' : 'text-sage-700'
+                }`}
+              >
+                Connexion
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthMode('register')}
+                className={`min-h-10 rounded-full font-medium ${
+                  authMode === 'register' ? 'bg-sage-800 text-white' : 'text-sage-700'
+                }`}
+              >
+                Inscription
+              </button>
+            </div>
+          )}
+          <form onSubmit={handleAuth}>
+            {authMode === 'register' && (
+              <Field label="Nom">
+                <input
+                  className={inputClass}
+                  value={authForm.fullName}
+                  onChange={(e) => setAuthForm({ ...authForm, fullName: e.target.value })}
+                  autoComplete="name"
+                  required
+                />
+              </Field>
+            )}
+            {(authMode === 'login' || authMode === 'register' || authMode === 'forgot') && (
+              <Field label="E-mail">
+                <input
+                  type="email"
+                  className={inputClass}
+                  value={authForm.email}
+                  onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
+                  autoComplete="email"
+                  required
+                />
+              </Field>
+            )}
+            {(authMode === 'login' || authMode === 'register') && (
+              <Field label="Mot de passe">
+                <div className="relative">
+                  <input
+                    type={showPass ? 'text' : 'password'}
+                    className={inputClass + ' pr-12'}
+                    value={authForm.password}
+                    onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
+                    minLength={getMinPasswordLength()}
+                    autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-1 top-1/2 min-h-11 min-w-11 -translate-y-1/2 p-2 text-sage-500"
+                    onClick={() => setShowPass((v) => !v)}
+                    aria-label={showPass ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                  >
+                    {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </Field>
+            )}
+            {authMode === 'reset' && (
+              <>
+                <Field label="Code reçu par e-mail">
+                  <input
+                    className={inputClass}
+                    value={authForm.resetToken}
+                    onChange={(e) => setAuthForm({ ...authForm, resetToken: e.target.value })}
+                    required
+                  />
+                </Field>
+                <Field label="Nouveau mot de passe">
+                  <input
+                    type="password"
+                    className={inputClass}
+                    value={authForm.newPassword}
+                    onChange={(e) => setAuthForm({ ...authForm, newPassword: e.target.value })}
+                    minLength={getMinPasswordLength()}
+                    autoComplete="new-password"
+                    required
+                  />
+                </Field>
+              </>
+            )}
+            <button type="submit" className="mt-1 inline-flex min-h-12 w-full items-center justify-center rounded-full bg-sage-800 px-4 text-sm font-semibold text-white hover:bg-sage-900 disabled:opacity-50" disabled={authBusy}>
+              {authBusy
+                ? 'Patientez…'
+                : authMode === 'login'
+                  ? 'Se connecter'
+                  : authMode === 'register'
+                    ? 'Créer mon compte'
+                    : authMode === 'forgot'
+                      ? 'Envoyer le lien'
+                      : 'Réinitialiser'}
+            </button>
+            {authMode === 'login' && (
+              <button
+                type="button"
+                className="mt-3 w-full text-center text-sm text-sage-600 hover:text-sage-900"
+                onClick={() => setAuthMode('forgot')}
+              >
+                Mot de passe oublié ?
+              </button>
+            )}
+            {isResetish && (
+              <button
+                type="button"
+                className="mt-3 w-full text-center text-sm text-sage-600 hover:text-sage-900"
+                onClick={() => setAuthMode('login')}
+              >
+                Retour à la connexion
+              </button>
+            )}
+          </form>
+        </div>
+      </div>
     </div>
   )
 }
@@ -783,7 +1459,7 @@ function Toast({ toast }) {
   )
 }
 
-function DashboardView({ notes, ideas, projects, events, users, onQuick }) {
+function DashboardView({ notes, ideas, projects, files = [], events, onQuick }) {
   const byStatus = PROJECT_STATUSES.map((s) => ({
     status: s,
     count: projects.filter((p) => p.status === s).length,
@@ -797,7 +1473,7 @@ function DashboardView({ notes, ideas, projects, events, users, onQuick }) {
     { label: 'Notes', value: notes.length, tone: 'bg-sage-100' },
     { label: 'Idées', value: ideas.length, tone: 'bg-sage-200/70' },
     { label: 'Projets', value: projects.length, tone: 'bg-sage-100' },
-    { label: 'Collaborateurs', value: users.length, tone: 'bg-sage-200/70' },
+    { label: 'Fichiers', value: files.length, tone: 'bg-sage-200/70' },
   ]
 
   return (
@@ -813,6 +1489,7 @@ function DashboardView({ notes, ideas, projects, events, users, onQuick }) {
             ['notes', 'Nouvelle note'],
             ['ideas', 'Nouvelle idée'],
             ['projects', 'Nouveau projet'],
+            ['files', 'Fichiers'],
             ['calendar', 'Nouvel événement'],
           ].map(([id, label]) => (
             <button
@@ -827,7 +1504,7 @@ function DashboardView({ notes, ideas, projects, events, users, onQuick }) {
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((c) => (
           <div key={c.label} className={`rounded-2xl ${c.tone} border border-sage-200 p-5`}>
             <p className="text-sm text-sage-600">{c.label}</p>
@@ -1134,6 +1811,886 @@ function NotesView({ user, notes, users, projects, flash }) {
             type="button"
             className={btnPrimary + ' w-full sm:w-auto !bg-danger'}
             onClick={() => remove(confirmId)}
+          >
+            Supprimer
+          </button>
+        </ModalActions>
+      </Modal>
+    </div>
+  )
+}
+
+function fileIconFor(ext) {
+  if (isImageExt(ext)) return ImageIcon
+  return FileText
+}
+
+function FilesView({ user, files, folders, foldersMap, projects, users, flash }) {
+  const ctx = useMemo(
+    () => ({ folders: foldersMap || {}, projects: Object.fromEntries(projects.map((p) => [p.id, p])) }),
+    [foldersMap, projects],
+  )
+  const remoteStorage = isRemoteFileStorage()
+  const localBlobs = !remoteStorage || files.some((f) => f.localId && !f.storagePath)
+  const [folderId, setFolderId] = useState(null)
+  const [query, setQuery] = useState('')
+  const [filterExt, setFilterExt] = useState('')
+  const [filterAuthor, setFilterAuthor] = useState('')
+  const [layout, setLayout] = useState('list')
+  const [importOpen, setImportOpen] = useState(false)
+  const [folderOpen, setFolderOpen] = useState(false)
+  const [preview, setPreview] = useState(null)
+  const [previewUrl, setPreviewUrl] = useState('')
+  const [previewStatus, setPreviewStatus] = useState('idle')
+  const [editItem, setEditItem] = useState(null)
+  const [shareItem, setShareItem] = useState(null)
+  const [confirm, setConfirm] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [upload, setUpload] = useState({
+    file: null,
+    description: '',
+    folderId: '',
+    projectId: '',
+    shares: [],
+    teamWide: false,
+    progress: 0,
+    status: 'idle',
+    error: '',
+  })
+  const uploadJob = useRef(null)
+  const [folderForm, setFolderForm] = useState({
+    name: '',
+    parentId: '',
+    projectId: '',
+    shares: [],
+    teamWide: false,
+  })
+  const [editForm, setEditForm] = useState({
+    name: '',
+    description: '',
+    folderId: '',
+    parentId: '',
+    projectId: '',
+  })
+  const [shareForm, setShareForm] = useState({ shares: [], teamWide: false })
+
+  const currentFolder = folderId ? foldersMap[folderId] : null
+  const canAddHere = canAddInFolder(user, currentFolder, ctx)
+
+  const breadcrumb = useMemo(() => {
+    const trail = []
+    let cur = currentFolder
+    const seen = new Set()
+    while (cur && !seen.has(cur.id)) {
+      trail.unshift(cur)
+      seen.add(cur.id)
+      cur = cur.parentId ? foldersMap[cur.parentId] : null
+    }
+    return trail
+  }, [currentFolder, foldersMap])
+
+  const childFolders = folders
+    .filter((f) => (f.parentId || null) === folderId)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'fr'))
+  const childFiles = files
+    .filter((f) => (f.folderId || null) === folderId)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'fr'))
+
+  const authors = useMemo(() => {
+    const ids = new Set(files.map((f) => f.uploadedBy || f.ownerId).filter(Boolean))
+    return users.filter((u) => ids.has(u.id))
+  }, [files, users])
+
+  const q = query.trim().toLowerCase()
+  const filteredFolders = childFolders.filter((f) => {
+    if (q && !String(f.name || '').toLowerCase().includes(q)) return false
+    if (filterAuthor && f.ownerId !== filterAuthor) return false
+    return true
+  })
+  const filteredFiles = childFiles.filter((f) => {
+    if (q && !`${f.name || ''} ${f.description || ''}`.toLowerCase().includes(q)) return false
+    if (filterExt && f.ext !== filterExt) return false
+    if (filterAuthor && (f.uploadedBy || f.ownerId) !== filterAuthor) return false
+    return true
+  })
+
+  const filtersOn = Boolean(q || filterExt || filterAuthor)
+  const emptyRoot = folders.length === 0 && files.length === 0
+  const emptyHere = filteredFolders.length === 0 && filteredFiles.length === 0
+
+  const openImport = () => {
+    setUpload({
+      file: null,
+      description: '',
+      folderId: folderId || '',
+      projectId: currentFolder?.projectId || '',
+      shares: [],
+      teamWide: false,
+      progress: 0,
+      status: 'idle',
+      error: '',
+    })
+    setImportOpen(true)
+  }
+
+  const openNewFolder = () => {
+    setFolderForm({
+      name: '',
+      parentId: folderId || '',
+      projectId: currentFolder?.projectId || '',
+      shares: [],
+      teamWide: false,
+    })
+    setFolderOpen(true)
+  }
+
+  const submitFolder = async (e) => {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      await saveFolder(
+        {
+          name: folderForm.name,
+          parentId: folderForm.parentId || null,
+          projectId: folderForm.projectId || null,
+          shares: folderForm.shares,
+          teamWide: folderForm.teamWide,
+        },
+        user,
+      )
+      flash('Dossier créé.')
+      setFolderOpen(false)
+    } catch (err) {
+      flash(err.message, 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const pickUploadFile = (native) => {
+    if (!native) {
+      setUpload((u) => ({ ...u, file: null, error: '', status: 'idle' }))
+      return
+    }
+    try {
+      validateUploadFile(native)
+      setUpload((u) => ({ ...u, file: native, error: '', status: 'idle' }))
+    } catch (err) {
+      setUpload((u) => ({ ...u, file: null, error: err.message, status: 'error' }))
+    }
+  }
+
+  const runUpload = async (e) => {
+    e.preventDefault()
+    if (!upload.file) {
+      setUpload((u) => ({ ...u, error: 'Choisissez un fichier.', status: 'error' }))
+      return
+    }
+    setUpload((u) => ({ ...u, status: 'progress', progress: 1, error: '' }))
+    try {
+      const job = startFileUpload(
+        {
+          file: upload.file,
+          folderId: upload.folderId || null,
+          description: upload.description,
+          projectId: upload.projectId || null,
+          shares: upload.shares,
+          teamWide: upload.teamWide,
+        },
+        user,
+        {
+          onProgress: (pct) => setUpload((u) => ({ ...u, progress: pct, status: 'progress' })),
+        },
+      )
+      uploadJob.current = job
+      await job.done
+      uploadJob.current = null
+      setUpload((u) => ({ ...u, status: 'done', progress: 100 }))
+      flash('Fichier importé.')
+      setImportOpen(false)
+    } catch (err) {
+      uploadJob.current = null
+      setUpload((u) => ({
+        ...u,
+        status: 'error',
+        error: err.message || 'Échec du téléversement.',
+      }))
+    }
+  }
+
+  const cancelUpload = () => {
+    uploadJob.current?.cancel()
+    setUpload((u) => ({ ...u, status: 'idle', progress: 0 }))
+  }
+
+  const openPreview = async (file) => {
+    setPreview(file)
+    setPreviewStatus('loading')
+    setPreviewUrl('')
+    try {
+      const blob = await getFileBlob(file.id, user)
+      const url = URL.createObjectURL(blob)
+      setPreviewUrl(url)
+      setPreviewStatus('done')
+    } catch (err) {
+      setPreviewStatus('denied')
+      flash(err.message || 'Accès refusé.', 'err')
+    }
+  }
+
+  const closePreview = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
+    setPreviewUrl('')
+    setPreview(null)
+    setPreviewStatus('idle')
+  }
+
+  const downloadPreview = () => {
+    if (!previewUrl || !preview) return
+    const a = document.createElement('a')
+    a.href = previewUrl
+    a.download = preview.name || 'fichier'
+    a.click()
+  }
+
+  const openEdit = (item, kind) => {
+    setEditItem({ ...item, kind })
+    setEditForm({
+      name: item.name || '',
+      description: item.description || '',
+      folderId: kind === 'file' ? item.folderId || '' : '',
+      parentId: kind === 'folder' ? item.parentId || '' : '',
+      projectId: item.projectId || '',
+    })
+  }
+
+  const openShare = (item, kind) => {
+    setShareItem({ ...item, kind })
+    setShareForm({
+      shares: item.shares || [],
+      teamWide: item.visibility === 'Équipe',
+    })
+  }
+
+  const submitEdit = async (e) => {
+    e.preventDefault()
+    if (!editItem) return
+    setBusy(true)
+    try {
+      if (editItem.kind === 'folder') {
+        await saveFolder(
+          {
+            id: editItem.id,
+            name: editForm.name,
+            parentId: editForm.parentId || null,
+            projectId: editForm.projectId || null,
+            shares: editItem.shares,
+            teamWide: editItem.visibility === 'Équipe',
+          },
+          user,
+        )
+      } else {
+        await saveFileMeta(
+          {
+            id: editItem.id,
+            name: editForm.name,
+            description: editForm.description,
+            folderId: editForm.folderId || null,
+            projectId: editForm.projectId || null,
+          },
+          user,
+        )
+      }
+      flash('Enregistré.')
+      setEditItem(null)
+    } catch (err) {
+      flash(err.message, 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submitShare = async (e) => {
+    e.preventDefault()
+    if (!shareItem) return
+    setBusy(true)
+    try {
+      if (shareItem.kind === 'folder') {
+        await saveFolder(
+          {
+            id: shareItem.id,
+            name: shareItem.name,
+            parentId: shareItem.parentId,
+            projectId: shareItem.projectId,
+            shares: shareForm.shares,
+            teamWide: shareForm.teamWide,
+          },
+          user,
+        )
+      } else {
+        await saveFileMeta(
+          {
+            id: shareItem.id,
+            shares: shareForm.shares,
+            teamWide: shareForm.teamWide,
+          },
+          user,
+        )
+      }
+      flash('Partage mis à jour.')
+      setShareItem(null)
+    } catch (err) {
+      flash(err.message, 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openDelete = (item, kind) => {
+    if (kind === 'folder') {
+      const summary = folderDeleteSummary(item.id)
+      setConfirm({
+        kind,
+        item,
+        title: 'Supprimer le dossier',
+        body: `Le dossier et son contenu seront supprimés : ${summary.fileCount} fichier(s), ${summary.folderCount} sous-dossier(s). Cette action est définitive.`,
+      })
+    } else {
+      setConfirm({
+        kind,
+        item,
+        title: 'Supprimer le fichier',
+        body: 'Cette action est définitive.',
+      })
+    }
+  }
+
+  const runDelete = async () => {
+    if (!confirm) return
+    setBusy(true)
+    try {
+      if (confirm.kind === 'folder') {
+        await deleteFolder(confirm.item.id, user)
+        if (folderId === confirm.item.id) setFolderId(confirm.item.parentId || null)
+        flash('Dossier supprimé.')
+      } else {
+        await deleteFile(confirm.item.id, user)
+        flash('Fichier supprimé.')
+      }
+      setConfirm(null)
+    } catch (err) {
+      flash(err.message, 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const nameOf = (id) => users.find((u) => u.id === id)?.fullName || '—'
+  const projectTitle = (id) => projects.find((p) => p.id === id)?.title || ''
+
+  const folderChoices = folders.filter((f) => {
+    if (!editItem || editItem.kind !== 'folder') return true
+    if (f.id === editItem.id) return false
+    let cur = f
+    const seen = new Set()
+    while (cur && !seen.has(cur.id)) {
+      if (cur.parentId === editItem.id) return false
+      seen.add(cur.id)
+      cur = cur.parentId ? foldersMap[cur.parentId] : null
+    }
+    return true
+  })
+
+  const renderActions = (item, kind) => (
+    <div className="flex flex-wrap gap-1">
+      {kind === 'file' && (
+        <button type="button" className={btnGhost + ' !px-2'} onClick={() => openPreview(item)} title="Aperçu">
+          <Eye size={14} />
+        </button>
+      )}
+      {canModifyFileOrFolder(user, item, ctx) && (
+        <button type="button" className={btnGhost + ' !px-2'} onClick={() => openEdit(item, kind)} title="Modifier">
+          <Pencil size={14} />
+        </button>
+      )}
+      {canManageFileOrFolder(user, item, ctx) && (
+        <button type="button" className={btnGhost + ' !px-2'} onClick={() => openShare(item, kind)} title="Partage">
+          <Share2 size={14} />
+        </button>
+      )}
+      {canDeleteFileOrFolder(user, item, ctx) && (
+        <button
+          type="button"
+          className={btnGhost + ' !px-2 !text-danger'}
+          onClick={() => openDelete(item, kind)}
+          title="Supprimer"
+        >
+          <Trash2 size={14} />
+        </button>
+      )}
+    </div>
+  )
+
+  const card = (item, kind) => {
+    const Icon = kind === 'folder' ? Folder : fileIconFor(item.ext)
+    return (
+      <article
+        key={item.id}
+        className="flex flex-col rounded-2xl border border-sage-200 bg-white/80 p-4 transition hover:border-sage-400"
+      >
+        <div className="flex items-start gap-3">
+          <button
+            type="button"
+            className="min-w-0 flex-1 text-left"
+            onClick={() => (kind === 'folder' ? setFolderId(item.id) : openPreview(item))}
+          >
+            <div className="flex items-center gap-2">
+              <Icon size={18} className="shrink-0 text-sage-600" />
+              <h3 className="min-w-0 truncate font-display text-lg text-sage-900">{item.name}</h3>
+            </div>
+            <p className="mt-1 text-xs text-sage-500">
+              {kind === 'folder'
+                ? `${item.visibility}`
+                : `${(item.ext || '').toUpperCase()} · ${formatFileSize(item.size)} · ${item.visibility}`}
+            </p>
+            {item.description ? (
+              <p className="mt-2 line-clamp-2 text-sm text-sage-700">{item.description}</p>
+            ) : null}
+            {item.projectId ? (
+              <p className="mt-1 text-xs text-sage-500">Projet : {projectTitle(item.projectId)}</p>
+            ) : null}
+          </button>
+          {renderActions(item, kind)}
+        </div>
+      </article>
+    )
+  }
+
+  const row = (item, kind) => {
+    const Icon = kind === 'folder' ? Folder : fileIconFor(item.ext)
+    return (
+      <li
+        key={item.id}
+        className="flex flex-col gap-2 rounded-2xl border border-sage-200 bg-white/80 p-3 sm:flex-row sm:items-center"
+      >
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+          onClick={() => (kind === 'folder' ? setFolderId(item.id) : openPreview(item))}
+        >
+          <Icon size={18} className="shrink-0 text-sage-600" />
+          <div className="min-w-0">
+            <p className="truncate font-medium text-sage-900">{item.name}</p>
+            <p className="text-xs text-sage-500">
+              {kind === 'folder'
+                ? `${item.visibility} · ${nameOf(item.ownerId)}`
+                : `${(item.ext || '').toUpperCase()} · ${formatFileSize(item.size)} · ${nameOf(item.uploadedBy || item.ownerId)}`}
+            </p>
+          </div>
+        </button>
+        {renderActions(item, kind)}
+      </li>
+    )
+  }
+
+  return (
+    <div className="space-y-4 animate-fade-up">
+      {localBlobs && (
+        <div className="rounded-xl border border-warn/30 bg-warn/10 px-4 py-3 text-sm text-sage-800">
+          Mode local — fichiers non synchronisés entre appareils
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {canWriteRole(user) && canAddHere && (
+          <>
+            <button type="button" className={btnPrimary} onClick={openImport}>
+              <Upload size={16} /> Importer
+            </button>
+            <button type="button" className={btnGhost} onClick={openNewFolder}>
+              <FolderPlus size={16} /> Nouveau dossier
+            </button>
+          </>
+        )}
+        <div className="relative min-w-0 flex-1 basis-full sm:basis-48">
+          <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sage-400" size={16} />
+          <input
+            className={inputClass + ' pl-9'}
+            placeholder="Rechercher…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <select
+          className={inputClass + ' max-w-full sm:!w-auto'}
+          value={filterExt}
+          onChange={(e) => setFilterExt(e.target.value)}
+        >
+          <option value="">Type</option>
+          {ALLOWED_FILE_EXTS.map((ext) => (
+            <option key={ext} value={ext}>
+              {ext.toUpperCase()}
+            </option>
+          ))}
+        </select>
+        <select
+          className={inputClass + ' max-w-full sm:!w-auto'}
+          value={filterAuthor}
+          onChange={(e) => setFilterAuthor(e.target.value)}
+        >
+          <option value="">Auteur</option>
+          {authors.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.fullName}
+            </option>
+          ))}
+        </select>
+        <select
+          className={inputClass + ' max-w-full sm:!w-auto'}
+          value={folderId || ''}
+          onChange={(e) => setFolderId(e.target.value || null)}
+        >
+          <option value="">Dossier racine</option>
+          {folders.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.name}
+            </option>
+          ))}
+        </select>
+        <div className="flex rounded-xl border border-sage-300 bg-white p-1">
+          <button
+            type="button"
+            className={`inline-flex min-h-9 min-w-9 items-center justify-center rounded-lg ${
+              layout === 'list' ? 'bg-sage-200' : ''
+            }`}
+            onClick={() => setLayout('list')}
+            aria-label="Liste"
+          >
+            <List size={16} />
+          </button>
+          <button
+            type="button"
+            className={`inline-flex min-h-9 min-w-9 items-center justify-center rounded-lg ${
+              layout === 'grid' ? 'bg-sage-200' : ''
+            }`}
+            onClick={() => setLayout('grid')}
+            aria-label="Grille"
+          >
+            <LayoutGrid size={16} />
+          </button>
+        </div>
+      </div>
+
+      <nav className="flex flex-wrap items-center gap-1 text-sm text-sage-600">
+        <button type="button" className="rounded-lg px-2 py-1 hover:bg-sage-100" onClick={() => setFolderId(null)}>
+          Accueil
+        </button>
+        {breadcrumb.map((f) => (
+          <span key={f.id} className="flex items-center gap-1">
+            <span>/</span>
+            <button type="button" className="rounded-lg px-2 py-1 hover:bg-sage-100" onClick={() => setFolderId(f.id)}>
+              {f.name}
+            </button>
+          </span>
+        ))}
+      </nav>
+
+      {emptyRoot ? (
+        <EmptyState
+          title="Aucun fichier"
+          hint={
+            canWriteRole(user)
+              ? `Importez un document (max ${maxFileSizeLabel()}). Types : ${ALLOWED_FILE_EXTS.join(', ')}.`
+              : 'Les fichiers partagés avec vous apparaîtront ici.'
+          }
+          action={
+            canWriteRole(user) && canAddHere ? (
+              <button type="button" className={btnPrimary + ' mt-4'} onClick={openImport}>
+                <Upload size={16} /> Importer un fichier
+              </button>
+            ) : null
+          }
+        />
+      ) : emptyHere && filtersOn ? (
+        <EmptyState title="Aucun résultat" hint="Aucun fichier ne correspond aux filtres." />
+      ) : emptyHere ? (
+        <EmptyState
+          title="Dossier vide"
+          hint="Ajoutez un fichier ou un sous-dossier."
+          action={
+            canWriteRole(user) && canAddHere ? (
+              <button type="button" className={btnPrimary + ' mt-4'} onClick={openImport}>
+                <Upload size={16} /> Importer
+              </button>
+            ) : null
+          }
+        />
+      ) : layout === 'grid' ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {filteredFolders.map((f) => card(f, 'folder'))}
+          {filteredFiles.map((f) => card(f, 'file'))}
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {filteredFolders.map((f) => row(f, 'folder'))}
+          {filteredFiles.map((f) => row(f, 'file'))}
+        </ul>
+      )}
+
+      <Modal open={importOpen} title="Importer un fichier" onClose={() => setImportOpen(false)} wide>
+        <form onSubmit={runUpload} className="space-y-1">
+          <Field label={`Fichier (max ${maxFileSizeLabel()})`}>
+            <input
+              type="file"
+              className={inputClass}
+              accept={ALLOWED_FILE_EXTS.map((e) => `.${e}`).join(',')}
+              onChange={(e) => pickUploadFile(e.target.files?.[0] || null)}
+            />
+          </Field>
+          <p className="mb-3 text-xs text-sage-500">
+            Types : {ALLOWED_FILE_EXTS.join(', ')}. Exécutables, HTML, SVG et scripts sont bloqués.
+          </p>
+          <Field label="Dossier">
+            <select
+              className={inputClass}
+              value={upload.folderId}
+              onChange={(e) => setUpload((u) => ({ ...u, folderId: e.target.value }))}
+            >
+              <option value="">Racine</option>
+              {folders.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Description">
+            <textarea
+              className={inputClass + ' min-h-20'}
+              value={upload.description}
+              onChange={(e) => setUpload((u) => ({ ...u, description: e.target.value }))}
+            />
+          </Field>
+          <Field label="Projet associé (optionnel)">
+            <select
+              className={inputClass}
+              value={upload.projectId}
+              onChange={(e) => setUpload((u) => ({ ...u, projectId: e.target.value }))}
+            >
+              <option value="">Aucun</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <FileShareBlock
+            users={users}
+            user={user}
+            shares={upload.shares}
+            teamWide={upload.teamWide}
+            onShares={(shares) => setUpload((u) => ({ ...u, shares }))}
+            onTeamWide={(teamWide) => setUpload((u) => ({ ...u, teamWide }))}
+          />
+          {upload.status === 'progress' && (
+            <div className="mt-3">
+              <div className="h-2 overflow-hidden rounded-full bg-sage-200">
+                <div className="h-full bg-sage-700 transition-all" style={{ width: `${upload.progress}%` }} />
+              </div>
+              <p className="mt-1 text-xs text-sage-600">{upload.progress} %</p>
+            </div>
+          )}
+          {upload.status === 'error' && upload.error && (
+            <p className="mt-2 text-sm text-danger">{upload.error}</p>
+          )}
+          <ModalActions>
+            {upload.status === 'progress' ? (
+              <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={cancelUpload}>
+                Annuler
+              </button>
+            ) : (
+              <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={!upload.file}>
+                <Upload size={16} /> Téléverser
+              </button>
+            )}
+          </ModalActions>
+        </form>
+      </Modal>
+
+      <Modal open={folderOpen} title="Nouveau dossier" onClose={() => setFolderOpen(false)}>
+        <form onSubmit={submitFolder}>
+          <Field label="Nom">
+            <input
+              className={inputClass}
+              value={folderForm.name}
+              onChange={(e) => setFolderForm({ ...folderForm, name: e.target.value })}
+              required
+            />
+          </Field>
+          <Field label="Dossier parent">
+            <select
+              className={inputClass}
+              value={folderForm.parentId}
+              onChange={(e) => setFolderForm({ ...folderForm, parentId: e.target.value })}
+            >
+              <option value="">Racine</option>
+              {folders.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Projet associé (optionnel)">
+            <select
+              className={inputClass}
+              value={folderForm.projectId}
+              onChange={(e) => setFolderForm({ ...folderForm, projectId: e.target.value })}
+            >
+              <option value="">Aucun</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <FileShareBlock
+            users={users}
+            user={user}
+            shares={folderForm.shares}
+            teamWide={folderForm.teamWide}
+            onShares={(shares) => setFolderForm({ ...folderForm, shares })}
+            onTeamWide={(teamWide) => setFolderForm({ ...folderForm, teamWide })}
+          />
+          <ModalActions>
+            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
+              <Check size={16} /> Créer
+            </button>
+          </ModalActions>
+        </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(preview)}
+        title={preview ? 'Aperçu' : 'Aperçu'}
+        onClose={closePreview}
+        wide
+      >
+        {previewStatus === 'loading' && <p className="text-sm text-sage-600">Chargement…</p>}
+        {previewStatus === 'denied' && (
+          <p className="text-sm text-danger">Accès refusé.</p>
+        )}
+        {previewStatus === 'done' && preview && (
+          <div className="space-y-3">
+            {isImageExt(preview.ext) && previewUrl ? (
+              <img src={previewUrl} alt="" className="max-h-[70vh] w-full rounded-xl object-contain bg-white" />
+            ) : isPdfExt(preview.ext) && previewUrl ? (
+              <iframe title="PDF" src={previewUrl} className="h-[70vh] w-full rounded-xl bg-white" />
+            ) : (
+              <p className="text-sm text-sage-600">Aperçu indisponible pour ce type. Téléchargez le fichier.</p>
+            )}
+            <button type="button" className={btnPrimary} onClick={downloadPreview}>
+              <Download size={16} /> Télécharger
+            </button>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={Boolean(editItem)}
+        title={editItem?.kind === 'folder' ? 'Modifier le dossier' : 'Modifier le fichier'}
+        onClose={() => setEditItem(null)}
+      >
+        <form onSubmit={submitEdit}>
+          <Field label="Nom">
+            <input
+              className={inputClass}
+              value={editForm.name}
+              onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+              required
+            />
+          </Field>
+          {editItem?.kind === 'file' && (
+            <Field label="Description">
+              <textarea
+                className={inputClass + ' min-h-20'}
+                value={editForm.description}
+                onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+              />
+            </Field>
+          )}
+          <Field label={editItem?.kind === 'folder' ? 'Dossier parent' : 'Dossier'}>
+            <select
+              className={inputClass}
+              value={editItem?.kind === 'folder' ? editForm.parentId : editForm.folderId}
+              onChange={(e) =>
+                setEditForm({
+                  ...editForm,
+                  ...(editItem?.kind === 'folder' ? { parentId: e.target.value } : { folderId: e.target.value }),
+                })
+              }
+            >
+              <option value="">Racine</option>
+              {(editItem?.kind === 'folder' ? folderChoices : folders).map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Projet associé (optionnel)">
+            <select
+              className={inputClass}
+              value={editForm.projectId}
+              onChange={(e) => setEditForm({ ...editForm, projectId: e.target.value })}
+            >
+              <option value="">Aucun</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <ModalActions>
+            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
+              <Check size={16} /> Enregistrer
+            </button>
+          </ModalActions>
+        </form>
+      </Modal>
+
+      <Modal open={Boolean(shareItem)} title="Partage" onClose={() => setShareItem(null)}>
+        <form onSubmit={submitShare}>
+          <FileShareBlock
+            users={users}
+            user={user}
+            shares={shareForm.shares}
+            teamWide={shareForm.teamWide}
+            onShares={(shares) => setShareForm({ ...shareForm, shares })}
+            onTeamWide={(teamWide) => setShareForm({ ...shareForm, teamWide })}
+          />
+          <ModalActions>
+            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
+              <Check size={16} /> Enregistrer
+            </button>
+          </ModalActions>
+        </form>
+      </Modal>
+
+      <Modal open={Boolean(confirm)} title={confirm?.title || 'Confirmer'} onClose={() => setConfirm(null)}>
+        <p className="text-sm text-sage-700">{confirm?.body}</p>
+        <ModalActions>
+          <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirm(null)}>
+            Annuler
+          </button>
+          <button
+            type="button"
+            className={btnPrimary + ' w-full sm:w-auto !bg-danger'}
+            onClick={runDelete}
+            disabled={busy}
           >
             Supprimer
           </button>
@@ -2041,7 +3598,7 @@ function CalendarView({ user, events, users, flash }) {
   )
 }
 
-function SearchView({ notes, ideas, projects, events }) {
+function SearchView({ notes, ideas, projects, events, files = [] }) {
   const [q, setQ] = useState('')
   const [category, setCategory] = useState('')
   const [status, setStatus] = useState('')
@@ -2055,27 +3612,32 @@ function SearchView({ notes, ideas, projects, events }) {
 
   const internal = useMemo(() => {
     const matchText = (obj) => {
-      const blob = `${obj.title || ''} ${obj.description || ''} ${obj.content || ''} ${(obj.tags || []).join(' ')}`.toLowerCase()
+      const blob = `${obj.title || ''} ${obj.name || ''} ${obj.description || ''} ${obj.content || ''} ${(obj.tags || []).join(' ')}`.toLowerCase()
       return !query || blob.includes(query)
     }
     let n = notes.filter(matchText)
     let i = ideas.filter(matchText)
     let p = projects.filter(matchText)
     let e = events.filter(matchText)
+    let f = files.filter(matchText)
     if (category) n = n.filter((x) => x.category === category)
     if (status) {
       i = i.filter((x) => x.status === status)
       p = p.filter((x) => x.status === status)
     }
     if (tag) n = n.filter((x) => (x.tags || []).some((t) => t.toLowerCase().includes(tag.toLowerCase())))
-    if (projectId) n = n.filter((x) => x.projectId === projectId)
+    if (projectId) {
+      n = n.filter((x) => x.projectId === projectId)
+      f = f.filter((x) => x.projectId === projectId)
+    }
     return [
       ...n.map((x) => ({ kind: 'Note', ...x })),
       ...i.map((x) => ({ kind: 'Idée', ...x })),
       ...p.map((x) => ({ kind: 'Projet', ...x })),
       ...e.map((x) => ({ kind: 'Événement', ...x })),
+      ...f.map((x) => ({ kind: 'Fichier', title: x.name, ...x })),
     ]
-  }, [notes, ideas, projects, events, query, category, status, tag, projectId])
+  }, [notes, ideas, projects, events, files, query, category, status, tag, projectId])
 
   const runExternal = async () => {
     if (!query) return
@@ -2134,7 +3696,7 @@ function SearchView({ notes, ideas, projects, events }) {
             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sage-400" size={16} />
             <input
               className={inputClass + ' pl-9'}
-              placeholder="Rechercher notes, idées, projets…"
+              placeholder="Rechercher notes, idées, projets, fichiers…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
@@ -2473,6 +4035,25 @@ function SettingsView({ user, session, users, flash, onUserUpdated }) {
 
       <section className="rounded-2xl border border-sage-200 bg-white/80 p-5">
         <h2 className="flex items-center gap-2 font-display text-lg text-sage-900">
+          <FolderOpen size={18} /> Fichiers
+        </h2>
+        <p className="mt-2 text-sm text-sage-700">
+          Taille maximale : <strong>{maxFileSizeLabel()}</strong> (constante{' '}
+          <code className="rounded bg-sage-100 px-1">MAX_FILE_BYTES</code> = {MAX_FILE_BYTES} octets).
+        </p>
+        <p className="mt-1 text-sm text-sage-600">
+          Types autorisés : {ALLOWED_FILE_EXTS.join(', ')}. Exécutables, HTML, SVG et scripts (XSS) sont
+          bloqués.
+        </p>
+        <p className="mt-2 text-xs text-sage-500">
+          La région Firebase Storage ne peut pas être définie depuis le client. Choisissez-la dans
+          Firebase Console <strong>avant</strong> de créer le bucket. Bucket attendu :{' '}
+          <code className="rounded bg-sage-100 px-1">partagio.firebasestorage.app</code>.
+        </p>
+      </section>
+
+      <section className="rounded-2xl border border-sage-200 bg-white/80 p-5">
+        <h2 className="flex items-center gap-2 font-display text-lg text-sage-900">
           <Database size={18} /> Diagnostic Firebase / déploiement
         </h2>
         <p className="mt-2 text-sm text-sage-600">
@@ -2509,7 +4090,8 @@ function SettingsView({ user, session, users, flash, onUserUpdated }) {
           <p className="mt-2 text-xs text-sage-500">
             Projet {getFirebaseStatus().projectId} · Auth{' '}
             {getFirebaseStatus().authReady ? 'OK' : 'indisponible'} · Firestore{' '}
-            {getFirebaseStatus().firestoreReady ? 'OK' : 'indisponible'}
+            {getFirebaseStatus().firestoreReady ? 'OK' : 'indisponible'} · Storage{' '}
+            {getFirebaseStatus().storageReady ? 'OK' : 'indisponible'}
           </p>
         )}
         <div className="mt-3 flex flex-wrap gap-2">

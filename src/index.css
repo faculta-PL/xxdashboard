@@ -108,3 +108,73 @@ canvas {
 .xx-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* —— Landing marketing —— */
+.landing {
+  background: #f5f6f1;
+  color: var(--color-ink);
+}
+
+.landing-header {
+  background: rgba(245, 246, 241, 0.86);
+  backdrop-filter: blur(14px);
+}
+
+.landing-browser {
+  transform: perspective(1600px) rotateX(8deg) rotateY(-14deg) rotateZ(6deg);
+  transform-origin: 55% 60%;
+  box-shadow:
+    0 28px 60px rgba(47, 56, 44, 0.18),
+    0 8px 18px rgba(47, 56, 44, 0.08),
+    0 0 0 1px rgba(47, 56, 44, 0.06);
+}
+
+.landing-pill {
+  box-shadow: 0 10px 24px rgba(47, 56, 44, 0.22);
+}
+
+.animate-fade-up-d1 {
+  animation: fade-up 0.55s ease-out 0.08s both;
+}
+.animate-fade-up-d2 {
+  animation: fade-up 0.55s ease-out 0.16s both;
+}
+.animate-fade-up-d3 {
+  animation: fade-up 0.55s ease-out 0.28s both;
+}
+.animate-fade-up-d4 {
+  animation: fade-up 0.7s ease-out 0.22s both;
+}
+
+@keyframes landing-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.landing-float {
+  animation: landing-float 5.5s ease-in-out infinite;
+}
+
+@media (max-width: 1023px) {
+  .landing-browser {
+    transform: perspective(1200px) rotateX(4deg) rotateY(-6deg) rotateZ(3deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-browser,
+  .landing-float,
+  .animate-fade-up,
+  .animate-fade-up-d1,
+  .animate-fade-up-d2,
+  .animate-fade-up-d3,
+  .animate-fade-up-d4 {
+    animation: none;
+    transform: none;
+  }
+}

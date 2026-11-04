@@ -22,9 +22,31 @@ import {
   where,
   limit,
 } from 'firebase/firestore'
-import { auth, db, firebaseConfigured, getFirebaseStatus } from './firebase'
+import { ref, uploadBytesResumable, getBlob, deleteObject } from 'firebase/storage'
+import { auth, db, storage, firebaseConfigured, getFirebaseStatus } from './firebase'
 import { sha256, randomToken, randomCode6, uid } from './crypto'
-import { ROLES, canWriteRole, canEditEntity, canDeleteEntity, isAdmin, canReadGroup, canWriteGroup } from './rbac'
+import {
+  ROLES,
+  canWriteRole,
+  canEditEntity,
+  canDeleteEntity,
+  isAdmin,
+  canReadGroup,
+  canWriteGroup,
+  canAddInFolder,
+  canModifyFileOrFolder,
+  canManageFileOrFolder,
+  canDeleteFileOrFolder,
+  canReadFileOrFolder,
+} from './rbac'
+import {
+  validateUploadFile,
+  safeFileName,
+  storageObjectPath,
+  idbPutBlob,
+  idbGetBlob,
+  idbDeleteBlob,
+} from './files'
 
 const ADMIN_EMAIL = 'facultamalika@gmail.com'
 const ADMIN_PASSWORD = 'Malika2026!'
@@ -82,6 +104,8 @@ const COLLECTIONS = [
   'xx_reset_tokens',
   'xx_groups',
   'xx_messages',
+  'xx_files',
+  'xx_folders',
 ]
 
 function emptyDb() {
@@ -230,7 +254,7 @@ function remapIdList(list, fromId, toId) {
 
 async function remapUserReferences(fromId, toId) {
   if (!fromId || !toId || fromId === toId) return
-  const entityCols = ['xx_notes', 'xx_ideas', 'xx_projects', 'xx_events', 'xx_groups']
+  const entityCols = ['xx_notes', 'xx_ideas', 'xx_projects', 'xx_events', 'xx_groups', 'xx_files', 'xx_folders']
   for (const col of entityCols) {
     for (const row of Object.values(memory[col] || {})) {
       let changed = false
@@ -270,7 +294,9 @@ async function remapUserReferences(fromId, toId) {
         changed = true
       }
       if (changed) {
-        if (col !== 'xx_groups') {
+        if (col === 'xx_files' || col === 'xx_folders') {
+          Object.assign(next, withFileAccess(next, col === 'xx_files'))
+        } else if (col !== 'xx_groups') {
           Object.assign(next, shareFields(next, memory.xx_users[toId]))
         }
         await persistDoc(col, next.id, next)
@@ -311,6 +337,25 @@ async function stampOwnedEntities(user) {
         JSON.stringify(stamped.shareEmails || []) === JSON.stringify(row.shareEmails || []) &&
         JSON.stringify(stamped.shareEditUserIds || []) === JSON.stringify(row.shareEditUserIds || []) &&
         JSON.stringify(stamped.shareEditEmails || []) === JSON.stringify(row.shareEditEmails || [])
+      if (!same) {
+        await persistDoc(col, row.id, stamped)
+      }
+    }
+  }
+  for (const col of ['xx_files', 'xx_folders']) {
+    for (const row of Object.values(memory[col] || {})) {
+      const owns = row.ownerId === user.id
+      const needsShares = Array.isArray(row.shares) && row.shares.length > 0
+      if (!owns && !needsShares) continue
+      const stamped = withFileAccess(
+        { ...row, ...(owns ? { ownerEmail: user.email } : {}) },
+        col === 'xx_files',
+      )
+      const same =
+        stamped.ownerEmail === row.ownerEmail &&
+        JSON.stringify(stamped.shareUserIds || []) === JSON.stringify(row.shareUserIds || []) &&
+        JSON.stringify(stamped.shareManageUserIds || []) === JSON.stringify(row.shareManageUserIds || []) &&
+        stamped.inheritedTeam === row.inheritedTeam
       if (!same) {
         await persistDoc(col, row.id, stamped)
       }
@@ -1372,7 +1417,12 @@ export async function deleteIdea(id, user) {
   return destroy('xx_ideas', id, user)
 }
 export async function saveProject(data, user) {
-  return upsert('xx_projects', data, user)
+  const prev = data.id ? memory.xx_projects[data.id] : null
+  const saved = await upsert('xx_projects', data, user)
+  if (prev && prev.leadId !== saved.leadId) {
+    await refreshProjectFilesAccess(saved.id)
+  }
+  return saved
 }
 export async function deleteProject(id, user) {
   return destroy('xx_projects', id, user)
@@ -1488,4 +1538,584 @@ export async function getRemoteDoc(col, id) {
     console.warn(`Firestore get ${col}/${id} failed:`, err.message)
     return null
   }
+}
+
+/* ─── Fichiers / dossiers ─── */
+
+function fileCtx() {
+  return { folders: memory.xx_folders || {}, projects: memory.xx_projects || {} }
+}
+
+function fileHistory(user, type, label) {
+  return { type, userId: user.id, label, at: new Date().toISOString() }
+}
+
+function fileShareFields(data) {
+  const shares = Array.isArray(data.shares)
+    ? data.shares
+        .filter((s) => s?.userId && ['Lecture', 'Modification', 'Gestion'].includes(s.permission))
+        .map((s) => {
+          const email = s.email || lookupUserEmail(s.userId)
+          return {
+            userId: s.userId,
+            permission: s.permission,
+            ...(email ? { email: String(email).toLowerCase() } : {}),
+          }
+        })
+    : []
+  const shareUserIds = [...new Set(shares.map((s) => s.userId))]
+  const shareEmails = [...new Set(shares.map((s) => s.email).filter(Boolean))]
+  const editShares = shares.filter((s) => s.permission === 'Modification' || s.permission === 'Gestion')
+  const manageShares = shares.filter((s) => s.permission === 'Gestion')
+  const ownerEmail = data.ownerEmail || lookupUserEmail(data.ownerId) || null
+  return {
+    shares,
+    shareUserIds,
+    shareEmails,
+    shareEditUserIds: [...new Set(editShares.map((s) => s.userId))],
+    shareEditEmails: [...new Set(editShares.map((s) => s.email).filter(Boolean))],
+    shareManageUserIds: [...new Set(manageShares.map((s) => s.userId))],
+    shareManageEmails: [...new Set(manageShares.map((s) => s.email).filter(Boolean))],
+    ownerEmail: ownerEmail ? String(ownerEmail).toLowerCase() : null,
+  }
+}
+
+function collectAncestorAccess(startFolderId) {
+  const shareUserIds = new Set()
+  const shareEmails = new Set()
+  const shareEditUserIds = new Set()
+  const shareEditEmails = new Set()
+  const shareManageUserIds = new Set()
+  const shareManageEmails = new Set()
+  let team = false
+  let cur = startFolderId ? memory.xx_folders[startFolderId] : null
+  const seen = new Set()
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id)
+    if (cur.visibility === 'Équipe' || cur.visibility === 'Publique') team = true
+    if (cur.ownerId) shareUserIds.add(cur.ownerId)
+    const ownerEmail = cur.ownerEmail || lookupUserEmail(cur.ownerId)
+    if (ownerEmail) shareEmails.add(String(ownerEmail).toLowerCase())
+    for (const s of cur.shares || []) {
+      if (!s?.userId) continue
+      shareUserIds.add(s.userId)
+      const email = s.email || lookupUserEmail(s.userId)
+      if (email) shareEmails.add(String(email).toLowerCase())
+      if (s.permission === 'Modification' || s.permission === 'Gestion') {
+        shareEditUserIds.add(s.userId)
+        if (email) shareEditEmails.add(String(email).toLowerCase())
+      }
+      if (s.permission === 'Gestion') {
+        shareManageUserIds.add(s.userId)
+        if (email) shareManageEmails.add(String(email).toLowerCase())
+      }
+    }
+    cur = cur.parentId ? memory.xx_folders[cur.parentId] : null
+  }
+  return {
+    shareUserIds,
+    shareEmails,
+    shareEditUserIds,
+    shareEditEmails,
+    shareManageUserIds,
+    shareManageEmails,
+    team,
+  }
+}
+
+function withFileAccess(row, isFile) {
+  const own = fileShareFields(row)
+  const inherited = collectAncestorAccess(isFile ? row.folderId : row.parentId)
+  const project = row.projectId ? memory.xx_projects[row.projectId] : null
+  const shareUserIds = new Set([...(own.shareUserIds || []), ...inherited.shareUserIds])
+  const shareEmails = new Set([...(own.shareEmails || []), ...inherited.shareEmails])
+  const shareEditUserIds = new Set([...(own.shareEditUserIds || []), ...inherited.shareEditUserIds])
+  const shareEditEmails = new Set([...(own.shareEditEmails || []), ...inherited.shareEditEmails])
+  const shareManageUserIds = new Set([...(own.shareManageUserIds || []), ...inherited.shareManageUserIds])
+  const shareManageEmails = new Set([...(own.shareManageEmails || []), ...inherited.shareManageEmails])
+  if (project?.leadId) {
+    shareUserIds.add(project.leadId)
+    shareEditUserIds.add(project.leadId)
+    shareManageUserIds.add(project.leadId)
+    const leadEmail = lookupUserEmail(project.leadId)
+    if (leadEmail) {
+      const e = String(leadEmail).toLowerCase()
+      shareEmails.add(e)
+      shareEditEmails.add(e)
+      shareManageEmails.add(e)
+    }
+  }
+  return {
+    ...row,
+    ...own,
+    shareUserIds: [...shareUserIds],
+    shareEmails: [...shareEmails],
+    shareEditUserIds: [...shareEditUserIds],
+    shareEditEmails: [...shareEditEmails],
+    shareManageUserIds: [...shareManageUserIds],
+    shareManageEmails: [...shareManageEmails],
+    inheritedTeam: Boolean(inherited.team),
+  }
+}
+
+function descendantFolderIds(rootId) {
+  const ids = new Set([rootId])
+  let added = true
+  while (added) {
+    added = false
+    for (const folder of Object.values(memory.xx_folders || {})) {
+      if (folder.parentId && ids.has(folder.parentId) && !ids.has(folder.id)) {
+        ids.add(folder.id)
+        added = true
+      }
+    }
+  }
+  return ids
+}
+
+function isFolderInside(maybeChildId, folderId) {
+  if (!folderId || !maybeChildId) return false
+  let cur = memory.xx_folders[maybeChildId]
+  const seen = new Set()
+  while (cur && !seen.has(cur.id)) {
+    if (cur.id === folderId) return true
+    seen.add(cur.id)
+    cur = cur.parentId ? memory.xx_folders[cur.parentId] : null
+  }
+  return false
+}
+
+async function propagateFolderAccess(rootId) {
+  const ids = descendantFolderIds(rootId)
+  for (const id of ids) {
+    const folder = memory.xx_folders[id]
+    if (folder) await persistDoc('xx_folders', id, withFileAccess(folder, false))
+  }
+  for (const file of Object.values(memory.xx_files || {})) {
+    if (file.folderId && ids.has(file.folderId)) {
+      await persistDoc('xx_files', file.id, withFileAccess(file, true))
+    }
+  }
+}
+
+async function refreshProjectFilesAccess(projectId) {
+  if (!projectId) return
+  for (const folder of Object.values(memory.xx_folders || {})) {
+    if (folder.projectId === projectId) {
+      await persistDoc('xx_folders', folder.id, withFileAccess(folder, false))
+    }
+  }
+  for (const file of Object.values(memory.xx_files || {})) {
+    if (file.projectId === projectId) {
+      await persistDoc('xx_files', file.id, withFileAccess(file, true))
+    }
+  }
+}
+
+function deriveVisibility(shares, teamWide) {
+  if (teamWide) return 'Équipe'
+  if ((shares || []).length) return 'Partagée'
+  return 'Privée'
+}
+
+export function isRemoteFileStorage() {
+  return Boolean(storage)
+}
+
+export function folderDeleteSummary(folderId) {
+  const ids = descendantFolderIds(folderId)
+  const folders = [...ids].map((id) => memory.xx_folders[id]).filter(Boolean)
+  const files = Object.values(memory.xx_files || {}).filter((f) => f.folderId && ids.has(f.folderId))
+  return { folderCount: Math.max(0, folders.length - 1), fileCount: files.length, files, folders }
+}
+
+export async function saveFolder(data, user) {
+  if (!user) throw new Error('Permission refusée.')
+  const now = new Date().toISOString()
+  const id = data.id || uid('fold')
+  const existing = memory.xx_folders[id]
+  const parentId =
+    data.parentId === undefined ? existing?.parentId ?? null : data.parentId || null
+  if (parentId === id) throw new Error('Un dossier ne peut pas se contenir lui-même.')
+  if (parentId && isFolderInside(parentId, id)) throw new Error('Déplacement invalide.')
+  const parent = parentId ? memory.xx_folders[parentId] : null
+  if (parentId && !parent) throw new Error('Dossier parent introuvable.')
+
+  if (!existing) {
+    if (!canAddInFolder(user, parent, fileCtx())) {
+      throw new Error('Permission refusée.')
+    }
+  } else {
+    if (!canReadFileOrFolder(user, existing, fileCtx())) throw new Error('Accès refusé.')
+    const nextShares = data.shares !== undefined ? data.shares : existing.shares
+    const nextTeam =
+      data.teamWide !== undefined ? Boolean(data.teamWide) : existing.visibility === 'Équipe'
+    const shareChanged =
+      JSON.stringify(nextShares || []) !== JSON.stringify(existing.shares || []) ||
+      (nextTeam ? 'Équipe' : deriveVisibility(nextShares, false)) !== existing.visibility
+    if (shareChanged && !canManageFileOrFolder(user, existing, fileCtx())) {
+      throw new Error('Permission refusée.')
+    }
+    if (!canModifyFileOrFolder(user, existing, fileCtx())) {
+      throw new Error('Permission refusée.')
+    }
+  }
+
+  const name = String(data.name || '').trim()
+  if (!name) throw new Error('Nom du dossier requis.')
+  const shares = data.shares !== undefined ? data.shares : existing?.shares || []
+  const teamWide = data.teamWide !== undefined ? Boolean(data.teamWide) : existing?.visibility === 'Équipe'
+  const visibility = deriveVisibility(shares, teamWide)
+  const projectId =
+    data.projectId !== undefined ? data.projectId || null : existing?.projectId || parent?.projectId || null
+
+  const history = [...(existing?.history || [])]
+  if (!existing) history.push(fileHistory(user, 'create', 'Dossier créé'))
+  else {
+    if (existing.name !== name) history.push(fileHistory(user, 'rename', `Renommé en « ${name} »`))
+    if ((existing.parentId || null) !== parentId) history.push(fileHistory(user, 'move', 'Dossier déplacé'))
+    if (
+      JSON.stringify(existing.shares || []) !== JSON.stringify(shares || []) ||
+      existing.visibility !== visibility
+    ) {
+      history.push(fileHistory(user, 'share', 'Partage mis à jour'))
+    }
+  }
+
+  const row = withFileAccess(
+    {
+      ...(existing || {}),
+      id,
+      name,
+      parentId,
+      ownerId: existing?.ownerId || user.id,
+      ownerEmail: existing?.ownerEmail || user.email,
+      projectId,
+      shares,
+      visibility,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      history,
+    },
+    false,
+  )
+  await persistDoc('xx_folders', id, row)
+  await propagateFolderAccess(id)
+
+  const prevIds = new Set((existing?.shares || []).map((s) => s.userId))
+  const notifyIds = (shares || [])
+    .map((s) => s.userId)
+    .filter((shareId) => shareId && shareId !== user.id && !prevIds.has(shareId))
+  if (notifyIds.length) {
+    await notifyUsers(notifyIds, {
+      type: 'folder_share',
+      title: 'Dossier partagé',
+      body: `${user.fullName} a partagé un dossier avec vous.`,
+      meta: { folderId: id },
+    })
+  }
+  return row
+}
+
+export async function deleteFolder(id, user) {
+  const existing = memory.xx_folders[id]
+  if (!existing || !canReadFileOrFolder(user, existing, fileCtx())) {
+    throw new Error('Accès refusé.')
+  }
+  if (!canDeleteFileOrFolder(user, existing, fileCtx())) {
+    throw new Error('Permission refusée.')
+  }
+  const summary = folderDeleteSummary(id)
+  for (const file of summary.files) {
+    await deleteFile(file.id, user)
+  }
+  const nested = summary.folders.filter((f) => f.id !== id)
+  nested.sort((a, b) => {
+    const da = descendantFolderIds(a.id).size
+    const db = descendantFolderIds(b.id).size
+    return da - db
+  })
+  for (const folder of nested) {
+    await removeDoc('xx_folders', folder.id)
+  }
+  await removeDoc('xx_folders', id)
+}
+
+export function startFileUpload(payload, user, { onProgress } = {}) {
+  if (!user) throw new Error('Permission refusée.')
+  if (!canWriteRole(user)) {
+    throw new Error('Permission refusée (rôle Lecteur : ajout interdit).')
+  }
+  const nativeFile = payload.file
+  const meta = validateUploadFile(nativeFile)
+  const folderId = payload.folderId || null
+  const folder = folderId ? memory.xx_folders[folderId] : null
+  if (folderId && !folder) throw new Error('Dossier introuvable.')
+  if (!canAddInFolder(user, folder, fileCtx())) throw new Error('Permission refusée.')
+
+  const id = uid('file')
+  let cancelled = false
+  let storageTask = null
+  let unsub = () => {}
+
+  const done = (async () => {
+    let storagePath = null
+    let localId = null
+    try {
+      if (storage) {
+        const path = storageObjectPath(user.id, id, nativeFile.name)
+        const storageRef = ref(storage, path)
+        storageTask = uploadBytesResumable(storageRef, nativeFile, {
+          contentType: meta.mime,
+          customMetadata: { ownerId: user.id, fileId: id },
+        })
+        const completeMs = Math.min(180000, Math.max(8000, Math.ceil(meta.size / 2000) + 8000))
+        await withTimeout(
+          new Promise((resolve, reject) => {
+            unsub = storageTask.on(
+              'state_changed',
+              (snap) => {
+                const pct = snap.totalBytes
+                  ? Math.round((snap.bytesTransferred / snap.totalBytes) * 90)
+                  : 0
+                onProgress?.(pct)
+              },
+              reject,
+              resolve,
+            )
+          }),
+          completeMs,
+          'Firebase Storage upload',
+        )
+        unsub()
+        storagePath = path
+        onProgress?.(92)
+      } else {
+        onProgress?.(35)
+        await idbPutBlob(id, nativeFile)
+        localId = id
+        onProgress?.(90)
+      }
+    } catch (err) {
+      try {
+        unsub()
+      } catch {
+        /* ignore */
+      }
+      if (storageTask) {
+        try {
+          storageTask.cancel()
+        } catch {
+          /* ignore */
+        }
+      }
+      if (cancelled || err?.code === 'storage/canceled') {
+        throw new Error('Téléversement annulé.')
+      }
+      console.warn('Firebase Storage indisponible, repli IndexedDB:', err?.message || err)
+      await idbPutBlob(id, nativeFile)
+      localId = id
+      onProgress?.(90)
+    }
+
+    if (cancelled) {
+      if (storagePath && storage) {
+        try {
+          await deleteObject(ref(storage, storagePath))
+        } catch {
+          /* ignore */
+        }
+      }
+      if (localId) await idbDeleteBlob(localId)
+      throw new Error('Téléversement annulé.')
+    }
+
+    const now = new Date().toISOString()
+    const shares = Array.isArray(payload.shares) ? payload.shares : []
+    const teamWide = Boolean(payload.teamWide)
+    const visibility = deriveVisibility(shares, teamWide)
+    const projectId = payload.projectId || folder?.projectId || null
+    const row = withFileAccess(
+      {
+        id,
+        name: safeFileName(nativeFile.name),
+        mime: meta.mime,
+        ext: meta.ext,
+        size: meta.size,
+        folderId,
+        ownerId: user.id,
+        ownerEmail: user.email,
+        projectId,
+        description: String(payload.description || '').trim(),
+        storagePath,
+        localId,
+        shares,
+        visibility,
+        createdAt: now,
+        updatedAt: now,
+        uploadedBy: user.id,
+        history: [fileHistory(user, 'create', 'Fichier importé')],
+      },
+      true,
+    )
+    await persistDoc('xx_files', id, row)
+    onProgress?.(100)
+    const notifyIds = (row.shares || []).map((s) => s.userId).filter((shareId) => shareId !== user.id)
+    if (notifyIds.length) {
+      await notifyUsers(notifyIds, {
+        type: 'file_add',
+        title: 'Fichier partagé',
+        body: `${user.fullName} a ajouté un fichier pour vous.`,
+        meta: { fileId: id },
+      })
+    }
+    return row
+  })()
+
+  return {
+    fileId: id,
+    done,
+    cancel() {
+      cancelled = true
+      try {
+        unsub()
+      } catch {
+        /* ignore */
+      }
+      if (storageTask) {
+        try {
+          storageTask.cancel()
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+  }
+}
+
+export async function saveFileMeta(data, user) {
+  if (!user || !data?.id) throw new Error('Permission refusée.')
+  const existing = memory.xx_files[data.id]
+  if (!existing || !canReadFileOrFolder(user, existing, fileCtx())) {
+    throw new Error('Accès refusé.')
+  }
+  const changingShares = data.shares !== undefined || data.teamWide !== undefined
+  const changingMeta =
+    data.name !== undefined ||
+    data.folderId !== undefined ||
+    data.description !== undefined ||
+    data.projectId !== undefined
+  if (changingShares && !canManageFileOrFolder(user, existing, fileCtx())) {
+    throw new Error('Permission refusée.')
+  }
+  if (changingMeta && !canModifyFileOrFolder(user, existing, fileCtx())) {
+    throw new Error('Permission refusée.')
+  }
+
+  const folderId = data.folderId !== undefined ? data.folderId || null : existing.folderId
+  if (folderId) {
+    const dest = memory.xx_folders[folderId]
+    if (!dest) throw new Error('Dossier introuvable.')
+    if (folderId !== existing.folderId && !canAddInFolder(user, dest, fileCtx())) {
+      throw new Error('Permission refusée.')
+    }
+  }
+
+  const shares = data.shares !== undefined ? data.shares : existing.shares
+  const teamWide = data.teamWide !== undefined ? Boolean(data.teamWide) : existing.visibility === 'Équipe'
+  const visibility = deriveVisibility(shares, teamWide)
+  const name = data.name !== undefined ? safeFileName(String(data.name || '').trim() || existing.name) : existing.name
+  const description =
+    data.description !== undefined ? String(data.description || '').trim() : existing.description
+  const projectId = data.projectId !== undefined ? data.projectId || null : existing.projectId
+  const history = [...(existing.history || [])]
+  if (name !== existing.name) history.push(fileHistory(user, 'rename', `Renommé en « ${name} »`))
+  if (folderId !== existing.folderId) history.push(fileHistory(user, 'move', 'Fichier déplacé'))
+  if (description !== existing.description) {
+    history.push(fileHistory(user, 'description', 'Description mise à jour'))
+  }
+  if (
+    JSON.stringify(shares || []) !== JSON.stringify(existing.shares || []) ||
+    visibility !== existing.visibility
+  ) {
+    history.push(fileHistory(user, 'share', 'Partage mis à jour'))
+  }
+
+  const row = withFileAccess(
+    {
+      ...existing,
+      name,
+      folderId,
+      description,
+      projectId,
+      shares,
+      visibility,
+      history,
+      updatedAt: new Date().toISOString(),
+    },
+    true,
+  )
+  await persistDoc('xx_files', data.id, row)
+  const prevShare = new Set((existing.shares || []).map((s) => s.userId))
+  const newIds = (shares || [])
+    .map((s) => s.userId)
+    .filter((shareId) => shareId && shareId !== user.id && !prevShare.has(shareId))
+  if (newIds.length) {
+    await notifyUsers(newIds, {
+      type: 'file_share',
+      title: 'Fichier partagé',
+      body: `${user.fullName} a partagé un fichier avec vous.`,
+      meta: { fileId: row.id },
+    })
+  }
+  return row
+}
+
+export async function deleteFile(id, user) {
+  const existing = memory.xx_files[id]
+  if (!existing || !canReadFileOrFolder(user, existing, fileCtx())) {
+    throw new Error('Accès refusé.')
+  }
+  if (!canDeleteFileOrFolder(user, existing, fileCtx())) {
+    throw new Error('Permission refusée.')
+  }
+  if (existing.storagePath && storage) {
+    try {
+      await deleteObject(ref(storage, existing.storagePath))
+    } catch (err) {
+      console.warn('Storage delete:', err.message)
+    }
+  }
+  if (existing.localId) {
+    try {
+      await idbDeleteBlob(existing.localId)
+    } catch (err) {
+      console.warn('IndexedDB delete:', err.message)
+    }
+  }
+  await removeDoc('xx_files', id)
+}
+
+export async function getFileBlob(fileId, user) {
+  const file = memory.xx_files[fileId]
+  if (!file || !canReadFileOrFolder(user, file, fileCtx())) {
+    throw new Error('Accès refusé.')
+  }
+  if (file.storagePath && storage) {
+    try {
+      return await getBlob(ref(storage, file.storagePath))
+    } catch (err) {
+      console.warn('getBlob:', err.message)
+      if (file.localId) {
+        const local = await idbGetBlob(file.localId)
+        if (local) return local
+      }
+      throw new Error('Accès refusé.')
+    }
+  }
+  if (file.localId) {
+    const local = await idbGetBlob(file.localId)
+    if (local) return local
+  }
+  throw new Error('Fichier indisponible.')
 }

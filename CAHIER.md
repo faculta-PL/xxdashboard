@@ -2,12 +2,12 @@
 
 ## Produit
 
-Nazix est un espace de travail collaboratif en temps réel : notes, idées (Kanban), projets, calendrier, équipe et chat de groupe. L’interface est sobre (palette vert cassé / sauge), entièrement responsive, et démarre **sans données fictives** (hors compte administrateur préconfiguré).
+Nazix est un espace de travail collaboratif en temps réel : notes, idées (Kanban), projets, fichiers, calendrier, équipe et chat de groupe. L’interface est sobre (palette vert cassé / sauge), entièrement responsive, et démarre **sans données fictives** (hors compte administrateur préconfiguré).
 
 ## Stack
 
 - **Frontend** : React (`src/App.jsx`), Vite, Tailwind CSS, Lucide
-- **Persistance** : Firebase Auth + Firestore, sinon **localStorage**
+- **Persistance** : Firebase Auth + Firestore + Storage, sinon **localStorage** / **IndexedDB**
 - **Exports** : CSV (UTF-8 BOM), XLSX, DOCX, JSON, PDF
 
 ## Comptes
@@ -21,6 +21,7 @@ Nazix est un espace de travail collaboratif en temps réel : notes, idées (Kanb
 - Notes
 - Kanban (boîte à idées)
 - Projets
+- **Fichiers**
 - Calendrier
 - Recherche
 - Export
@@ -31,10 +32,51 @@ Nazix est un espace de travail collaboratif en temps réel : notes, idées (Kanb
 
 ## Auth Firebase + repli local
 
-Si les variables `VITE_FIREBASE_*` sont renseignées, Nazix utilise **Firebase Auth** (e-mail / mot de passe) et **Firestore**. Sinon, tout fonctionne en **localStorage** (mention « Mode local » dans la barre latérale et Paramètres).
+Si les variables `VITE_FIREBASE_*` sont renseignées, Nazix utilise **Firebase Auth** (e-mail / mot de passe), **Firestore** et **Storage**. Sinon, tout fonctionne en **localStorage** (métadonnées) et **IndexedDB** (blobs fichiers), avec mention « Mode local » dans la barre latérale et Paramètres.
 
 ## Rôles
 
 Administrateur · Responsable de projet · Membre · Lecteur
 
-Un Lecteur ne crée pas de notes, idées, projets ou groupes. Les contenus d’autrui ne sont lisibles ou éditables que s’ils sont partagés, publics, ou pour un administrateur.
+Un Lecteur ne crée pas de notes, idées, projets, groupes ou fichiers. Les contenus d’autrui ne sont lisibles ou éditables que s’ils sont partagés, publics / équipe, ou pour un administrateur.
+
+## Module Fichiers
+
+Collections Firestore `xx_files` et `xx_folders` (écoute `onSnapshot`, comme les autres modules).
+
+### Décisions verrouillées
+
+- **Taille max** : **20 Mo**, constante unique `MAX_FILE_BYTES` (`src/lib/files.js`), affichée dans Paramètres. Facile à changer.
+- **Types autorisés** : pdf, docx, xlsx, csv, txt, jpg, jpeg, png, gif, webp.
+- **Types bloqués** : exécutables et formats XSS (`exe`, `bat`, `cmd`, `sh`, `js`, `msi`, `apk`, `html`, `svg`, etc.). Validation **avant** téléversement (extension + MIME + taille).
+- **Partage** : membres choisis (même `ShareEditor` que les notes, droits **Lecture / Modification / Gestion**) **et** case **« Toute l’équipe »** (visibilité **Équipe** = lisible par tout compte connecté, analogue à Publique).
+- **Projet associé** : optionnel, liste des projets existants.
+- **Région Storage** : **impossible à définir depuis le client**. L’utilisateur doit choisir la région dans **Firebase Console avant de créer le bucket**. Bucket existant : `partagio.firebasestorage.app` (`VITE_FIREBASE_STORAGE_BUCKET`).
+
+### Données
+
+**Dossier** : `id`, `name`, `parentId` (ou null), `ownerId`, `ownerEmail`, `projectId`, `shares[{userId, permission: Lecture|Modification|Gestion}]`, `shareUserIds`, `visibility` (Privée | Partagée | Équipe), `createdAt`, `updatedAt`, `history[]`.
+
+**Fichier** : `id`, `name`, `mime`, `ext`, `size`, `folderId`, `ownerId`, `ownerEmail`, `projectId`, `description`, `storagePath` (Firebase) **ou** `localId` (IndexedDB), `shares`, `shareUserIds`, `visibility`, `createdAt`, `updatedAt`, `history[]`, `uploadedBy`.
+
+### Permissions (héritage)
+
+Les droits d’un dossier s’appliquent aux enfants. Permission effective = max(partage propre, partage des dossiers ancêtres, propriétaire, admin). Ordre : **Gestion > Modification > Lecture**.
+
+- **Admin** : tout
+- **Responsable de projet** : gère les fichiers / dossiers dont le `projectId` correspond à un projet qu’il peut éditer (`canEditEntity`) **ou** dont il est `leadId`
+- **Membre** : ajoute / modifie si `canWriteRole` **et** (propriétaire ou Modification / Gestion)
+- **Lecteur** : lecture + téléchargement des éléments partagés (ou Équipe) uniquement — pas d’ajout, d’édition ni de suppression
+
+Contrôle **dans `store.js` à l’écriture**, pas seulement dans l’UI. Règles Firestore : propriétaire, `shareUserIds`, visibilité Équipe = tout utilisateur connecté, admin.
+
+### Stockage
+
+- **Firebase** : `getStorage`, `uploadBytesResumable` (barre de progression + annulation). Chemins `files/{uid}/{fileId}/…`. Pas d’URL publique sans auth : le client utilise `getBlob` **après** contrôle Firestore. Coller `storage.rules` dans la console.
+- **Local** : blobs IndexedDB `nazix_files`. Bannière : « Mode local — fichiers non synchronisés entre appareils ».
+
+### UI
+
+Entrée de navigation **Fichiers** (icône FolderOpen). Barre d’outils : importer, nouveau dossier, recherche, filtres dossier / type / auteur, bascule liste / grille. États vide, chargement, erreur, progression, terminé, accès refusé, aucun résultat. Aperçu : images (`img`), PDF (`iframe` blob URL), autres : téléchargement. Confirmation de suppression de dossier (contenu inclus). Renommer / déplacer / description dès **Modification**. Notifications `notifyUsers` au partage et à l’ajout. Historique.
+
+Responsive : pile mobile, cartes en liste, filtres qui passent à la ligne.
