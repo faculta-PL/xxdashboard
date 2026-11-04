@@ -26,6 +26,7 @@ import {
   RefreshCw,
   ExternalLink,
   Filter,
+  Mail,
 } from 'lucide-react'
 import {
   bootStore,
@@ -38,6 +39,8 @@ import {
   requestPasswordReset,
   resetPasswordWithToken,
   updateProfile,
+  updateUserRole,
+  resendVerificationEmail,
   listUsers,
   listSessionsForUser,
   revokeSession,
@@ -64,7 +67,7 @@ import {
   pullFirebaseToLocal,
 } from './lib/store'
 import { firebaseConfigured, missingFirebaseVars, getFirebaseStatus } from './lib/firebase'
-import { canReadEntity, canEditEntity, canDeleteEntity, isAdmin, ROLES } from './lib/rbac'
+import { canReadEntity, canEditEntity, canDeleteEntity, canWriteRole, isAdmin, ROLES } from './lib/rbac'
 import {
   exportJSON,
   exportCSV,
@@ -330,21 +333,27 @@ export default function App() {
         flash('Session ouverte.')
       } else if (authMode === 'register') {
         const res = await registerUser(authForm)
-        flash(`Compte créé. Code de vérification : ${res.verificationCode}`)
+        flash(
+          firebaseConfigured
+            ? `Compte créé. E-mail de vérification Firebase envoyé. Code de secours : ${res.verificationCode}`
+            : `Compte créé. Code de vérification : ${res.verificationCode}`,
+        )
         const logged = await loginUser(authForm.email, authForm.password)
         setUser(logged.user)
         setSession(logged.session)
       } else if (authMode === 'forgot') {
         const res = await requestPasswordReset(authForm.email)
         flash(
-          res.debugToken
-            ? `Jeton généré (aussi en notification) : ${res.debugToken}`
-            : 'Si le compte existe, un jeton a été envoyé.',
+          res.firebaseSent
+            ? `E-mail Firebase envoyé. Jeton in-app de secours : ${res.debugToken || 'voir notifications si connecté'}.`
+            : res.debugToken
+              ? `Jeton généré (aussi en notification) : ${res.debugToken}`
+              : 'Si le compte existe, un e-mail ou un jeton a été envoyé.',
         )
         setAuthMode('reset')
       } else if (authMode === 'reset') {
         await resetPasswordWithToken(authForm.resetToken, authForm.newPassword)
-        flash('Mot de passe mis à jour. Vous pouvez vous connecter.')
+        flash('Mot de passe mis à jour (Firestore et Auth si le code e-mail était valide). Vous pouvez vous connecter.')
         setAuthMode('login')
       }
     } catch (err) {
@@ -481,14 +490,21 @@ export default function App() {
 
             {authMode === 'reset' && (
               <>
-                <Field label="Jeton temporaire">
+                <Field label="Jeton ou code e-mail Firebase">
                   <input
                     className={inputClass}
                     value={authForm.resetToken}
                     onChange={(e) => setAuthForm({ ...authForm, resetToken: e.target.value })}
+                    placeholder="Jeton in-app ou oobCode de l’e-mail"
                     required
                   />
                 </Field>
+                <p className="mb-3 text-xs text-sage-600">
+                  Collez le jeton reçu en notification, ou le paramètre <code>oobCode</code> du lien
+                  « Réinitialiser le mot de passe » envoyé par Firebase. Le lien Firebase met à jour
+                  Auth via <code>confirmPasswordReset</code> ; le jeton in-app met à jour le hash
+                  Firestore, et Auth si une session est ouverte.
+                </p>
                 <Field label="Nouveau mot de passe">
                   <input
                     type="password"
@@ -510,7 +526,7 @@ export default function App() {
                   : authMode === 'register'
                     ? "S'inscrire"
                     : authMode === 'forgot'
-                      ? 'Générer un jeton'
+                      ? 'Envoyer l’e-mail de réinitialisation'
                       : 'Réinitialiser'}
             </button>
 
@@ -810,6 +826,10 @@ function NotesView({ user, notes, users, projects, flash }) {
 
   const submit = async (e) => {
     e.preventDefault()
+    if (!editing && !canWriteRole(user)) {
+      flash('Permission refusée.', 'err')
+      return
+    }
     if (!canEditEntity(user, editing || { ownerId: user.id, shares: [] }) && editing) {
       flash('Permission refusée.', 'err')
       return
@@ -851,7 +871,7 @@ function NotesView({ user, notes, users, projects, flash }) {
       flash('Permission refusée.', 'err')
       return
     }
-    await deleteNote(id)
+    await deleteNote(id, user)
     setConfirmId(null)
     flash('Note supprimée.')
   }
@@ -859,9 +879,11 @@ function NotesView({ user, notes, users, projects, flash }) {
   return (
     <div className="space-y-4 animate-fade-up">
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={btnPrimary} onClick={openCreate}>
-          <Plus size={16} /> Nouvelle note
-        </button>
+        {canWriteRole(user) && (
+          <button type="button" className={btnPrimary} onClick={openCreate}>
+            <Plus size={16} /> Nouvelle note
+          </button>
+        )}
         <select
           className={inputClass + ' !w-auto'}
           value={filterCat}
@@ -879,9 +901,11 @@ function NotesView({ user, notes, users, projects, flash }) {
           title="Aucune note"
           hint="Créez votre première note pour démarrer."
           action={
-            <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
-              <Plus size={16} /> Créer une note
-            </button>
+            canWriteRole(user) ? (
+              <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
+                <Plus size={16} /> Créer une note
+              </button>
+            ) : null
           }
         />
       ) : (
@@ -1058,6 +1082,14 @@ function IdeasView({ user, ideas, users, flash }) {
 
   const submit = async (e) => {
     e.preventDefault()
+    if (!editing && !canWriteRole(user)) {
+      flash('Permission refusée.', 'err')
+      return
+    }
+    if (editing && !canEditEntity(user, editing)) {
+      flash('Permission refusée.', 'err')
+      return
+    }
     try {
       const payload = {
         id: editing?.id,
@@ -1145,18 +1177,22 @@ function IdeasView({ user, ideas, users, flash }) {
 
   return (
     <div className="space-y-4 animate-fade-up">
-      <button type="button" className={btnPrimary} onClick={openCreate}>
-        <Plus size={16} /> Nouvelle idée
-      </button>
+      {canWriteRole(user) && (
+        <button type="button" className={btnPrimary} onClick={openCreate}>
+          <Plus size={16} /> Nouvelle idée
+        </button>
+      )}
 
       {ideas.length === 0 ? (
         <EmptyState
           title="Boîte à idées vide"
           hint="Ajoutez une idée puis faites glisser son statut sur le Kanban."
           action={
-            <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
-              <Plus size={16} /> Ajouter une idée
-            </button>
+            canWriteRole(user) ? (
+              <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
+                <Plus size={16} /> Ajouter une idée
+              </button>
+            ) : null
           }
         />
       ) : (
@@ -1340,7 +1376,7 @@ function IdeasView({ user, ideas, users, flash }) {
                   type="button"
                   className={btnGhost + ' !text-danger'}
                   onClick={async () => {
-                    await deleteIdea(detail.id)
+                    await deleteIdea(detail.id, user)
                     setDetail(null)
                     flash('Idée supprimée.')
                   }}
@@ -1392,6 +1428,14 @@ function ProjectsView({ user, projects, notes, ideas, users, flash }) {
 
   const submit = async (e) => {
     e.preventDefault()
+    if (!editing && !canWriteRole(user)) {
+      flash('Permission refusée.', 'err')
+      return
+    }
+    if (editing && !canEditEntity(user, editing)) {
+      flash('Permission refusée.', 'err')
+      return
+    }
     try {
       const saved = await saveProject(
         {
@@ -1424,18 +1468,22 @@ function ProjectsView({ user, projects, notes, ideas, users, flash }) {
 
   return (
     <div className="space-y-4 animate-fade-up">
-      <button type="button" className={btnPrimary} onClick={openCreate}>
-        <Plus size={16} /> Nouveau projet
-      </button>
+      {canWriteRole(user) && (
+        <button type="button" className={btnPrimary} onClick={openCreate}>
+          <Plus size={16} /> Nouveau projet
+        </button>
+      )}
 
       {projects.length === 0 ? (
         <EmptyState
           title="Aucun projet"
           hint="Définissez un projet avec responsable, membres et progression."
           action={
-            <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
-              <Plus size={16} /> Créer un projet
-            </button>
+            canWriteRole(user) ? (
+              <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
+                <Plus size={16} /> Créer un projet
+              </button>
+            ) : null
           }
         />
       ) : (
@@ -1514,7 +1562,7 @@ function ProjectsView({ user, projects, notes, ideas, users, flash }) {
                       className={btnGhost + ' !text-danger'}
                       onClick={async () => {
                         if (confirm('Supprimer ce projet ?')) {
-                          await deleteProject(p.id)
+                          await deleteProject(p.id, user)
                           flash('Projet supprimé.')
                         }
                       }}
@@ -1716,6 +1764,10 @@ function CalendarView({ user, events, users, flash }) {
 
   const submit = async (e) => {
     e.preventDefault()
+    if (!canWriteRole(user)) {
+      flash('Permission refusée.', 'err')
+      return
+    }
     try {
       const saved = await saveEvent(
         {
@@ -1755,18 +1807,22 @@ function CalendarView({ user, events, users, flash }) {
 
   return (
     <div className="space-y-4 animate-fade-up">
-      <button type="button" className={btnPrimary} onClick={() => setOpen(true)}>
-        <Plus size={16} /> Nouvel événement
-      </button>
+      {canWriteRole(user) && (
+        <button type="button" className={btnPrimary} onClick={() => setOpen(true)}>
+          <Plus size={16} /> Nouvel événement
+        </button>
+      )}
 
       {sorted.length === 0 ? (
         <EmptyState
           title="Calendrier vide"
           hint="Planifiez un rendez-vous et notifiez les participants."
           action={
-            <button type="button" className={btnPrimary + ' mt-4'} onClick={() => setOpen(true)}>
-              <Plus size={16} /> Planifier
-            </button>
+            canWriteRole(user) ? (
+              <button type="button" className={btnPrimary + ' mt-4'} onClick={() => setOpen(true)}>
+                <Plus size={16} /> Planifier
+              </button>
+            ) : null
           }
         />
       ) : (
@@ -1795,7 +1851,7 @@ function CalendarView({ user, events, users, flash }) {
                   className={btnGhost + ' !text-danger'}
                   onClick={async () => {
                     if (confirm('Supprimer cet événement ?')) {
-                      await deleteEvent(ev.id)
+                      await deleteEvent(ev.id, user)
                       flash('Événement supprimé.')
                     }
                   }}
@@ -2218,7 +2274,8 @@ function SettingsView({ user, session, users, flash, onUserUpdated }) {
         {!user.emailVerified && (
           <div className="mt-4 rounded-xl border border-warn/30 bg-warn/10 p-3">
             <p className="text-sm text-sage-800">
-              Saisissez le code à 6 chiffres reçu dans vos notifications.
+              Cliquez le lien dans l’e-mail Firebase, ou saisissez le code à 6 chiffres reçu dans
+              vos notifications (secours).
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               <input
@@ -2241,6 +2298,35 @@ function SettingsView({ user, session, users, flash, onUserUpdated }) {
                 }}
               >
                 Vérifier
+              </button>
+              <button
+                type="button"
+                className={btnGhost}
+                onClick={async () => {
+                  try {
+                    await verifyEmail(user.id, '')
+                    await onUserUpdated()
+                    flash('E-mail vérifié via Firebase.')
+                  } catch (err) {
+                    flash(err.message, 'err')
+                  }
+                }}
+              >
+                J’ai cliqué le lien
+              </button>
+              <button
+                type="button"
+                className={btnGhost}
+                onClick={async () => {
+                  try {
+                    await resendVerificationEmail()
+                    flash('E-mail de vérification renvoyé.')
+                  } catch (err) {
+                    flash(err.message, 'err')
+                  }
+                }}
+              >
+                <Mail size={14} /> Renvoyer l’e-mail de vérification
               </button>
             </div>
           </div>
@@ -2292,7 +2378,7 @@ function SettingsView({ user, session, users, flash, onUserUpdated }) {
         <p className="mt-2 text-sm text-sage-600">
           Mode actuel : <strong>{getBackendMode()}</strong>
           {firebaseConfigured
-            ? ' — Auth + Firestore actifs. Connexion, inscription, sessions et jetons de reset sont persistés dans Firebase.'
+            ? ' — Auth + Firestore actifs. Vérification et reset passent par les e-mails Firebase. Collez firestore.rules (isolation) dans la console.'
             : ' — repli localStorage. Remplissez VITE_FIREBASE_* dans .env puis redémarrez Vite pour brancher Firebase.'}
         </p>
         {!firebaseConfigured && (
@@ -2308,7 +2394,10 @@ function SettingsView({ user, session, users, flash, onUserUpdated }) {
                 storageBucket, messagingSenderId, appId)
               </li>
               <li>Authentication → Sign-in method → E-mail/mot de passe : activer</li>
-              <li>Firestore Database : créer la base, règles en mode test ou voir README</li>
+              <li>
+                Firestore Database : coller <code className="rounded bg-white px-1">firestore.rules</code>{' '}
+                (isolation par utilisateur) dans la console
+              </li>
               <li>Redémarrer <code className="rounded bg-white px-1">npm run dev</code></li>
             </ol>
             <p className="mt-2 text-xs text-sage-600">
@@ -2385,19 +2474,37 @@ function SettingsView({ user, session, users, flash, onUserUpdated }) {
       {isAdmin(user) && (
         <section className="rounded-2xl border border-sage-200 bg-white/80 p-5">
           <h2 className="font-display text-lg text-sage-900">Utilisateurs ({users.length})</h2>
+          <p className="mt-1 text-xs text-sage-500">
+            Changez le rôle de chaque compte. Enregistré dans Firestore <code>xx_users.role</code>.
+          </p>
           <ul className="mt-3 divide-y divide-sage-100 text-sm">
             {users.map((u) => (
-              <li key={u.id} className="flex flex-wrap justify-between gap-2 py-2">
-                <span>
+              <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <span className="min-w-0 flex-1 truncate">
                   {u.fullName} · {u.email}
                 </span>
-                <span className="text-sage-500">{u.role}</span>
+                <select
+                  className={inputClass + ' !w-auto py-1.5'}
+                  value={u.role}
+                  onChange={async (e) => {
+                    try {
+                      await updateUserRole(u.id, e.target.value, user)
+                      await onUserUpdated()
+                      flash(`Rôle de ${u.fullName} : ${e.target.value}`)
+                    } catch (err) {
+                      flash(err.message, 'err')
+                    }
+                  }}
+                >
+                  {Object.values(ROLES).map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-xs text-sage-500">
-            Rôles RBAC : {Object.values(ROLES).join(' · ')}
-          </p>
         </section>
       )}
     </div>

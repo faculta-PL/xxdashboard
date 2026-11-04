@@ -1,10 +1,162 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Demo client-only : Auth + sessions custom. Pour la prod, restreindre
-    // par request.auth.uid et par collection (xx_users, xx_sessions, …).
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    // Isolation par utilisateur (Auth uid + e-mail).
+    // Collez ce fichier dans Firebase Console → Firestore → Règles
+    // (firebase deploy --only firestore:rules si la CLI est connectée).
+    // Copie des règles test ouvertes jusqu’au 2026-12-04 : firestore.rules.test.md
+    //
+    // Règles test (NE PAS activer en prod) :
+    // match /{document=**} {
+    //   allow read, write: if request.time < timestamp.date(2026, 12, 4);
+    // }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function authEmail() {
+      return request.auth.token.email;
+    }
+
+    function isAdminEmail() {
+      return isSignedIn() && authEmail() == 'admin@xxdashboard.fr';
+    }
+
+    function userPath() {
+      return /databases/$(database)/documents/xx_users/$(request.auth.uid);
+    }
+
+    function isAdmin() {
+      return isAdminEmail()
+        || (isSignedIn()
+            && exists(userPath())
+            && get(userPath()).data.role == 'Administrateur');
+    }
+
+    function isSelfUser() {
+      return isSignedIn() && (
+        resource.id == request.auth.uid
+        || resource.data.id == request.auth.uid
+        || resource.data.email == authEmail()
+      );
+    }
+
+    function isSelfUserCreate() {
+      return isSignedIn() && (
+        request.resource.id == request.auth.uid
+        || request.resource.data.id == request.auth.uid
+        || request.resource.data.email == authEmail()
+      );
+    }
+
+    function isSelfByUserId() {
+      return isSignedIn() && (
+        resource.data.userId == request.auth.uid
+        || resource.data.email == authEmail()
+      );
+    }
+
+    function isSelfByUserIdCreate() {
+      return isSignedIn() && (
+        request.resource.data.userId == request.auth.uid
+        || request.resource.data.email == authEmail()
+      );
+    }
+
+    function isOwner() {
+      return isSignedIn() && (
+        resource.data.ownerId == request.auth.uid
+        || resource.data.ownerEmail == authEmail()
+      );
+    }
+
+    function isOwnerCreate() {
+      return isSignedIn() && (
+        request.resource.data.ownerId == request.auth.uid
+        || request.resource.data.ownerEmail == authEmail()
+      );
+    }
+
+    function isPublic() {
+      return resource.data.visibility == 'Publique';
+    }
+
+    function isSharedRead() {
+      return isSignedIn() && (
+        (resource.data.keys().hasAll(['shareUserIds'])
+          && request.auth.uid in resource.data.shareUserIds)
+        || (resource.data.keys().hasAll(['shareEmails'])
+          && authEmail() in resource.data.shareEmails)
+      );
+    }
+
+    function isSharedEdit() {
+      return isSignedIn() && (
+        (resource.data.keys().hasAll(['shareEditUserIds'])
+          && request.auth.uid in resource.data.shareEditUserIds)
+        || (resource.data.keys().hasAll(['shareEditEmails'])
+          && authEmail() in resource.data.shareEditEmails)
+      );
+    }
+
+    function canReadEntity() {
+      return isAdmin() || isOwner() || isPublic() || isSharedRead();
+    }
+
+    function canWriteEntity() {
+      return isAdmin() || isOwner() || isSharedEdit();
+    }
+
+    match /xx_users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSelfUserCreate() || isAdmin();
+      allow update, delete: if isSelfUser() || isAdmin();
+    }
+
+    match /xx_sessions/{id} {
+      allow read, update, delete: if isAdmin() || isSelfByUserId();
+      allow create: if isSelfByUserIdCreate() || isAdmin();
+    }
+
+    match /xx_notes/{id} {
+      allow read: if isSignedIn() && canReadEntity();
+      allow create: if isOwnerCreate() || isAdmin();
+      allow update, delete: if canWriteEntity();
+    }
+
+    match /xx_ideas/{id} {
+      allow read: if isSignedIn() && canReadEntity();
+      allow create: if isOwnerCreate() || isAdmin();
+      allow update, delete: if canWriteEntity()
+        || (canReadEntity()
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['votes', 'updatedAt', 'history']));
+    }
+
+    match /xx_projects/{id} {
+      allow read: if isSignedIn() && canReadEntity();
+      allow create: if isOwnerCreate() || isAdmin();
+      allow update, delete: if canWriteEntity();
+    }
+
+    match /xx_events/{id} {
+      allow read: if isSignedIn() && canReadEntity();
+      allow create: if isOwnerCreate() || isAdmin();
+      allow update, delete: if canWriteEntity();
+    }
+
+    match /xx_notifications/{id} {
+      allow read, update, delete: if isAdmin() || isSelfByUserId();
+      allow create: if isSignedIn() && request.resource.data.keys().hasAll(['userId']);
+    }
+
+    // Réinitialisation hors session : création seule. Pas de lecture client.
+    match /xx_reset_tokens/{id} {
+      allow create: if true;
+      allow update: if request.resource.data.used == true
+        && request.resource.data.token == resource.data.token;
+      allow read, delete: if isAdmin();
     }
   }
 }

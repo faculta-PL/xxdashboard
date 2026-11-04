@@ -57,8 +57,10 @@ VITE_FIREBASE_APP_ID=
 ```
 
 3. **Authentication** → Sign-in method → activer **E-mail/mot de passe**.
-4. **Firestore Database** → créer la base. Règles d’exemple dans `firestore.rules` (lecture/écriture si `request.auth != null`).
-5. Redémarrer Vite (`npm run dev`) pour recharger les variables `VITE_*`.
+4. **Firestore Database** → créer la base. Coller le contenu de `firestore.rules` dans **Règles** (isolation par utilisateur : propriétaire, partages, public, admin). Les règles test ouvertes jusqu’au 2026-12-04 sont dans `firestore.rules.test.md` — à n’utiliser qu’en démo.
+5. Connectez-vous une fois avec l’app **avant** de remplacer d’anciennes règles trop ouvertes, pour tamponner `ownerEmail` / `shareUserIds` sur vos documents.
+6. Redémarrer Vite (`npm run dev`) pour recharger les variables `VITE_*`.
+7. Déploiement CLI (si vous êtes connecté) : `firebase deploy --only firestore:rules` via `firebase.json`. Sans token CLI, le collage console suffit.
 
 La barre latérale affiche alors **Firebase** (via `getBackendMode()`).
 
@@ -66,10 +68,10 @@ La barre latérale affiche alors **Firebase** (via `getBackendMode()`).
 
 | Action | Firebase Auth | Firestore |
 |--------|---------------|-----------|
-| Inscription | `createUserWithEmailAndPassword` | `xx_users` (fullName, email, passwordHash SHA-256, rôle Membre, emailVerified false, code 6 chiffres) + notification `xx_notifications` |
-| Connexion | `signInWithEmailAndPassword` **et/ou** contrôle SHA-256 du profil Firestore | `xx_sessions` (jeton 24 h) |
+| Inscription | `createUserWithEmailAndPassword` + `sendEmailVerification` | `xx_users` (id = Auth uid, rôle Membre, code 6 chiffres de secours) + notification |
+| Connexion | `signInWithEmailAndPassword` **et/ou** SHA-256 Firestore | `xx_sessions` (jeton 24 h, `userId` = Auth uid) |
 | Premier démarrage | création du compte `admin@xxdashboard.fr` / `Admin123!` si possible | seed du même admin dans `xx_users` |
-| Reset 2 étapes | `updatePassword` si l’utilisateur Auth courant correspond | `xx_reset_tokens` + notification |
+| Reset 2 étapes | `sendPasswordResetEmail` puis `confirmPasswordReset` (oobCode) ou `updatePassword` si session | `xx_reset_tokens` + notification de secours |
 | Déconnexion / révocation | `signOut` | `xx_sessions.active = false` |
 
 Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, `xx_events`, `xx_notifications`, `xx_reset_tokens`.
@@ -78,7 +80,7 @@ Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, 
 
 ## Modules
 
-1. Authentification (inscription, vérif. e-mail 6 chiffres, reset 2 étapes, sessions)
+1. Authentification (inscription, e-mail Firebase + code 6 chiffres de secours, reset oobCode / jeton, sessions)
 2. Tableau de bord (indicateurs live + raccourcis)
 3. Notes (CRUD, catégories, étiquettes, visibilité, droits Lecture/Édition)
 4. Boîte à idées Kanban (5 statuts, votes, historique, transformation Note/Projet)
