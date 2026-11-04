@@ -1,6 +1,6 @@
-# XXDashboard
+# Nazix
 
-Application web collaborative temps réel pour la gestion unifiée des **notes**, **idées (Kanban)**, **projets** et **activités de groupe**.
+Application web collaborative temps réel pour la gestion unifiée des **notes**, **idées (Kanban)**, **projets**, **équipe** et **chat de groupe**.
 
 Palette vert cassé / sauge · entièrement responsive · **aucune donnée fictive** au démarrage (hors compte administrateur préconfiguré).
 
@@ -13,9 +13,9 @@ Palette vert cassé / sauge · entièrement responsive · **aucune donnée ficti
 
 ## Lancer en local
 
-Pour utiliser XXDashboard sur votre machine (dossier copié ou archive zip) :
+Pour utiliser Nazix sur votre machine (dossier copié ou archive zip) :
 
-1. Copiez le dossier `XXDashboard`, ou dézippez `XXDashboard-local.zip`.
+1. Copiez le dossier `Nazix`, ou dézippez l’archive du projet.
 2. Dans le dossier du projet : `npm install`
 3. Lancez : `npm run dev`
 
@@ -57,7 +57,7 @@ VITE_FIREBASE_APP_ID=
 ```
 
 3. **Authentication** → Sign-in method → activer **E-mail/mot de passe**.
-4. **Firestore Database** → créer la base. Coller le contenu de `firestore.rules` dans **Règles** (isolation par utilisateur : propriétaire, partages, public, admin). Les règles test ouvertes jusqu’au 2026-12-04 sont dans `firestore.rules.test.md` — à n’utiliser qu’en démo.
+4. **Firestore Database** → créer la base. Coller le contenu de `firestore.rules` dans **Règles** (isolation par utilisateur : propriétaire, partages, public, admin, membres des groupes). Les règles test ouvertes jusqu’au 2026-12-04 sont dans `firestore.rules.test.md` — à n’utiliser qu’en démo.
 5. Connectez-vous une fois avec l’app **avant** de remplacer d’anciennes règles trop ouvertes, pour tamponner `ownerEmail` / `shareUserIds` sur vos documents.
 6. Redémarrer Vite (`npm run dev`) pour recharger les variables `VITE_*`.
 7. Déploiement CLI (si vous êtes connecté) : `firebase deploy --only firestore:rules` via `firebase.json`. Sans token CLI, le collage console suffit.
@@ -73,8 +73,9 @@ La barre latérale affiche alors **Firebase** (via `getBackendMode()`).
 | Premier démarrage | création du compte `facultamalika@gmail.com` / `Malika2026!` si possible | seed du même admin dans `xx_users` |
 | Reset 2 étapes | `sendPasswordResetEmail` puis `confirmPasswordReset` (oobCode) ou `updatePassword` si session | `xx_reset_tokens` + notification de secours |
 | Déconnexion / révocation | `signOut` | `xx_sessions.active = false` |
+| Chat / groupes | — | `xx_groups`, `xx_messages` (membres uniquement) |
 
-Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, `xx_events`, `xx_notifications`, `xx_reset_tokens`.
+Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, `xx_events`, `xx_notifications`, `xx_reset_tokens`, `xx_groups`, `xx_messages`.
 
 **Paramètres → Diagnostic** permet de pousser / tirer les collections (admin) une fois Firebase configuré.
 
@@ -86,16 +87,18 @@ Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, 
 4. Boîte à idées Kanban (5 statuts, votes, historique, transformation Note/Projet)
 5. Projets (responsable, membres, progression 0–100 %, notes/idées liées)
 6. Calendrier (événements + notifications participants)
-7. Recherche interne multi-filtres + recherche externe (API DuckDuckGo)
-8. Export CSV / XLSX / DOCX / JSON / PDF
-9. Centre de notifications
-10. Paramètres, sessions, diagnostic Firebase, kit d’exportation
+7. Équipe (annuaire : nom, e-mail, rôle, présence 24 h)
+8. Chat et groupes (Général + groupes privés, messages temps réel)
+9. Recherche interne multi-filtres + recherche externe (API DuckDuckGo)
+10. Export CSV / XLSX / DOCX / JSON / PDF
+11. Centre de notifications
+12. Paramètres, sessions, diagnostic Firebase, kit d’exportation
 
 ## Rôles (RBAC)
 
 Administrateur · Responsable de projet · Membre · Lecteur
 
-Les permissions sont appliquées dans l’UI et à l’écriture des entités (partage explicite requis pour lire / modifier les contenus d’autrui, hors public / admin).
+Les permissions sont appliquées dans l’UI et à l’écriture des entités (partage explicite requis pour lire / modifier les contenus d’autrui, hors public / admin). Un Lecteur ne peut pas créer de notes, idées, projets, groupes. Les messages d’un groupe ne sont lisibles et écrivables que par ses membres.
 
 ## Build
 

@@ -24,14 +24,14 @@ function flattenRows(entities, type) {
   }))
 }
 
-export function exportJSON(bundle, filename = 'xxdashboard-export.json') {
+export function exportJSON(bundle, filename = 'nazix-export.json') {
   const blob = new Blob([JSON.stringify(bundle, null, 2)], {
     type: 'application/json;charset=utf-8',
   })
   saveAs(blob, filename)
 }
 
-export function exportCSV(rows, filename = 'xxdashboard-export.csv') {
+export function exportCSV(rows, filename = 'nazix-export.csv') {
   if (!rows.length) {
     saveAs(new Blob([utf8Bom('Aucune donnée\n')], { type: 'text/csv;charset=utf-8' }), filename)
     return
@@ -51,10 +51,10 @@ export function exportCSV(rows, filename = 'xxdashboard-export.csv') {
   saveAs(new Blob([utf8Bom(lines.join('\n'))], { type: 'text/csv;charset=utf-8' }), filename)
 }
 
-export function exportXLSX(rows, filename = 'xxdashboard-export.xlsx') {
+export function exportXLSX(rows, filename = 'nazix-export.xlsx') {
   const sheet = XLSX.utils.json_to_sheet(rows.length ? rows : [{ Info: 'Aucune donnée' }])
   const book = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(book, sheet, 'XXDashboard')
+  XLSX.utils.book_append_sheet(book, sheet, 'Nazix')
   const buf = XLSX.write(book, { bookType: 'xlsx', type: 'array' })
   saveAs(
     new Blob([buf], {
@@ -64,10 +64,10 @@ export function exportXLSX(rows, filename = 'xxdashboard-export.xlsx') {
   )
 }
 
-export async function exportDOCX(sections, filename = 'xxdashboard-rapport.docx') {
+export async function exportDOCX(sections, filename = 'nazix-rapport.docx') {
   const children = [
     new Paragraph({
-      text: 'Rapport XXDashboard',
+      text: 'Rapport Nazix',
       heading: HeadingLevel.TITLE,
     }),
     new Paragraph({
@@ -117,7 +117,7 @@ export async function exportDOCX(sections, filename = 'xxdashboard-rapport.docx'
   saveAs(blob, filename)
 }
 
-export function exportPDF(title, tables, filename = 'xxdashboard-export.pdf') {
+export function exportPDF(title, tables, filename = 'nazix-export.pdf') {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(18)

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+/** Nazix — notes, idées, projets, équipe */
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   LayoutDashboard,
   StickyNote,
@@ -27,6 +28,10 @@ import {
   ExternalLink,
   Filter,
   Mail,
+  MessageCircle,
+  Send,
+  UserPlus,
+  ChevronLeft,
 } from 'lucide-react'
 import {
   bootStore,
@@ -64,9 +69,15 @@ import {
   getBootHint,
   pushLocalToFirebase,
   pullFirebaseToLocal,
+  ensureGeneralGroup,
+  saveGroup,
+  inviteToGroup,
+  sendMessage,
+  listGroupsForUser,
+  listPresentUserIds,
 } from './lib/store'
 import { firebaseConfigured, missingFirebaseVars, getFirebaseStatus } from './lib/firebase'
-import { canReadEntity, canEditEntity, canDeleteEntity, canWriteRole, isAdmin, ROLES } from './lib/rbac'
+import { canReadEntity, canEditEntity, canDeleteEntity, canWriteRole, canReadGroup, isAdmin, ROLES } from './lib/rbac'
 import {
   exportJSON,
   exportCSV,
@@ -102,11 +113,27 @@ const NAV = [
   { id: 'ideas', label: 'Boîte à idées', icon: Lightbulb },
   { id: 'projects', label: 'Projets', icon: FolderKanban },
   { id: 'calendar', label: 'Calendrier', icon: CalendarDays },
+  { id: 'team', label: 'Équipe', icon: Users },
+  { id: 'chat', label: 'Chat', icon: MessageCircle },
   { id: 'search', label: 'Recherche', icon: Search },
   { id: 'export', label: 'Exportation', icon: Download },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'settings', label: 'Paramètres', icon: Settings },
 ]
+
+const CHAT_READ_KEY = 'nazix_chat_read'
+
+function readChatMap() {
+  try {
+    return JSON.parse(localStorage.getItem(CHAT_READ_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function writeChatMap(map) {
+  localStorage.setItem(CHAT_READ_KEY, JSON.stringify(map))
+}
 
 function EmptyState({ title, hint, action }) {
   return (
@@ -121,19 +148,19 @@ function EmptyState({ title, hint, action }) {
 function Modal({ open, title, onClose, children, wide }) {
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-3 sm:items-center">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-3">
       <button type="button" className="absolute inset-0" aria-label="Fermer" onClick={onClose} />
       <div
-        className={`relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-2xl bg-sage-50 p-5 shadow-xl animate-fade-up xx-scroll ${
+        className={`relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-sage-50 p-4 shadow-xl animate-fade-up xx-scroll sm:rounded-2xl sm:p-5 ${
           wide ? 'max-w-3xl' : 'max-w-lg'
         }`}
       >
         <div className="mb-4 flex items-start justify-between gap-3">
-          <h3 className="font-display text-xl text-sage-900">{title}</h3>
+          <h3 className="min-w-0 font-display text-xl text-sage-900">{title}</h3>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1 text-sage-600 hover:bg-sage-200"
+            className="min-h-11 min-w-11 shrink-0 rounded-lg p-2 text-sage-600 hover:bg-sage-200"
           >
             <X size={18} />
           </button>
@@ -154,11 +181,11 @@ function Field({ label, children }) {
 }
 
 const inputClass =
-  'w-full rounded-xl border border-sage-300 bg-white px-3 py-2.5 text-sage-900 outline-none ring-sage-400 placeholder:text-sage-400 focus:ring-2'
+  'w-full min-h-11 rounded-xl border border-sage-300 bg-white px-3 py-2.5 text-sage-900 outline-none ring-sage-400 placeholder:text-sage-400 focus:ring-2'
 const btnPrimary =
-  'inline-flex items-center justify-center gap-2 rounded-xl bg-sage-700 px-4 py-2.5 text-sm font-semibold text-sage-50 transition hover:bg-sage-800 disabled:opacity-50'
+  'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-sage-700 px-4 py-2.5 text-sm font-semibold text-sage-50 transition hover:bg-sage-800 disabled:opacity-50'
 const btnGhost =
-  'inline-flex items-center justify-center gap-2 rounded-xl border border-sage-300 bg-white/70 px-3 py-2 text-sm font-medium text-sage-800 transition hover:bg-sage-100'
+  'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-sage-300 bg-white/70 px-3 py-2 text-sm font-medium text-sage-800 transition hover:bg-sage-100'
 
 function ShareEditor({ users, shares, onChange, excludeId }) {
   const options = users.filter((u) => u.id !== excludeId)
@@ -212,6 +239,7 @@ export default function App() {
   })
   const [authBusy, setAuthBusy] = useState(false)
   const [showPass, setShowPass] = useState(false)
+  const [chatReadMap, setChatReadMap] = useState(readChatMap)
 
   const flash = (message, type = 'ok') => {
     setToast({ message, type })
@@ -306,6 +334,38 @@ export default function App() {
     [db, user],
   )
   const unread = notifications.filter((n) => !n.read).length
+  const groups = useMemo(
+    () => (db && user ? listGroupsForUser(user) : []),
+    [db, user],
+  )
+  const chatMessages = useMemo(
+    () =>
+      db && user
+        ? Object.values(db.xx_messages || {})
+            .filter((m) => {
+              const group = db.xx_groups?.[m.groupId]
+              return group && canReadGroup(user, group)
+            })
+            .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+        : [],
+    [db, user],
+  )
+  const presentIds = useMemo(() => (db ? listPresentUserIds() : []), [db])
+  const chatUnread = useMemo(() => {
+    if (!user) return 0
+    return chatMessages.filter((m) => {
+      if (m.authorId === user.id) return false
+      const seen = chatReadMap[m.groupId]
+      return !seen || m.createdAt > seen
+    }).length
+  }, [chatMessages, chatReadMap, user])
+
+  const markChatGroupRead = (groupId) => {
+    if (!groupId) return
+    const next = { ...readChatMap(), [groupId]: new Date().toISOString() }
+    writeChatMap(next)
+    setChatReadMap(next)
+  }
 
   const refreshUser = async () => {
     const current = await getCurrentSession()
@@ -328,24 +388,14 @@ export default function App() {
         setSession(res.session)
         flash('Session ouverte.')
       } else if (authMode === 'register') {
-        const res = await registerUser(authForm)
-        flash(
-          firebaseConfigured
-            ? `Compte créé. E-mail de vérification Firebase envoyé. Code de secours : ${res.verificationCode}`
-            : `Compte créé. Code de vérification : ${res.verificationCode}`,
-        )
+        await registerUser(authForm)
+        flash('Compte créé. E-mail de vérification envoyé.')
         const logged = await loginUser(authForm.email, authForm.password)
         setUser(logged.user)
         setSession(logged.session)
       } else if (authMode === 'forgot') {
-        const res = await requestPasswordReset(authForm.email)
-        flash(
-          res.firebaseSent
-            ? `E-mail Firebase envoyé. Jeton in-app de secours : ${res.debugToken || 'voir notifications si connecté'}.`
-            : res.debugToken
-              ? `Jeton généré (aussi en notification) : ${res.debugToken}`
-              : 'Si le compte existe, un e-mail ou un jeton a été envoyé.',
-        )
+        await requestPasswordReset(authForm.email)
+        flash('E-mail envoyé.')
         setAuthMode('reset')
       } else if (authMode === 'reset') {
         await resetPasswordWithToken(authForm.resetToken, authForm.newPassword)
@@ -370,8 +420,8 @@ export default function App() {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-center animate-fade-up">
-          <p className="font-display text-3xl text-sage-800">XXDashboard</p>
-          <p className="mt-2 animate-soft-pulse text-sm text-sage-600">Chargement sécurisé…</p>
+          <p className="font-display text-3xl text-sage-800">Nazix</p>
+          <p className="mt-2 animate-soft-pulse text-sm text-sage-600">Chargement…</p>
         </div>
       </div>
     )
@@ -379,126 +429,22 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="flex min-h-screen items-center justify-center p-4">
-        <div className="w-full max-w-md animate-fade-up">
-          <div className="mb-8 text-center">
-            <p className="font-display text-4xl tracking-tight text-sage-800 sm:text-5xl">
-              XXDashboard
-            </p>
-          </div>
-          <form
-            onSubmit={handleAuth}
-            className="rounded-3xl border border-sage-200 bg-white/80 p-6 shadow-sm backdrop-blur"
-          >
-            <div className="mb-5 flex gap-2 text-sm">
-              {[
-                ['login', 'Connexion'],
-                ['register', 'Inscription'],
-                ['forgot', 'Mot de passe'],
-              ].map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setAuthMode(id === 'forgot' ? 'forgot' : id)}
-                  className={`rounded-full px-3 py-1.5 ${
-                    authMode === id || (id === 'forgot' && authMode === 'reset')
-                      ? 'bg-sage-700 text-white'
-                      : 'bg-sage-100 text-sage-700'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {authMode === 'register' && (
-              <Field label="Nom">
-                <input
-                  className={inputClass}
-                  value={authForm.fullName}
-                  onChange={(e) => setAuthForm({ ...authForm, fullName: e.target.value })}
-                  required
-                />
-              </Field>
-            )}
-
-            {(authMode === 'login' || authMode === 'register' || authMode === 'forgot') && (
-              <Field label="E-mail">
-                <input
-                  type="email"
-                  className={inputClass}
-                  value={authForm.email}
-                  onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
-                  required
-                />
-              </Field>
-            )}
-
-            {(authMode === 'login' || authMode === 'register') && (
-              <Field label="Mot de passe">
-                <div className="relative">
-                  <input
-                    type={showPass ? 'text' : 'password'}
-                    className={inputClass + ' pr-10'}
-                    value={authForm.password}
-                    onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
-                    minLength={getMinPasswordLength()}
-                    required
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-sage-500"
-                    onClick={() => setShowPass((v) => !v)}
-                  >
-                    {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
-              </Field>
-            )}
-
-            {authMode === 'reset' && (
-              <>
-                <Field label="Code">
-                  <input
-                    className={inputClass}
-                    value={authForm.resetToken}
-                    onChange={(e) => setAuthForm({ ...authForm, resetToken: e.target.value })}
-                    required
-                  />
-                </Field>
-                <Field label="Nouveau mot de passe">
-                  <input
-                    type="password"
-                    className={inputClass}
-                    value={authForm.newPassword}
-                    onChange={(e) => setAuthForm({ ...authForm, newPassword: e.target.value })}
-                    minLength={getMinPasswordLength()}
-                    required
-                  />
-                </Field>
-              </>
-            )}
-
-            <button type="submit" className={btnPrimary + ' mt-2 w-full'} disabled={authBusy}>
-              {authBusy
-                ? 'Patientez…'
-                : authMode === 'login'
-                  ? 'Se connecter'
-                  : authMode === 'register'
-                    ? "S'inscrire"
-                    : authMode === 'forgot'
-                      ? 'Envoyer'
-                      : 'Réinitialiser'}
-            </button>
-          </form>
-        </div>
-        {toast && <Toast toast={toast} />}
-      </div>
+      <AuthScreen
+        authMode={authMode}
+        setAuthMode={setAuthMode}
+        authForm={authForm}
+        setAuthForm={setAuthForm}
+        authBusy={authBusy}
+        showPass={showPass}
+        setShowPass={setShowPass}
+        handleAuth={handleAuth}
+        toast={toast}
+      />
     )
   }
 
   return (
-    <div className="min-h-screen lg:grid lg:grid-cols-[260px_1fr]">
+    <div className="min-h-screen overflow-x-hidden lg:grid lg:grid-cols-[260px_1fr]">
       <aside
         className={`fixed inset-y-0 left-0 z-40 w-[260px] border-r border-sage-200 bg-sage-800 text-sage-50 transition lg:static ${
           mobileNav ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
@@ -507,7 +453,7 @@ export default function App() {
         <div className="flex h-full flex-col p-4">
           <div className="mb-6 flex items-center justify-between px-2 pt-2">
             <div>
-              <p className="font-display text-2xl leading-none">XXDashboard</p>
+              <p className="font-display text-2xl leading-none">Nazix</p>
               <p className="mt-1 text-xs text-sage-300">
                 {getBackendMode() === 'firebase' ? 'Firebase' : 'Mode local'} · {user.role}
               </p>
@@ -537,6 +483,11 @@ export default function App() {
                   {item.id === 'notifications' && unread > 0 && (
                     <span className="rounded-full bg-cream-green px-2 py-0.5 text-[11px] font-bold text-sage-800">
                       {unread}
+                    </span>
+                  )}
+                  {item.id === 'chat' && chatUnread > 0 && (
+                    <span className="rounded-full bg-cream-green px-2 py-0.5 text-[11px] font-bold text-sage-800">
+                      {chatUnread}
                     </span>
                   )}
                 </button>
@@ -583,7 +534,7 @@ export default function App() {
           )}
         </header>
 
-        <main className="p-4 sm:p-6">
+        <main className={view === 'chat' ? 'p-2 sm:p-4' : 'p-4 sm:p-6'}>
           {view === 'dashboard' && (
             <DashboardView
               notes={notes}
@@ -613,6 +564,18 @@ export default function App() {
           {view === 'calendar' && (
             <CalendarView user={user} events={events} users={users} flash={flash} />
           )}
+          {view === 'team' && <TeamView users={users} presentIds={presentIds} />}
+          {view === 'chat' && (
+            <ChatView
+              user={user}
+              groups={groups}
+              messages={chatMessages}
+              users={users}
+              flash={flash}
+              readMap={chatReadMap}
+              onReadGroup={markChatGroupRead}
+            />
+          )}
           {view === 'search' && (
             <SearchView notes={notes} ideas={ideas} projects={projects} events={events} />
           )}
@@ -633,6 +596,160 @@ export default function App() {
           )}
         </main>
       </div>
+      {toast && <Toast toast={toast} />}
+    </div>
+  )
+}
+
+function AuthScreen({
+  authMode,
+  setAuthMode,
+  authForm,
+  setAuthForm,
+  authBusy,
+  showPass,
+  setShowPass,
+  handleAuth,
+  toast,
+}) {
+  return (
+    <div className="flex min-h-screen flex-col overflow-x-hidden lg:grid lg:grid-cols-2">
+      <section className="relative overflow-hidden bg-sage-800 px-5 py-6 text-sage-50 sm:px-8 sm:py-8 lg:flex lg:flex-col lg:justify-center lg:px-14 lg:py-16">
+        <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-sage-600/40 blur-2xl" />
+        <div className="pointer-events-none absolute -bottom-20 -left-10 h-64 w-64 rounded-full bg-sage-900/50 blur-2xl" />
+        <div className="relative max-w-md">
+          <p className="font-display text-3xl tracking-tight sm:text-4xl lg:text-6xl">Nazix</p>
+          <p className="mt-1 text-sm font-medium text-sage-200 sm:text-base">
+            notes, idées, projets, équipe
+          </p>
+          <p className="mt-3 max-w-sm text-sm leading-relaxed text-sage-100/90 lg:mt-5 lg:text-base">
+            Un espace sobre pour noter, décider et discuter ensemble.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {['Notes', 'Kanban', 'Chat'].map((pill) => (
+              <span
+                key={pill}
+                className="rounded-full border border-sage-500/70 bg-sage-700/70 px-3 py-1 text-xs font-semibold text-sage-50"
+              >
+                {pill}
+              </span>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="flex flex-1 items-start justify-center p-4 sm:items-center sm:p-8">
+        <form
+          onSubmit={handleAuth}
+          className="w-full max-w-md animate-fade-up rounded-3xl border border-sage-200 bg-white/85 p-5 shadow-sm backdrop-blur sm:p-6"
+        >
+          <div className="mb-5 flex flex-wrap gap-2 text-sm">
+            {[
+              ['login', 'Connexion'],
+              ['register', 'Inscription'],
+              ['forgot', 'Mot de passe'],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setAuthMode(id === 'forgot' ? 'forgot' : id)}
+                className={`min-h-11 rounded-full px-4 py-2 ${
+                  authMode === id || (id === 'forgot' && authMode === 'reset')
+                    ? 'bg-sage-700 text-white'
+                    : 'bg-sage-100 text-sage-700'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {authMode === 'register' && (
+            <Field label="Nom">
+              <input
+                className={inputClass}
+                value={authForm.fullName}
+                onChange={(e) => setAuthForm({ ...authForm, fullName: e.target.value })}
+                autoComplete="name"
+                required
+              />
+            </Field>
+          )}
+
+          {(authMode === 'login' || authMode === 'register' || authMode === 'forgot') && (
+            <Field label="E-mail">
+              <input
+                type="email"
+                className={inputClass}
+                value={authForm.email}
+                onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
+                autoComplete="email"
+                required
+              />
+            </Field>
+          )}
+
+          {(authMode === 'login' || authMode === 'register') && (
+            <Field label="Mot de passe">
+              <div className="relative">
+                <input
+                  type={showPass ? 'text' : 'password'}
+                  className={inputClass + ' pr-12'}
+                  value={authForm.password}
+                  onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
+                  minLength={getMinPasswordLength()}
+                  autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+                  required
+                />
+                <button
+                  type="button"
+                  className="absolute right-1 top-1/2 min-h-11 min-w-11 -translate-y-1/2 p-2 text-sage-500"
+                  onClick={() => setShowPass((v) => !v)}
+                  aria-label={showPass ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                >
+                  {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </Field>
+          )}
+
+          {authMode === 'reset' && (
+            <>
+              <Field label="Code reçu par e-mail">
+                <input
+                  className={inputClass}
+                  value={authForm.resetToken}
+                  onChange={(e) => setAuthForm({ ...authForm, resetToken: e.target.value })}
+                  required
+                />
+              </Field>
+              <Field label="Nouveau mot de passe">
+                <input
+                  type="password"
+                  className={inputClass}
+                  value={authForm.newPassword}
+                  onChange={(e) => setAuthForm({ ...authForm, newPassword: e.target.value })}
+                  minLength={getMinPasswordLength()}
+                  autoComplete="new-password"
+                  required
+                />
+              </Field>
+            </>
+          )}
+
+          <button type="submit" className={btnPrimary + ' mt-2 w-full'} disabled={authBusy}>
+            {authBusy
+              ? 'Patientez…'
+              : authMode === 'login'
+                ? 'Se connecter'
+                : authMode === 'register'
+                  ? "S'inscrire"
+                  : authMode === 'forgot'
+                    ? 'Envoyer'
+                    : 'Réinitialiser'}
+          </button>
+        </form>
+      </section>
       {toast && <Toast toast={toast} />}
     </div>
   )
@@ -991,13 +1108,13 @@ function NotesView({ user, notes, users, projects, flash }) {
 
       <Modal open={Boolean(confirmId)} title="Confirmer la suppression" onClose={() => setConfirmId(null)}>
         <p className="text-sm text-sage-700">Cette action est définitive.</p>
-        <div className="mt-4 flex gap-2">
-          <button type="button" className={btnGhost} onClick={() => setConfirmId(null)}>
+        <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row">
+          <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirmId(null)}>
             Annuler
           </button>
           <button
             type="button"
-            className={btnPrimary + ' !bg-danger'}
+            className={btnPrimary + ' w-full sm:w-auto !bg-danger'}
             onClick={() => remove(confirmId)}
           >
             Supprimer
@@ -1838,7 +1955,7 @@ function CalendarView({ user, events, users, flash }) {
               onChange={(e) => setForm({ ...form, description: e.target.value })}
             />
           </Field>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="Date">
               <input
                 type="date"
@@ -2097,7 +2214,7 @@ function ExportView({ notes, ideas, projects, events, flash }) {
       if (kind === 'json') exportJSON(bundle)
       if (kind === 'docx') await exportDOCX(buildDocSections({ notes, ideas, projects, events }))
       if (kind === 'pdf')
-        exportPDF('Export XXDashboard', buildPdfTables({ notes, ideas, projects, events }))
+        exportPDF('Export Nazix', buildPdfTables({ notes, ideas, projects, events }))
       flash(`Export ${kind.toUpperCase()} téléchargé.`)
     } catch (err) {
       flash(err.message || 'Échec export', 'err')
@@ -2382,7 +2499,7 @@ function SettingsView({ user, session, users, flash, onUserUpdated }) {
             className={btnGhost}
             onClick={async () => {
               const kit = await exportDeploymentKit()
-              exportJSON(kit, 'xxdashboard-deployment-kit.json')
+              exportJSON(kit, 'nazix-deployment-kit.json')
               flash('Kit d’exportation téléchargé.')
             }}
           >
@@ -2464,6 +2581,353 @@ function SettingsView({ user, session, users, flash, onUserUpdated }) {
           </ul>
         </section>
       )}
+    </div>
+  )
+}
+
+function TeamView({ users, presentIds }) {
+  const present = new Set(presentIds)
+  const sorted = [...users].sort((a, b) =>
+    String(a.fullName || '').localeCompare(String(b.fullName || ''), 'fr'),
+  )
+
+  if (sorted.length === 0) {
+    return <EmptyState title="Personne pour l’instant" hint="Les comptes inscrits apparaîtront ici." />
+  }
+
+  return (
+    <div className="space-y-3 animate-fade-up">
+      <p className="text-sm text-sage-600">{sorted.length} personne{sorted.length > 1 ? 's' : ''}.</p>
+      <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {sorted.map((u) => {
+          const online = present.has(u.id)
+          return (
+            <li
+              key={u.id}
+              className="flex items-start gap-3 rounded-2xl border border-sage-200 bg-white/80 p-4"
+            >
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-sage-200 font-display text-lg text-sage-800">
+                {(u.fullName || u.email || '?').slice(0, 1).toUpperCase()}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="truncate font-medium text-sage-900">{u.fullName || '—'}</p>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                      online ? 'bg-ok/15 text-ok' : 'bg-sage-100 text-sage-500'
+                    }`}
+                  >
+                    {online ? 'En ligne' : 'Hors ligne'}
+                  </span>
+                </div>
+                <p className="truncate text-sm text-sage-600">{u.email}</p>
+                <p className="mt-1 text-xs text-sage-500">{u.role}</p>
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }) {
+  const [selectedId, setSelectedId] = useState(null)
+  const [draft, setDraft] = useState('')
+  const [createOpen, setCreateOpen] = useState(false)
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [groupName, setGroupName] = useState('')
+  const [picked, setPicked] = useState([])
+  const [busy, setBusy] = useState(false)
+  const bottomRef = useRef(null)
+  const onReadRef = useRef(onReadGroup)
+  onReadRef.current = onReadGroup
+
+  useEffect(() => {
+    ensureGeneralGroup(user).catch((err) => flash(err.message || 'Chat indisponible.', 'err'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per user session
+  }, [user.id])
+
+  const selected = groups.find((g) => g.id === selectedId) || null
+  const thread = selected
+    ? messages.filter((m) => m.groupId === selected.id)
+    : []
+
+  useEffect(() => {
+    if (selectedId) onReadRef.current(selectedId)
+  }, [selectedId, thread.length])
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ block: 'end' })
+  }, [thread.length, selected?.id])
+
+  const nameOf = (id, fallback) => users.find((u) => u.id === id)?.fullName || fallback || 'Membre'
+
+  const submitMessage = async (e) => {
+    e.preventDefault()
+    if (!selected) return
+    const text = draft.trim()
+    if (!text) return
+    setBusy(true)
+    try {
+      await sendMessage(selected.id, text, user)
+      setDraft('')
+    } catch (err) {
+      flash(err.message, 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const createGroup = async (e) => {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      const saved = await saveGroup({ name: groupName, memberIds: picked }, user)
+      flash('Groupe créé.')
+      setCreateOpen(false)
+      setGroupName('')
+      setPicked([])
+      setSelectedId(saved.id)
+    } catch (err) {
+      flash(err.message, 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const invite = async (e) => {
+    e.preventDefault()
+    if (!selected) return
+    setBusy(true)
+    try {
+      await inviteToGroup(selected.id, picked, user)
+      flash('Membres ajoutés.')
+      setInviteOpen(false)
+      setPicked([])
+    } catch (err) {
+      flash(err.message, 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const unreadIn = (groupId) =>
+    messages.filter((m) => {
+      if (m.groupId !== groupId || m.authorId === user.id) return false
+      const seen = readMap[groupId]
+      return !seen || m.createdAt > seen
+    }).length
+
+  const showThread = Boolean(selected)
+  const outsiders = users.filter((u) => u.id !== user.id && !(selected?.memberIds || []).includes(u.id))
+
+  return (
+    <div className="flex min-h-[70vh] flex-col overflow-hidden rounded-2xl border border-sage-200 bg-white/80 lg:min-h-[72vh] lg:flex-row">
+      <aside
+        className={`${showThread ? 'hidden lg:flex' : 'flex'} w-full flex-col border-sage-200 lg:w-72 lg:shrink-0 lg:border-r`}
+      >
+        <div className="flex items-center justify-between gap-2 border-b border-sage-100 p-3">
+          <p className="font-display text-lg text-sage-900">Groupes</p>
+          {canWriteRole(user) && (
+            <button
+              type="button"
+              className={btnPrimary + ' !px-3'}
+              onClick={() => {
+                setPicked([])
+                setGroupName('')
+                setCreateOpen(true)
+              }}
+            >
+              <Plus size={16} />
+              <span className="sm:inline">Nouveau</span>
+            </button>
+          )}
+        </div>
+        {groups.length === 0 ? (
+          <p className="p-4 text-sm text-sage-500">Aucun groupe.</p>
+        ) : (
+          <ul className="flex-1 overflow-y-auto xx-scroll">
+            {groups.map((g) => {
+              const n = unreadIn(g.id)
+              const active = selectedId === g.id
+              return (
+                <li key={g.id}>
+                  <button
+                    type="button"
+                    className={`flex min-h-14 w-full items-center gap-2 px-4 py-3 text-left ${
+                      active ? 'bg-sage-100' : 'hover:bg-sage-50'
+                    }`}
+                    onClick={() => setSelectedId(g.id)}
+                  >
+                    <span className="min-w-0 flex-1 truncate font-medium text-sage-900">{g.name}</span>
+                    {n > 0 && (
+                      <span className="rounded-full bg-sage-700 px-2 py-0.5 text-[11px] font-bold text-white">
+                        {n}
+                      </span>
+                    )}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </aside>
+
+      <section className={`${showThread ? 'flex' : 'hidden lg:flex'} min-h-[70vh] min-w-0 flex-1 flex-col`}>
+        {!selected ? (
+          <div className="flex flex-1 items-center justify-center p-6">
+            <EmptyState title="Choisissez un groupe" hint="Ouvrez Général ou créez un groupe." />
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 border-b border-sage-100 px-2 py-2 sm:px-4">
+              <button
+                type="button"
+                className="min-h-11 min-w-11 rounded-lg p-2 text-sage-700 hover:bg-sage-100 lg:hidden"
+                onClick={() => setSelectedId(null)}
+                aria-label="Retour aux groupes"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-display text-lg text-sage-900">{selected.name}</p>
+                <p className="truncate text-xs text-sage-500">
+                  {(selected.memberIds || []).length} membre{(selected.memberIds || []).length > 1 ? 's' : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                className={btnGhost + ' !px-3'}
+                onClick={() => {
+                  setPicked([])
+                  setInviteOpen(true)
+                }}
+              >
+                <UserPlus size={16} /> Inviter
+              </button>
+            </div>
+            <div className="flex-1 space-y-3 overflow-y-auto px-3 py-4 xx-scroll sm:px-5">
+              {thread.length === 0 ? (
+                <p className="text-center text-sm text-sage-500">Aucun message. Écrivez le premier.</p>
+              ) : (
+                thread.map((m) => {
+                  const mine = m.authorId === user.id
+                  return (
+                    <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                      <div
+                        className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm sm:max-w-[70%] ${
+                          mine ? 'bg-sage-700 text-sage-50' : 'bg-sage-100 text-sage-900'
+                        }`}
+                      >
+                        {!mine && (
+                          <p className="mb-0.5 text-[11px] font-semibold opacity-80">
+                            {nameOf(m.authorId, m.authorName)}
+                          </p>
+                        )}
+                        <p className="whitespace-pre-wrap break-words">{m.body}</p>
+                        <p className={`mt-1 text-[10px] ${mine ? 'text-sage-200' : 'text-sage-500'}`}>
+                          {m.createdAt ? new Date(m.createdAt).toLocaleString('fr-FR') : ''}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+              <div ref={bottomRef} />
+            </div>
+            <form onSubmit={submitMessage} className="flex gap-2 border-t border-sage-100 p-3">
+              <input
+                className={inputClass}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="Écrire un message…"
+                maxLength={4000}
+              />
+              <button type="submit" className={btnPrimary + ' shrink-0 !px-4'} disabled={busy || !draft.trim()}>
+                <Send size={16} />
+              </button>
+            </form>
+          </>
+        )}
+      </section>
+
+      <Modal open={createOpen} title="Nouveau groupe" onClose={() => setCreateOpen(false)}>
+        <form onSubmit={createGroup}>
+          <Field label="Nom">
+            <input
+              className={inputClass}
+              value={groupName}
+              onChange={(e) => setGroupName(e.target.value)}
+              required
+            />
+          </Field>
+          <Field label="Inviter">
+            <div className="flex flex-wrap gap-2 rounded-xl border border-sage-200 bg-white p-3">
+              {users.filter((u) => u.id !== user.id).length === 0 && (
+                <p className="text-xs text-sage-500">Aucun autre compte.</p>
+              )}
+              {users
+                .filter((u) => u.id !== user.id)
+                .map((u) => {
+                  const on = picked.includes(u.id)
+                  return (
+                    <button
+                      key={u.id}
+                      type="button"
+                      className={`min-h-11 rounded-lg px-3 py-2 text-sm ${
+                        on ? 'bg-sage-700 text-white' : 'bg-sage-100 text-sage-700'
+                      }`}
+                      onClick={() =>
+                        setPicked(on ? picked.filter((id) => id !== u.id) : [...picked, u.id])
+                      }
+                    >
+                      {u.fullName}
+                    </button>
+                  )
+                })}
+            </div>
+          </Field>
+          <button type="submit" className={btnPrimary + ' mt-2 w-full'} disabled={busy}>
+            Créer
+          </button>
+        </form>
+      </Modal>
+
+      <Modal open={inviteOpen} title="Inviter dans le groupe" onClose={() => setInviteOpen(false)}>
+        <form onSubmit={invite}>
+          {outsiders.length === 0 ? (
+            <p className="text-sm text-sage-600">Tout le monde est déjà membre.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2 rounded-xl border border-sage-200 bg-white p-3">
+              {outsiders.map((u) => {
+                const on = picked.includes(u.id)
+                return (
+                  <button
+                    key={u.id}
+                    type="button"
+                    className={`min-h-11 rounded-lg px-3 py-2 text-sm ${
+                      on ? 'bg-sage-700 text-white' : 'bg-sage-100 text-sage-700'
+                    }`}
+                    onClick={() =>
+                      setPicked(on ? picked.filter((id) => id !== u.id) : [...picked, u.id])
+                    }
+                  >
+                    {u.fullName}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          <button
+            type="submit"
+            className={btnPrimary + ' mt-4 w-full'}
+            disabled={busy || picked.length === 0}
+          >
+            Ajouter
+          </button>
+        </form>
+      </Modal>
     </div>
   )
 }

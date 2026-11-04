@@ -47,3 +47,18 @@ export function canDeleteEntity(user, entity) {
   if (isAdmin(user)) return true
   return entity.ownerId === user.id
 }
+
+/** Chat / groups: only members (admins included) read a group's messages. */
+export function canReadGroup(user, group) {
+  if (!user || !group) return false
+  if (isAdmin(user)) return true
+  if (group.isGeneral) return true
+  return Array.isArray(group.memberIds) && group.memberIds.includes(user.id)
+}
+
+/** Chat / groups: only members write messages in that group. */
+export function canWriteGroup(user, group) {
+  if (!user || !group) return false
+  if (isAdmin(user)) return true
+  return Array.isArray(group.memberIds) && group.memberIds.includes(user.id)
+}

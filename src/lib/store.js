@@ -1,3 +1,4 @@
+/** Nazix store — collections xx_* kept for Firestore compatibility. */
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -23,14 +24,16 @@ import {
 } from 'firebase/firestore'
 import { auth, db, firebaseConfigured, getFirebaseStatus } from './firebase'
 import { sha256, randomToken, randomCode6, uid } from './crypto'
-import { ROLES, canWriteRole, canEditEntity, canDeleteEntity, isAdmin } from './rbac'
+import { ROLES, canWriteRole, canEditEntity, canDeleteEntity, isAdmin, canReadGroup, canWriteGroup } from './rbac'
 
 const ADMIN_EMAIL = 'facultamalika@gmail.com'
 const ADMIN_PASSWORD = 'Malika2026!'
 const AUTH_MIN_PASSWORD = firebaseConfigured ? 6 : 4
 
+// Nazix persistence keys kept for compatibility with existing local data.
 const LOCAL_KEY = 'xxdashboard_v1'
 const SESSION_KEY = 'xxdashboard_session_token'
+const GENERAL_GROUP_ID = 'grp_general'
 const SESSION_HOURS = 24
 /** Fail-open budget so splash never waits on a hung Firestore/Auth call. */
 const FIRESTORE_BOOT_TIMEOUT_MS = 5000
@@ -77,6 +80,8 @@ const COLLECTIONS = [
   'xx_events',
   'xx_notifications',
   'xx_reset_tokens',
+  'xx_groups',
+  'xx_messages',
 ]
 
 function emptyDb() {
@@ -105,12 +110,30 @@ function saveLocal(data) {
 let memory = loadLocal()
 const listeners = new Set()
 
+function publicUser(user) {
+  if (!user) return user
+  const rest = { ...user }
+  delete rest.passwordHash
+  delete rest.verificationCode
+  return rest
+}
+
 function notify() {
   for (const fn of listeners) fn(snapshotState())
 }
 
 function snapshotState() {
-  return structuredClone(memory)
+  const clone = structuredClone(memory)
+  for (const id of Object.keys(clone.xx_users || {})) {
+    clone.xx_users[id] = publicUser(clone.xx_users[id])
+  }
+  for (const id of Object.keys(clone.xx_sessions || {})) {
+    const rest = { ...clone.xx_sessions[id] }
+    delete rest.token
+    clone.xx_sessions[id] = rest
+  }
+  clone.xx_reset_tokens = {}
+  return clone
 }
 
 export function subscribeStore(fn) {
@@ -207,7 +230,7 @@ function remapIdList(list, fromId, toId) {
 
 async function remapUserReferences(fromId, toId) {
   if (!fromId || !toId || fromId === toId) return
-  const entityCols = ['xx_notes', 'xx_ideas', 'xx_projects', 'xx_events']
+  const entityCols = ['xx_notes', 'xx_ideas', 'xx_projects', 'xx_events', 'xx_groups']
   for (const col of entityCols) {
     for (const row of Object.values(memory[col] || {})) {
       let changed = false
@@ -247,9 +270,16 @@ async function remapUserReferences(fromId, toId) {
         changed = true
       }
       if (changed) {
-        Object.assign(next, shareFields(next, memory.xx_users[toId]))
+        if (col !== 'xx_groups') {
+          Object.assign(next, shareFields(next, memory.xx_users[toId]))
+        }
         await persistDoc(col, next.id, next)
       }
+    }
+  }
+  for (const row of Object.values(memory.xx_messages || {})) {
+    if (row.authorId === fromId) {
+      await persistDoc('xx_messages', row.id, { ...row, authorId: toId })
     }
   }
   for (const col of ['xx_sessions', 'xx_notifications', 'xx_reset_tokens']) {
@@ -696,6 +726,11 @@ export async function registerUser({ fullName, email, password }) {
     updatedAt: now,
   }
   await persistDoc('xx_users', id, user, { required: firebaseConfigured })
+  try {
+    await addUserToGeneralGroup(id)
+  } catch (err) {
+    console.warn('General group membership:', err.message)
+  }
 
   const notifId = uid('notif')
   await persistDoc(
@@ -841,6 +876,13 @@ export async function loginUser(email, password) {
   }
   await persistDoc('xx_sessions', sessionId, session, { required: firebaseConfigured })
   localStorage.setItem(SESSION_KEY, token)
+  try {
+    const seen = new Date().toISOString()
+    user = { ...user, lastSeenAt: seen, updatedAt: seen }
+    await persistDoc('xx_users', user.id, user)
+  } catch (err) {
+    console.warn('lastSeenAt:', err.message)
+  }
   return { user: publicUser(user), session }
 }
 
@@ -889,6 +931,11 @@ export async function getCurrentSession() {
   let user = memory.xx_users[session.userId] || (await getRemoteDoc('xx_users', session.userId))
   if (!user) return null
   cacheDoc('xx_users', user)
+  const seen = new Date().toISOString()
+  user = { ...user, lastSeenAt: seen, updatedAt: seen }
+  persistDoc('xx_users', user.id, user).catch((err) => {
+    console.warn('Session lastSeenAt:', err.message)
+  })
   if (auth?.currentUser) {
     try {
       await reload(auth.currentUser)
@@ -980,7 +1027,7 @@ export async function requestPasswordReset(email) {
     },
     { required: false },
   )
-  return { ok: true, debugToken: token, firebaseSent }
+  return { ok: true, firebaseSent }
 }
 
 async function applyPasswordHash(user, newPassword) {
@@ -1105,11 +1152,6 @@ export async function updateUserRole(targetId, role, actor) {
   return publicUser(updated)
 }
 
-function publicUser(user) {
-  const { passwordHash, verificationCode, ...rest } = user
-  return rest
-}
-
 export function listUsers() {
   return Object.values(memory.xx_users).map(publicUser)
 }
@@ -1118,6 +1160,161 @@ export function listSessionsForUser(userId) {
   return Object.values(memory.xx_sessions)
     .filter((s) => s.userId === userId)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+}
+
+export function listPresentUserIds() {
+  const cutoff = Date.now() - SESSION_HOURS * 3600 * 1000
+  const ids = new Set()
+  for (const s of Object.values(memory.xx_sessions || {})) {
+    if (!s.active) continue
+    if (new Date(s.expiresAt).getTime() < Date.now()) continue
+    if (new Date(s.createdAt).getTime() >= cutoff) ids.add(s.userId)
+  }
+  for (const u of Object.values(memory.xx_users || {})) {
+    if (u.lastSeenAt && new Date(u.lastSeenAt).getTime() >= cutoff) ids.add(u.id)
+  }
+  return [...ids]
+}
+
+async function addUserToGeneralGroup(userId) {
+  const group =
+    memory.xx_groups[GENERAL_GROUP_ID] ||
+    Object.values(memory.xx_groups || {}).find((g) => g.isGeneral)
+  if (!group || !userId) return group
+  if ((group.memberIds || []).includes(userId)) return group
+  const updated = {
+    ...group,
+    memberIds: [...(group.memberIds || []), userId],
+    updatedAt: new Date().toISOString(),
+  }
+  await persistDoc('xx_groups', group.id, updated)
+  return updated
+}
+
+export async function ensureGeneralGroup(user) {
+  if (!user?.id) throw new Error('Session requise.')
+  const allIds = [...new Set([...Object.keys(memory.xx_users || {}), user.id])]
+  const existing =
+    memory.xx_groups[GENERAL_GROUP_ID] ||
+    Object.values(memory.xx_groups || {}).find((g) => g.isGeneral)
+  if (!existing) {
+    const now = new Date().toISOString()
+    const group = {
+      id: GENERAL_GROUP_ID,
+      name: 'Général',
+      memberIds: allIds,
+      ownerId: user.id,
+      isGeneral: true,
+      createdAt: now,
+      updatedAt: now,
+    }
+    await persistDoc('xx_groups', GENERAL_GROUP_ID, group)
+    return group
+  }
+  const memberIds = [...new Set([...(existing.memberIds || []), ...allIds])]
+  const same =
+    existing.isGeneral &&
+    existing.memberIds?.length === memberIds.length &&
+    memberIds.every((id) => existing.memberIds.includes(id))
+  if (same) return existing
+  const updated = {
+    ...existing,
+    memberIds,
+    isGeneral: true,
+    name: existing.name || 'Général',
+    updatedAt: new Date().toISOString(),
+  }
+  await persistDoc('xx_groups', existing.id, updated)
+  return updated
+}
+
+export function listGroupsForUser(user) {
+  return Object.values(memory.xx_groups || {})
+    .filter((g) => canReadGroup(user, g))
+    .sort((a, b) => {
+      if (a.isGeneral && !b.isGeneral) return -1
+      if (!a.isGeneral && b.isGeneral) return 1
+      return String(a.name || '').localeCompare(String(b.name || ''), 'fr')
+    })
+}
+
+export function listMessagesForGroup(groupId, user) {
+  const group = memory.xx_groups[groupId]
+  if (!canReadGroup(user, group)) return []
+  return Object.values(memory.xx_messages || {})
+    .filter((m) => m.groupId === groupId)
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+}
+
+export async function saveGroup(data, user) {
+  if (!user) throw new Error('Permission refusée.')
+  if (!canWriteRole(user)) {
+    throw new Error('Permission refusée (rôle Lecteur : création interdite).')
+  }
+  const name = String(data.name || '').trim()
+  if (!name) throw new Error('Nom du groupe requis.')
+  const now = new Date().toISOString()
+  const id = data.id || uid('grp')
+  const existing = memory.xx_groups[id]
+  if (existing && !isAdmin(user) && existing.ownerId !== user.id) {
+    throw new Error('Permission refusée.')
+  }
+  if (existing?.isGeneral && !isAdmin(user)) {
+    throw new Error('Le groupe Général ne peut pas être modifié ainsi.')
+  }
+  const memberIds = [...new Set([user.id, ...(data.memberIds || existing?.memberIds || [])])]
+  const group = {
+    ...(existing || {}),
+    id,
+    name,
+    memberIds,
+    ownerId: existing?.ownerId || user.id,
+    isGeneral: Boolean(existing?.isGeneral),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  }
+  await persistDoc('xx_groups', id, group)
+  return group
+}
+
+export async function inviteToGroup(groupId, userIds, actor) {
+  const group = memory.xx_groups[groupId]
+  if (!group) throw new Error('Groupe introuvable.')
+  if (!canWriteGroup(actor, group)) throw new Error('Permission refusée.')
+  const incoming = (userIds || []).filter(Boolean)
+  const memberIds = [...new Set([...(group.memberIds || []), ...incoming])]
+  const updated = { ...group, memberIds, updatedAt: new Date().toISOString() }
+  await persistDoc('xx_groups', groupId, updated)
+  await notifyUsers(
+    incoming.filter((id) => id !== actor.id),
+    {
+      type: 'group_invite',
+      title: 'Invitation groupe',
+      body: `${actor.fullName} vous a ajouté au groupe « ${group.name} ».`,
+      meta: { groupId },
+    },
+  )
+  return updated
+}
+
+export async function sendMessage(groupId, body, user) {
+  const group = memory.xx_groups[groupId]
+  if (!canWriteGroup(user, group)) throw new Error('Permission refusée.')
+  const text = String(body || '').trim()
+  if (!text) throw new Error('Message vide.')
+  if (text.length > 4000) throw new Error('Message trop long.')
+  const id = uid('msg')
+  const msg = {
+    id,
+    groupId,
+    authorId: user.id,
+    authorName: user.fullName || '',
+    body: text,
+    createdAt: new Date().toISOString(),
+    memberIds: group.memberIds || [],
+  }
+  await persistDoc('xx_messages', id, msg)
+  return msg
 }
 
 /* ─── Generic CRUD helpers ─── */
