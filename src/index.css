@@ -29,6 +29,7 @@ html,
 body,
 #root {
   min-height: 100%;
+  min-height: 100dvh;
   overflow-x: hidden;
 }
 
@@ -41,6 +42,13 @@ body {
     radial-gradient(900px 500px at 100% 0%, rgba(212, 220, 203, 0.55), transparent 50%),
     linear-gradient(180deg, #eef2ea 0%, #f7f9f5 40%, #e8ede4 100%);
   background-attachment: fixed;
+}
+
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
 }
 
 @keyframes fade-up {

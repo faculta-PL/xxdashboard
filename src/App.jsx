@@ -151,22 +151,30 @@ function Modal({ open, title, onClose, children, wide }) {
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-3">
       <button type="button" className="absolute inset-0" aria-label="Fermer" onClick={onClose} />
       <div
-        className={`relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-sage-50 p-4 shadow-xl animate-fade-up xx-scroll sm:rounded-2xl sm:p-5 ${
-          wide ? 'max-w-3xl' : 'max-w-lg'
+        className={`relative z-10 flex max-h-[min(92dvh,100%)] w-full max-w-full flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-xl animate-fade-up sm:max-h-[92vh] sm:rounded-2xl ${
+          wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'
         }`}
       >
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <h3 className="min-w-0 font-display text-xl text-sage-900">{title}</h3>
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-sage-200 px-4 py-3 sm:px-5">
+          <h3 className="min-w-0 break-words font-display text-xl text-sage-900">{title}</h3>
           <button
             type="button"
             onClick={onClose}
-            className="min-h-11 min-w-11 shrink-0 rounded-lg p-2 text-sage-600 hover:bg-sage-200"
+            className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg p-2 text-sage-600 hover:bg-sage-200"
           >
             <X size={18} />
           </button>
         </div>
-        {children}
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 xx-scroll sm:px-5">{children}</div>
       </div>
+    </div>
+  )
+}
+
+function ModalActions({ children }) {
+  return (
+    <div className="sticky bottom-0 z-10 -mx-4 mt-4 flex flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-4 py-3 sm:-mx-5 sm:flex-row sm:px-5 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      {children}
     </div>
   )
 }
@@ -201,7 +209,7 @@ function ShareEditor({ users, shares, onChange, excludeId }) {
           <div key={u.id} className="flex flex-wrap items-center gap-2 text-sm">
             <span className="min-w-0 flex-1 truncate text-sage-800">{u.fullName}</span>
             <select
-              className={inputClass + ' !w-auto py-1.5'}
+              className={inputClass + ' max-w-full md:!w-auto py-1.5'}
               value={share?.permission || ''}
               onChange={(e) => {
                 const permission = e.target.value
@@ -418,7 +426,7 @@ export default function App() {
 
   if (booting) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex min-h-[100dvh] items-center justify-center">
         <div className="text-center animate-fade-up">
           <p className="font-display text-3xl text-sage-800">Nazix</p>
           <p className="mt-2 animate-soft-pulse text-sm text-sage-600">Chargement…</p>
@@ -444,25 +452,30 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen overflow-x-hidden lg:grid lg:grid-cols-[260px_1fr]">
+    <div className="min-h-[100dvh] overflow-x-hidden lg:grid lg:grid-cols-[minmax(0,260px)_minmax(0,1fr)]">
       <aside
-        className={`fixed inset-y-0 left-0 z-40 w-[260px] border-r border-sage-200 bg-sage-800 text-sage-50 transition lg:static ${
+        className={`fixed inset-y-0 left-0 z-40 w-[min(260px,100%)] border-r border-sage-200 bg-sage-800 text-sage-50 transition lg:static ${
           mobileNav ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
-        <div className="flex h-full flex-col p-4">
-          <div className="mb-6 flex items-center justify-between px-2 pt-2">
-            <div>
+        <div className="flex h-full flex-col p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <div className="mb-6 flex items-center justify-between gap-2 px-2 pt-2">
+            <div className="min-w-0">
               <p className="font-display text-2xl leading-none">Nazix</p>
-              <p className="mt-1 text-xs text-sage-300">
+              <p className="mt-1 truncate text-xs text-sage-300">
                 {getBackendMode() === 'firebase' ? 'Firebase' : 'Mode local'} · {user.role}
               </p>
             </div>
-            <button type="button" className="lg:hidden" onClick={() => setMobileNav(false)}>
+            <button
+              type="button"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg hover:bg-sage-700 lg:hidden"
+              onClick={() => setMobileNav(false)}
+              aria-label="Fermer le menu"
+            >
               <X size={20} />
             </button>
           </div>
-          <nav className="flex-1 space-y-1 xx-scroll overflow-y-auto">
+          <nav className="flex-1 space-y-1 overflow-y-auto xx-scroll">
             {NAV.map((item) => {
               const Icon = item.icon
               const active = view === item.id
@@ -474,12 +487,12 @@ export default function App() {
                     setView(item.id)
                     setMobileNav(false)
                   }}
-                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ${
+                  className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
                     active ? 'bg-sage-600 text-white' : 'text-sage-100 hover:bg-sage-700'
                   }`}
                 >
-                  <Icon size={18} />
-                  <span className="flex-1">{item.label}</span>
+                  <Icon size={18} className="shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
                   {item.id === 'notifications' && unread > 0 && (
                     <span className="rounded-full bg-cream-green px-2 py-0.5 text-[11px] font-bold text-sage-800">
                       {unread}
@@ -513,28 +526,31 @@ export default function App() {
         />
       )}
 
-      <div className="min-w-0">
-        <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-sage-200/80 bg-cream-green/80 px-4 py-3 backdrop-blur">
+      <div className="relative z-0 min-w-0">
+        <header className="sticky top-0 z-20 flex min-h-14 items-center gap-3 border-b border-sage-200/80 bg-cream-green/80 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur">
           <button
             type="button"
-            className="rounded-lg p-2 text-sage-800 hover:bg-sage-200 lg:hidden"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-sage-800 hover:bg-sage-200 lg:hidden"
             onClick={() => setMobileNav(true)}
+            aria-label="Ouvrir le menu"
           >
             <Menu size={20} />
           </button>
           <div className="min-w-0 flex-1">
-            <h1 className="truncate font-display text-xl text-sage-900 sm:text-2xl">
+            <h1 className="truncate font-display text-xl text-sage-900 md:text-2xl">
               {NAV.find((n) => n.id === view)?.label}
             </h1>
           </div>
           {!user.emailVerified && (
-            <span className="hidden rounded-full bg-warn/15 px-3 py-1 text-xs font-semibold text-warn sm:inline">
+            <span className="hidden rounded-full bg-warn/15 px-3 py-1 text-xs font-semibold text-warn md:inline">
               E-mail non vérifié
             </span>
           )}
         </header>
 
-        <main className={view === 'chat' ? 'p-2 sm:p-4' : 'p-4 sm:p-6'}>
+        <main
+          className={`min-w-0 ${view === 'chat' ? 'p-2 md:p-4' : 'p-4 md:p-6'} pb-[max(1.25rem,env(safe-area-inset-bottom))]`}
+        >
           {view === 'dashboard' && (
             <DashboardView
               notes={notes}
@@ -613,13 +629,13 @@ function AuthScreen({
   toast,
 }) {
   return (
-    <div className="flex min-h-screen flex-col overflow-x-hidden lg:grid lg:grid-cols-2">
-      <section className="relative overflow-hidden bg-sage-800 px-5 py-6 text-sage-50 sm:px-8 sm:py-8 lg:flex lg:flex-col lg:justify-center lg:px-14 lg:py-16">
+    <div className="flex min-h-[100dvh] flex-col overflow-x-hidden lg:grid lg:grid-cols-2">
+      <section className="relative overflow-hidden bg-sage-800 px-5 py-6 pt-[max(1.5rem,env(safe-area-inset-top))] text-sage-50 md:px-8 md:py-8 lg:flex lg:flex-col lg:justify-center lg:px-14 lg:py-16">
         <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-sage-600/40 blur-2xl" />
         <div className="pointer-events-none absolute -bottom-20 -left-10 h-64 w-64 rounded-full bg-sage-900/50 blur-2xl" />
         <div className="relative max-w-md">
-          <p className="font-display text-3xl tracking-tight sm:text-4xl lg:text-6xl">Nazix</p>
-          <p className="mt-1 text-sm font-medium text-sage-200 sm:text-base">
+          <p className="font-display text-3xl tracking-tight md:text-4xl lg:text-6xl">Nazix</p>
+          <p className="mt-1 text-sm font-medium text-sage-200 md:text-base">
             notes, idées, projets, équipe
           </p>
           <p className="mt-3 max-w-sm text-sm leading-relaxed text-sage-100/90 lg:mt-5 lg:text-base">
@@ -638,10 +654,10 @@ function AuthScreen({
         </div>
       </section>
 
-      <section className="flex flex-1 items-start justify-center p-4 sm:items-center sm:p-8">
+      <section className="flex flex-1 items-start justify-center p-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:items-center md:p-8">
         <form
           onSubmit={handleAuth}
-          className="w-full max-w-md animate-fade-up rounded-3xl border border-sage-200 bg-white/85 p-5 shadow-sm backdrop-blur sm:p-6"
+          className="w-full max-w-md animate-fade-up rounded-3xl border border-sage-200 bg-white/85 p-5 shadow-sm backdrop-blur md:p-6"
         >
           <div className="mb-5 flex flex-wrap gap-2 text-sm">
             {[
@@ -758,7 +774,7 @@ function AuthScreen({
 function Toast({ toast }) {
   return (
     <div
-      className={`fixed bottom-4 right-4 z-[60] max-w-sm rounded-xl px-4 py-3 text-sm shadow-lg animate-slide-in ${
+      className={`fixed bottom-4 left-4 right-4 z-[60] max-w-sm break-words rounded-xl px-4 py-3 text-sm shadow-lg animate-slide-in sm:left-auto sm:right-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] ${
         toast.type === 'err' ? 'bg-danger text-white' : 'bg-sage-800 text-sage-50'
       }`}
     >
@@ -786,8 +802,8 @@ function DashboardView({ notes, ideas, projects, events, users, onQuick }) {
 
   return (
     <div className="space-y-6 animate-fade-up">
-      <section className="rounded-3xl border border-sage-200 bg-gradient-to-br from-sage-700 to-sage-900 p-6 text-sage-50 sm:p-8">
-        <p className="font-display text-3xl sm:text-4xl">Vue d’ensemble</p>
+      <section className="rounded-3xl border border-sage-200 bg-gradient-to-br from-sage-700 to-sage-900 p-5 text-sage-50 md:p-8">
+        <p className="font-display text-3xl md:text-4xl">Vue d’ensemble</p>
         <p className="mt-2 max-w-2xl text-sage-200">
           Indicateurs synchronisés depuis la base — aucune donnée fictive. Créez vos premiers
           contenus via les raccourcis.
@@ -803,7 +819,7 @@ function DashboardView({ notes, ideas, projects, events, users, onQuick }) {
               key={id}
               type="button"
               onClick={() => onQuick(id)}
-              className="inline-flex items-center gap-2 rounded-xl bg-cream-green px-3 py-2 text-sm font-semibold text-sage-900 hover:bg-white"
+              className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-cream-green px-3 py-2 text-sm font-semibold text-sage-900 hover:bg-white"
             >
               <Plus size={16} /> {label}
             </button>
@@ -811,7 +827,7 @@ function DashboardView({ notes, ideas, projects, events, users, onQuick }) {
         </div>
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
         {cards.map((c) => (
           <div key={c.label} className={`rounded-2xl ${c.tone} border border-sage-200 p-5`}>
             <p className="text-sm text-sage-600">{c.label}</p>
@@ -959,7 +975,7 @@ function NotesView({ user, notes, users, projects, flash }) {
           </button>
         )}
         <select
-          className={inputClass + ' !w-auto'}
+          className={inputClass + ' max-w-full md:!w-auto'}
           value={filterCat}
           onChange={(e) => setFilterCat(e.target.value)}
         >
@@ -983,7 +999,7 @@ function NotesView({ user, notes, users, projects, flash }) {
           }
         />
       ) : (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
           {filtered.map((n) => (
             <article
               key={n.id}
@@ -1047,7 +1063,7 @@ function NotesView({ user, notes, users, projects, flash }) {
               onChange={(e) => setForm({ ...form, content: e.target.value })}
             />
           </Field>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <Field label="Catégorie">
               <select
                 className={inputClass}
@@ -1100,15 +1116,17 @@ function NotesView({ user, notes, users, projects, flash }) {
               onChange={(shares) => setForm({ ...form, shares })}
             />
           )}
-          <button type="submit" className={btnPrimary + ' mt-3 w-full'}>
-            <Check size={16} /> Enregistrer
-          </button>
+          <ModalActions>
+            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'}>
+              <Check size={16} /> Enregistrer
+            </button>
+          </ModalActions>
         </form>
       </Modal>
 
       <Modal open={Boolean(confirmId)} title="Confirmer la suppression" onClose={() => setConfirmId(null)}>
         <p className="text-sm text-sage-700">Cette action est définitive.</p>
-        <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row">
+        <ModalActions>
           <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirmId(null)}>
             Annuler
           </button>
@@ -1119,7 +1137,7 @@ function NotesView({ user, notes, users, projects, flash }) {
           >
             Supprimer
           </button>
-        </div>
+        </ModalActions>
       </Modal>
     </div>
   )
@@ -1270,11 +1288,12 @@ function IdeasView({ user, ideas, users, flash }) {
           }
         />
       ) : (
-        <div className="flex gap-3 overflow-x-auto pb-2 xx-scroll">
+        <div className="w-full max-w-full overflow-x-auto overflow-y-hidden xx-scroll">
+          <div className="flex min-h-[min(28rem,62vh)] w-max gap-3 pb-2">
           {byCol.map((col) => (
             <div
               key={col.status}
-              className="w-[260px] shrink-0 rounded-2xl border border-sage-200 bg-sage-100/60 p-3"
+              className="flex min-h-[min(28rem,62vh)] w-[min(260px,85vw)] shrink-0 flex-col rounded-2xl border border-sage-200 bg-sage-100/60 p-3"
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
                 const id = e.dataTransfer.getData('text/idea')
@@ -1340,6 +1359,7 @@ function IdeasView({ user, ideas, users, flash }) {
               </div>
             </div>
           ))}
+          </div>
         </div>
       )}
 
@@ -1390,9 +1410,11 @@ function IdeasView({ user, ideas, users, flash }) {
               onChange={(shares) => setForm({ ...form, shares })}
             />
           )}
-          <button type="submit" className={btnPrimary + ' mt-3 w-full'}>
-            Enregistrer
-          </button>
+          <ModalActions>
+            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'}>
+              Enregistrer
+            </button>
+          </ModalActions>
         </form>
       </Modal>
 
@@ -1424,11 +1446,11 @@ function IdeasView({ user, ideas, users, flash }) {
                   ))}
               </ul>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <ModalActions>
               {canEditEntity(user, detail) && (
                 <button
                   type="button"
-                  className={btnGhost}
+                  className={btnGhost + ' w-full sm:w-auto'}
                   onClick={() => {
                     setEditing(detail)
                     setForm({
@@ -1448,7 +1470,7 @@ function IdeasView({ user, ideas, users, flash }) {
               {canDeleteEntity(user, detail) && (
                 <button
                   type="button"
-                  className={btnGhost + ' !text-danger'}
+                  className={btnGhost + ' w-full sm:w-auto !text-danger'}
                   onClick={async () => {
                     await deleteIdea(detail.id, user)
                     setDetail(null)
@@ -1458,7 +1480,7 @@ function IdeasView({ user, ideas, users, flash }) {
                   <Trash2 size={14} /> Supprimer
                 </button>
               )}
-            </div>
+            </ModalActions>
           </div>
         )}
       </Modal>
@@ -1561,7 +1583,7 @@ function ProjectsView({ user, projects, notes, ideas, users, flash }) {
           }
         />
       ) : (
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {projects.map((p) => {
             const lead = users.find((u) => u.id === p.leadId)
             return (
@@ -1652,8 +1674,8 @@ function ProjectsView({ user, projects, notes, ideas, users, flash }) {
       )}
 
       <Modal open={open} title={editing ? 'Modifier le projet' : 'Nouveau projet'} onClose={() => setOpen(false)} wide>
-        <form onSubmit={submit} className="grid gap-1 sm:grid-cols-2 sm:gap-x-4">
-          <div className="sm:col-span-2">
+        <form onSubmit={submit} className="grid grid-cols-1 gap-1 md:grid-cols-2 md:gap-x-4">
+          <div className="md:col-span-2">
             <Field label="Titre">
               <input
                 className={inputClass}
@@ -1663,7 +1685,7 @@ function ProjectsView({ user, projects, notes, ideas, users, flash }) {
               />
             </Field>
           </div>
-          <div className="sm:col-span-2">
+          <div className="md:col-span-2">
             <Field label="Description">
               <textarea
                 className={inputClass + ' min-h-20'}
@@ -1733,7 +1755,7 @@ function ProjectsView({ user, projects, notes, ideas, users, flash }) {
               onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
             />
           </Field>
-          <div className="sm:col-span-2">
+          <div className="md:col-span-2">
             <Field label="Membres">
               <div className="flex flex-wrap gap-2 rounded-xl border border-sage-200 bg-white p-3">
                 {users
@@ -1744,7 +1766,7 @@ function ProjectsView({ user, projects, notes, ideas, users, flash }) {
                       <button
                         key={u.id}
                         type="button"
-                        className={`rounded-lg px-2.5 py-1 text-xs ${
+                        className={`min-h-11 rounded-lg px-2.5 py-2 text-xs ${
                           on ? 'bg-sage-700 text-white' : 'bg-sage-100 text-sage-700'
                         }`}
                         onClick={() => {
@@ -1763,7 +1785,7 @@ function ProjectsView({ user, projects, notes, ideas, users, flash }) {
               </div>
             </Field>
           </div>
-          <div className="sm:col-span-2">
+          <div className="md:col-span-2">
             <ShareEditor
               users={users}
               shares={form.shares}
@@ -1771,10 +1793,12 @@ function ProjectsView({ user, projects, notes, ideas, users, flash }) {
               onChange={(shares) => setForm({ ...form, shares })}
             />
           </div>
-          <div className="sm:col-span-2">
-            <button type="submit" className={btnPrimary + ' w-full'}>
-              Enregistrer
-            </button>
+          <div className="md:col-span-2">
+            <ModalActions>
+              <button type="submit" className={btnPrimary + ' w-full sm:w-auto'}>
+                Enregistrer
+              </button>
+            </ModalActions>
           </div>
         </form>
       </Modal>
@@ -1955,7 +1979,7 @@ function CalendarView({ user, events, users, flash }) {
               onChange={(e) => setForm({ ...form, description: e.target.value })}
             />
           </Field>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <Field label="Date">
               <input
                 type="date"
@@ -1985,7 +2009,7 @@ function CalendarView({ user, events, users, flash }) {
                     <button
                       key={u.id}
                       type="button"
-                      className={`rounded-lg px-2.5 py-1 text-xs ${
+                      className={`min-h-11 rounded-lg px-2.5 py-2 text-xs ${
                         on ? 'bg-sage-700 text-white' : 'bg-sage-100 text-sage-700'
                       }`}
                       onClick={() =>
@@ -2006,9 +2030,11 @@ function CalendarView({ user, events, users, flash }) {
               )}
             </div>
           </Field>
-          <button type="submit" className={btnPrimary + ' w-full'}>
-            Planifier
-          </button>
+          <ModalActions>
+            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'}>
+              Planifier
+            </button>
+          </ModalActions>
         </form>
       </Modal>
     </div>
@@ -2104,7 +2130,7 @@ function SearchView({ notes, ideas, projects, events }) {
     <div className="space-y-5 animate-fade-up">
       <div className="rounded-2xl border border-sage-200 bg-white/80 p-4">
         <div className="flex flex-wrap gap-2">
-          <div className="relative min-w-[220px] flex-1">
+          <div className="relative min-w-0 w-full flex-1 md:min-w-[220px]">
             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sage-400" size={16} />
             <input
               className={inputClass + ' pl-9'}
@@ -2118,25 +2144,25 @@ function SearchView({ notes, ideas, projects, events }) {
           </button>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
-          <select className={inputClass + ' !w-auto'} value={category} onChange={(e) => setCategory(e.target.value)}>
+          <select className={inputClass + ' max-w-full md:!w-auto'} value={category} onChange={(e) => setCategory(e.target.value)}>
             <option value="">Catégorie</option>
             {NOTE_CATEGORIES.map((c) => (
               <option key={c}>{c}</option>
             ))}
           </select>
-          <select className={inputClass + ' !w-auto'} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <select className={inputClass + ' max-w-full md:!w-auto'} value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">Statut</option>
             {[...IDEA_STATUSES, ...PROJECT_STATUSES].map((s) => (
               <option key={s}>{s}</option>
             ))}
           </select>
           <input
-            className={inputClass + ' !w-40'}
+            className={inputClass + ' w-full max-w-full md:!w-40'}
             placeholder="Étiquette"
             value={tag}
             onChange={(e) => setTag(e.target.value)}
           />
-          <select className={inputClass + ' !w-auto'} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+          <select className={inputClass + ' max-w-full md:!w-auto'} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
             <option value="">Projet</option>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
@@ -2227,7 +2253,7 @@ function ExportView({ notes, ideas, projects, events, flash }) {
         Générez un fichier à partir des entités visibles pour votre compte. Encodage UTF-8 BOM pour
         CSV / XLSX.
       </p>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
         {[
           ['csv', 'CSV (Excel UTF-8)'],
           ['xlsx', 'XLSX'],
@@ -2319,7 +2345,7 @@ function SettingsView({ user, session, users, flash, onUserUpdated }) {
         <h2 className="flex items-center gap-2 font-display text-lg text-sage-900">
           <Users size={18} /> Profil
         </h2>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
           <Field label="Nom complet">
             <input className={inputClass} value={fullName} onChange={(e) => setFullName(e.target.value)} />
           </Field>
@@ -2353,7 +2379,7 @@ function SettingsView({ user, session, users, flash, onUserUpdated }) {
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               <input
-                className={inputClass + ' !w-40'}
+                className={inputClass + ' w-full max-w-full md:!w-40'}
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 placeholder="123456"
@@ -2554,11 +2580,11 @@ function SettingsView({ user, session, users, flash, onUserUpdated }) {
           <ul className="mt-3 divide-y divide-sage-100 text-sm">
             {users.map((u) => (
               <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-                <span className="min-w-0 flex-1 truncate">
+                <span className="min-w-0 flex-1 break-all md:truncate md:break-normal">
                   {u.fullName} · {u.email}
                 </span>
                 <select
-                  className={inputClass + ' !w-auto py-1.5'}
+                  className={inputClass + ' w-full md:!w-auto py-1.5'}
                   value={u.role}
                   onChange={async (e) => {
                     try {
@@ -2598,7 +2624,7 @@ function TeamView({ users, presentIds }) {
   return (
     <div className="space-y-3 animate-fade-up">
       <p className="text-sm text-sage-600">{sorted.length} personne{sorted.length > 1 ? 's' : ''}.</p>
-      <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
         {sorted.map((u) => {
           const online = present.has(u.id)
           return (
@@ -2611,7 +2637,7 @@ function TeamView({ users, presentIds }) {
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="truncate font-medium text-sage-900">{u.fullName || '—'}</p>
+                  <p className="min-w-0 break-words font-medium text-sage-900">{u.fullName || '—'}</p>
                   <span
                     className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
                       online ? 'bg-ok/15 text-ok' : 'bg-sage-100 text-sage-500'
@@ -2620,7 +2646,7 @@ function TeamView({ users, presentIds }) {
                     {online ? 'En ligne' : 'Hors ligne'}
                   </span>
                 </div>
-                <p className="truncate text-sm text-sage-600">{u.email}</p>
+                <p className="break-all text-sm text-sage-600 md:truncate md:break-normal">{u.email}</p>
                 <p className="mt-1 text-xs text-sage-500">{u.role}</p>
               </div>
             </li>
@@ -2723,9 +2749,9 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
   const outsiders = users.filter((u) => u.id !== user.id && !(selected?.memberIds || []).includes(u.id))
 
   return (
-    <div className="flex min-h-[70vh] flex-col overflow-hidden rounded-2xl border border-sage-200 bg-white/80 lg:min-h-[72vh] lg:flex-row">
+    <div className="flex min-h-[calc(100dvh-8rem)] flex-col overflow-hidden rounded-2xl border border-sage-200 bg-white/80 lg:min-h-[72vh] lg:flex-row">
       <aside
-        className={`${showThread ? 'hidden lg:flex' : 'flex'} w-full flex-col border-sage-200 lg:w-72 lg:shrink-0 lg:border-r`}
+        className={`${showThread ? 'hidden lg:flex' : 'flex'} w-full min-w-0 flex-col border-sage-200 lg:w-72 lg:shrink-0 lg:border-r`}
       >
         <div className="flex items-center justify-between gap-2 border-b border-sage-100 p-3">
           <p className="font-display text-lg text-sage-900">Groupes</p>
@@ -2774,17 +2800,17 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
         )}
       </aside>
 
-      <section className={`${showThread ? 'flex' : 'hidden lg:flex'} min-h-[70vh] min-w-0 flex-1 flex-col`}>
+      <section className={`${showThread ? 'flex' : 'hidden lg:flex'} min-h-[calc(100dvh-8rem)] min-w-0 flex-1 flex-col lg:min-h-0`}>
         {!selected ? (
           <div className="flex flex-1 items-center justify-center p-6">
             <EmptyState title="Choisissez un groupe" hint="Ouvrez Général ou créez un groupe." />
           </div>
         ) : (
           <>
-            <div className="flex items-center gap-2 border-b border-sage-100 px-2 py-2 sm:px-4">
+            <div className="flex items-center gap-2 border-b border-sage-100 px-2 py-2 md:px-4">
               <button
                 type="button"
-                className="min-h-11 min-w-11 rounded-lg p-2 text-sage-700 hover:bg-sage-100 lg:hidden"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-sage-700 hover:bg-sage-100 lg:hidden"
                 onClick={() => setSelectedId(null)}
                 aria-label="Retour aux groupes"
               >
@@ -2798,16 +2824,17 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
               </div>
               <button
                 type="button"
-                className={btnGhost + ' !px-3'}
+                className={btnGhost + ' shrink-0 !px-3'}
                 onClick={() => {
                   setPicked([])
                   setInviteOpen(true)
                 }}
               >
-                <UserPlus size={16} /> Inviter
+                <UserPlus size={16} />
+                <span className="hidden md:inline">Inviter</span>
               </button>
             </div>
-            <div className="flex-1 space-y-3 overflow-y-auto px-3 py-4 xx-scroll sm:px-5">
+            <div className="flex-1 space-y-3 overflow-y-auto px-3 py-4 xx-scroll md:px-5">
               {thread.length === 0 ? (
                 <p className="text-center text-sm text-sage-500">Aucun message. Écrivez le premier.</p>
               ) : (
@@ -2836,15 +2863,15 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
               )}
               <div ref={bottomRef} />
             </div>
-            <form onSubmit={submitMessage} className="flex gap-2 border-t border-sage-100 p-3">
+            <form onSubmit={submitMessage} className="flex gap-2 border-t border-sage-100 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
               <input
-                className={inputClass}
+                className={inputClass + ' min-w-0'}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder="Écrire un message…"
                 maxLength={4000}
               />
-              <button type="submit" className={btnPrimary + ' shrink-0 !px-4'} disabled={busy || !draft.trim()}>
+              <button type="submit" className={btnPrimary + ' min-w-11 shrink-0 !px-4'} disabled={busy || !draft.trim()} aria-label="Envoyer">
                 <Send size={16} />
               </button>
             </form>
@@ -2888,9 +2915,11 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
                 })}
             </div>
           </Field>
-          <button type="submit" className={btnPrimary + ' mt-2 w-full'} disabled={busy}>
-            Créer
-          </button>
+          <ModalActions>
+            <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
+              Créer
+            </button>
+          </ModalActions>
         </form>
       </Modal>
 
@@ -2919,13 +2948,15 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
               })}
             </div>
           )}
-          <button
-            type="submit"
-            className={btnPrimary + ' mt-4 w-full'}
-            disabled={busy || picked.length === 0}
-          >
-            Ajouter
-          </button>
+          <ModalActions>
+            <button
+              type="submit"
+              className={btnPrimary + ' w-full sm:w-auto'}
+              disabled={busy || picked.length === 0}
+            >
+              Ajouter
+            </button>
+          </ModalActions>
         </form>
       </Modal>
     </div>
