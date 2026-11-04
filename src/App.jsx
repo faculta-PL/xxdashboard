@@ -341,22 +341,23 @@ export default function App() {
         await bootStore()
         if (cancelled) return
         unsub = subscribeStore(setDb)
+        let restored = null
         try {
-          const current = await Promise.race([
+          restored = await Promise.race([
             getCurrentSession(),
             new Promise((_, reject) => {
               setTimeout(() => reject(new Error('Session restore timed out')), 2500)
             }),
           ])
-          if (!cancelled && current) {
-            setUser(current.user)
-            setSession(current.session)
+          if (!cancelled && restored) {
+            setUser(restored.user)
+            setSession(restored.session)
           }
         } catch (err) {
           console.warn('Session restore skipped:', err.message)
         }
         const hint = getBootHint()
-        if (!cancelled && hint) {
+        if (!cancelled && hint && restored) {
           setToast({ message: hint, type: 'err' })
           setTimeout(() => setToast(null), 5200)
         }
@@ -366,11 +367,6 @@ export default function App() {
           if (!cancelled) unsub = subscribeStore(setDb)
         } catch {
           /* ignore */
-        }
-        const hint = getBootHint() || 'Démarrage local — Firestore n’a pas répondu.'
-        if (!cancelled) {
-          setToast({ message: hint, type: 'err' })
-          setTimeout(() => setToast(null), 5200)
         }
       } finally {
         if (!cancelled) setBooting(false)
@@ -902,8 +898,8 @@ function LandingPage({
       <section className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-6 pt-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-8 lg:pb-4 lg:pt-12">
         <div className="max-w-xl animate-fade-up">
           <h1 className="font-display text-[2.35rem] font-medium leading-[1.12] tracking-tight text-sage-900 sm:text-5xl lg:text-[3.35rem]">
-            Centralisez vos notes, idées, projets et équipe en un seul endroit.
-            <span className="ml-2 align-middle text-[0.72em] font-display text-sage-700">Nazix</span>
+            Centralisez vos notes, idées, projets et équipe en un seul endroit.{' '}
+            <span className="align-middle font-display text-[0.55em] font-medium text-sage-700">Nazix</span>
           </h1>
           <p className="mt-5 max-w-md text-[1.05rem] leading-relaxed text-sage-700">
             Un espace sobre et collaboratif pour noter vos idées, gérer vos projets et échanger avec
@@ -1150,7 +1146,7 @@ function LandingPage({
           </div>
         </div>
         <div className="border-t border-sage-200/80 px-4 py-4 text-center text-xs text-sage-500 sm:px-6">
-          Nazix · {new Date().getFullYear()} · Interface en français
+          Nazix · 2026 · Interface en français
         </div>
       </footer>
 
@@ -1172,10 +1168,11 @@ function LandingPage({
 }
 
 function ProductMockup() {
+  const mockNav = [LayoutDashboard, StickyNote, Lightbulb, FolderKanban, FolderOpen, MessageCircle]
   return (
     <div className="relative mx-auto aspect-[16/11] w-full max-w-[640px] lg:max-w-none">
       <div className="pointer-events-none absolute -inset-6 rounded-[2.5rem] bg-gradient-to-br from-sage-200/50 via-transparent to-sage-300/30 blur-2xl" />
-      <div className="landing-float absolute left-0 top-[22%] z-20 flex flex-col gap-2 sm:left-[-8px] lg:left-[-18px]">
+      <div className="landing-float absolute left-2 top-[18%] z-20 hidden flex-col gap-2 sm:flex sm:left-[-8px] lg:left-[-18px]">
         {['Notes', 'Kanban', 'Chat'].map((label) => (
           <span
             key={label}
@@ -1199,15 +1196,15 @@ function ProductMockup() {
             <span className="h-4 w-4 rounded-full bg-sage-500" />
           </span>
         </div>
-        <div className="grid h-[calc(100%-2rem)] grid-cols-[52px_minmax(0,1fr)] sm:grid-cols-[64px_minmax(0,1.1fr)_minmax(0,1.4fr)_minmax(0,1fr)]">
-          <aside className="flex flex-col gap-2 bg-sage-800 p-2 text-[8px] text-sage-100 sm:p-2.5 sm:text-[9px]">
-            <span className="mb-1 font-display text-[10px] text-white sm:text-[11px]">Nazix</span>
-            {['Tableau', 'Notes', 'Idées', 'Projets', 'Fichiers', 'Chat'].map((item, i) => (
+        <div className="grid h-[calc(100%-2rem)] grid-cols-1 sm:grid-cols-[52px_minmax(0,0.95fr)_minmax(0,1.55fr)_minmax(0,1.05fr)]">
+          <aside className="hidden flex-col items-center gap-2 bg-sage-800 p-2 text-sage-100 sm:flex">
+            <span className="mb-1 font-display text-[10px] text-white">Nazix</span>
+            {mockNav.map((Icon, i) => (
               <span
-                key={item}
-                className={`truncate rounded-md px-1.5 py-1 ${i === 0 ? 'bg-sage-600 text-white' : 'text-sage-200'}`}
+                key={i}
+                className={`flex h-7 w-7 items-center justify-center rounded-md ${i === 0 ? 'bg-sage-600 text-white' : 'text-sage-200'}`}
               >
-                {item}
+                <Icon size={12} strokeWidth={2} />
               </span>
             ))}
           </aside>
@@ -1299,9 +1296,9 @@ function AuthModal({
           : 'Connexion'
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-end sm:items-stretch">
+    <div className="fixed inset-0 z-[80] flex items-end justify-end sm:items-stretch">
       <button type="button" className="absolute inset-0 bg-ink/40" aria-label="Fermer" onClick={onClose} />
-      <div className="relative z-10 flex max-h-[min(94dvh,100%)] w-full max-w-full flex-col overflow-hidden rounded-t-2xl bg-[#f5f6f1] shadow-2xl animate-slide-in sm:max-h-none sm:w-[26.5rem] sm:rounded-none">
+      <div className="landing-drawer relative z-10 flex max-h-[min(94dvh,100%)] w-full max-w-full flex-col overflow-hidden rounded-t-2xl bg-[#f5f6f1] shadow-2xl sm:max-h-none sm:w-[26.5rem] sm:rounded-none">
         <div className="flex items-start justify-between gap-3 border-b border-sage-200 px-5 py-4 pt-[max(1rem,env(safe-area-inset-top))]">
           <div>
             <p className="font-display text-2xl text-sage-900">{title}</p>
