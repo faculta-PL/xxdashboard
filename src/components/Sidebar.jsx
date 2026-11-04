@@ -177,8 +177,14 @@ export function Sidebar({
                           onClick={() => onView(item.id)}
                           title={item.label}
                           aria-current={active ? 'page' : undefined}
-                          aria-label={item.label}
-                          className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
+                          aria-label={
+                            item.id === 'notifications' && unread > 0
+                              ? `${item.label} (${unread} non lues)`
+                              : item.id === 'chat' && chatUnread > 0
+                                ? `${item.label} (${chatUnread} non lus)`
+                                : item.label
+                          }
+                          className={`relative flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
                             collapsed ? 'lg:justify-center lg:px-0' : ''
                           } ${active ? 'bg-sage-600 text-white' : 'text-sage-100 hover:bg-sage-700'}`}
                         >
@@ -189,19 +195,19 @@ export function Sidebar({
                           {item.id === 'notifications' && unread > 0 && (
                             <span
                               className={`rounded-full bg-cream-green px-2 py-0.5 text-[11px] font-bold text-sage-800 ${
-                                collapsed ? 'lg:hidden' : ''
+                                collapsed ? 'lg:absolute lg:right-1 lg:top-1 lg:min-w-4 lg:px-1 lg:text-[9px]' : ''
                               }`}
                             >
-                              {unread}
+                              {collapsed && unread > 9 ? '9+' : unread}
                             </span>
                           )}
                           {item.id === 'chat' && chatUnread > 0 && (
                             <span
                               className={`rounded-full bg-cream-green px-2 py-0.5 text-[11px] font-bold text-sage-800 ${
-                                collapsed ? 'lg:hidden' : ''
+                                collapsed ? 'lg:absolute lg:right-1 lg:top-1 lg:min-w-4 lg:px-1 lg:text-[9px]' : ''
                               }`}
                             >
-                              {chatUnread}
+                              {collapsed && chatUnread > 9 ? '9+' : chatUnread}
                             </span>
                           )}
                         </button>

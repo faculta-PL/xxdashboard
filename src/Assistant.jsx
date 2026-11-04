@@ -42,6 +42,7 @@ import {
   sendMessage,
   ensureGeneralGroup,
   saveUserSettings,
+  toUserMessage,
 } from './lib/store'
 import { canWriteRole } from './lib/rbac'
 
@@ -406,92 +407,102 @@ function useAiChat({
     const userMsg = { role: 'user', content: text, at: nowIso() }
     let id = threadId
     let history = messages
-    if (!id) {
-      const created = await saveAiThread(
-        {
-          title: text,
-          section,
-          contextLabel: context.contextLabel,
-          messages: [userMsg],
-        },
-        user,
-      )
-      id = created.id
-      history = created.messages
-      setThreadId(id)
-    } else {
-      history = [...messages, userMsg]
-      await persist(id, { messages: history })
-    }
-
-    const wantWeb = wantsWebSearch(text, webSearch)
-    let answerText = ''
-    let sources = []
-    let origin = 'nazix'
-    let usedExternal = false
-
     try {
-      if (allowExternal && hasKey) {
-        const payloadCtx = allowExternal ? context : stripExternalContext(context)
-        const ext = await askExternal({
-          messages: history.filter((m) => m.role === 'user' || m.role === 'assistant'),
-          context: payloadCtx,
-          allowExternal: true,
-        })
-        if (ext.ok && ext.text) {
-          answerText = ext.text
-          usedExternal = true
-          origin = 'nazix'
+      if (!id) {
+        const created = await saveAiThread(
+          {
+            title: text,
+            section,
+            contextLabel: context.contextLabel,
+            messages: [userMsg],
+          },
+          user,
+        )
+        id = created.id
+        history = created.messages
+        setThreadId(id)
+      } else {
+        history = [...messages, userMsg]
+        await persist(id, { messages: history })
+      }
+
+      const wantWeb = wantsWebSearch(text, webSearch)
+      let answerText = ''
+      let sources = []
+      let origin = 'nazix'
+      let usedExternal = false
+
+      try {
+        if (allowExternal && hasKey) {
+          const payloadCtx = allowExternal ? context : stripExternalContext(context)
+          const ext = await askExternal({
+            messages: history.filter((m) => m.role === 'user' || m.role === 'assistant'),
+            context: payloadCtx,
+            allowExternal: true,
+          })
+          if (ext.ok && ext.text) {
+            answerText = ext.text
+            usedExternal = true
+            origin = 'nazix'
+          }
+        }
+      } catch {
+        const msg = 'Service IA indisponible — repli local.'
+        setError(msg)
+        flash?.(msg, 'warn')
+      }
+
+      if (!answerText) {
+        const local = localAnswer(style ? `${style}: ${text}` : text, context, style)
+        answerText = local.text
+        sources = local.sources
+      } else {
+        sources = localAnswer(text, context).sources
+      }
+
+      let webSources = []
+      let webSearchedAt = ''
+      if (wantWeb) {
+        try {
+          const web = await searchWeb(webQueryFrom(text))
+          webSources = web.results || []
+          webSearchedAt = web.searchedAt || nowIso()
+          answerText += formatWebBlock(web)
+        } catch {
+          answerText += '\n\n---\n**Web** — recherche indisponible.'
+          flash?.('Recherche web indisponible.', 'warn')
         }
       }
-    } catch (err) {
-      setError(err.message || 'Service IA indisponible — repli local.')
-    }
 
-    if (!answerText) {
-      const local = localAnswer(style ? `${style}: ${text}` : text, context, style)
-      answerText = local.text
-      sources = local.sources
-    } else {
-      sources = localAnswer(text, context).sources
-    }
+      const heuristicActions = [
+        ...parseActions(text, context),
+        ...parseActionsFromAssistant(answerText, context),
+      ]
+      const seen = new Set()
+      const actions = heuristicActions.filter((a) => {
+        if (seen.has(a.kind)) return false
+        seen.add(a.kind)
+        return true
+      })
 
-    let webSources = []
-    let webSearchedAt = ''
-    if (wantWeb) {
-      try {
-        const web = await searchWeb(webQueryFrom(text))
-        webSources = web.results || []
-        webSearchedAt = web.searchedAt || nowIso()
-        answerText += formatWebBlock(web)
-      } catch (err) {
-        answerText += `\n\n---\n**Web** — recherche indisponible (${err.message || 'erreur'}).`
+      const aiMsg = {
+        role: 'assistant',
+        content: answerText,
+        sources,
+        webSources,
+        webSearchedAt,
+        actions,
+        origin: usedExternal ? 'external' : origin,
+        at: nowIso(),
       }
+      await persist(id, { messages: [...history, aiMsg], contextLabel: context.contextLabel, section })
+    } catch (err) {
+      const msg = toUserMessage(err, 'Service IA indisponible.')
+      setError(msg)
+      flash?.(msg, 'err')
+    } finally {
+      setBusy(false)
     }
-
-    const heuristicActions = [
-      ...parseActions(text, context),
-      ...parseActionsFromAssistant(answerText, context),
-    ]
-    const seen = new Set()
-    const actions = heuristicActions.filter((a) => {
-      if (seen.has(a.kind)) return false
-      seen.add(a.kind)
-      return true
-    })
-
-    const aiMsg = {
-      role: 'assistant',
-      content: answerText,
-      sources,
-      webSources,
-      webSearchedAt,
-      actions,
-      origin: usedExternal ? 'external' : origin,
-      at: nowIso(),
-    }
-    await persist(id, { messages: [...history, aiMsg], contextLabel: context.contextLabel, section })
-    setBusy(false)
   }
 
   const send = async (e) => {
@@ -587,7 +598,7 @@ function useAiChat({
       }
       setPendingAction(null)
     } catch (err) {
-      flash?.(err.message || 'Action impossible.', 'err')
+      flash?.(toUserMessage(err, 'Action impossible.'), 'err')
     } finally {
       setActionBusy(false)
     }

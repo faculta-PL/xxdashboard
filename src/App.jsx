@@ -1,5 +1,6 @@
 /** Nazix — notes, idées, projets, équipe */
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   LayoutDashboard,
   StickyNote,
@@ -89,6 +90,7 @@ import {
   getBackendMode,
   getMinPasswordLength,
   getBootHint,
+  toUserMessage,
   pushLocalToFirebase,
   pullFirebaseToLocal,
   ensureGeneralGroup,
@@ -253,11 +255,16 @@ function ModalActions({ children }) {
   )
 }
 
-function Field({ label, children }) {
+function Field({ label, error, children }) {
   return (
     <label className="mb-3 block text-sm">
       <span className="mb-1 block font-medium text-sage-800">{label}</span>
       {children}
+      {error ? (
+        <span className="mt-1 block text-sm font-medium text-red-700" role="alert">
+          {error}
+        </span>
+      ) : null}
     </label>
   )
 }
@@ -356,7 +363,11 @@ export default function App() {
     newPassword: '',
   })
   const [authBusy, setAuthBusy] = useState(false)
+  const [authError, setAuthError] = useState('')
+  const [authFieldErrors, setAuthFieldErrors] = useState({})
   const [showPass, setShowPass] = useState(false)
+  const toastTimer = useRef(null)
+  const authBusyTimer = useRef(null)
   const [chatReadMap, setChatReadMap] = useState(readChatMap)
   const [importOpen, setImportOpen] = useState(false)
   const [importDefaults, setImportDefaults] = useState({ destination: 'notes', projectId: '', folderId: '' })
@@ -378,8 +389,12 @@ export default function App() {
   }
 
   const flash = (message, type = 'ok') => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3200)
+    const kind = type === 'error' ? 'err' : type || 'ok'
+    const fallback = kind === 'ok' ? String(message || '').trim() || 'OK' : 'Une erreur est survenue.'
+    const text = toUserMessage(message, fallback)
+    setToast({ message: text, type: kind })
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(null), kind === 'ok' ? 3200 : 5600)
   }
 
   useEffect(() => {
@@ -416,9 +431,10 @@ export default function App() {
           console.warn('Session restore skipped:', err.message)
         }
         const hint = getBootHint()
-        if (!cancelled && hint && restored) {
-          setToast({ message: hint, type: 'err' })
-          setTimeout(() => setToast(null), 5200)
+        if (!cancelled && hint) {
+          setToast({ message: hint, type: 'warn' })
+          if (toastTimer.current) clearTimeout(toastTimer.current)
+          toastTimer.current = setTimeout(() => setToast(null), 5600)
         }
       } catch (err) {
         console.warn('Boot failed open:', err)
@@ -434,9 +450,16 @@ export default function App() {
     return () => {
       cancelled = true
       if (bootCap) clearTimeout(bootCap)
+      if (toastTimer.current) clearTimeout(toastTimer.current)
+      if (authBusyTimer.current) clearTimeout(authBusyTimer.current)
       unsub()
     }
   }, [])
+
+  useEffect(() => {
+    setAuthError('')
+    setAuthFieldErrors({})
+  }, [authMode])
 
   const users = useMemo(() => (db ? listUsers() : []), [db])
   const notes = useMemo(
@@ -626,32 +649,90 @@ export default function App() {
 
   const handleAuth = async (e) => {
     e.preventDefault()
+    setAuthError('')
+    const fields = {}
+    const email = String(authForm.email || '').trim()
+    const password = authForm.password
+    const minLen = getMinPasswordLength()
+    if (authMode === 'login' || authMode === 'register' || authMode === 'forgot') {
+      if (!email) fields.email = 'Saisissez votre e-mail.'
+      else if (!email.includes('@')) fields.email = 'Adresse e-mail invalide.'
+    }
+    if (authMode === 'login' || authMode === 'register') {
+      if (!password) fields.password = 'Saisissez votre mot de passe.'
+      else if (authMode === 'register' && password.length < minLen) {
+        fields.password = `Au moins ${minLen} caractères.`
+      }
+    }
+    if (authMode === 'register' && !String(authForm.fullName || '').trim()) {
+      fields.fullName = 'Saisissez votre nom.'
+    }
+    if (authMode === 'reset') {
+      if (!String(authForm.resetToken || '').trim()) fields.resetToken = 'Saisissez le code reçu.'
+      if (!authForm.newPassword) fields.newPassword = 'Saisissez le nouveau mot de passe.'
+      else if (authForm.newPassword.length < minLen) {
+        fields.newPassword = `Au moins ${minLen} caractères.`
+      }
+    }
+    if (Object.keys(fields).length) {
+      setAuthFieldErrors(fields)
+      const first = Object.values(fields)[0]
+      setAuthError(first)
+      flash(first, 'err')
+      return
+    }
+    setAuthFieldErrors({})
     setAuthBusy(true)
+    let timedOut = false
+    if (authBusyTimer.current) clearTimeout(authBusyTimer.current)
+    authBusyTimer.current = setTimeout(() => {
+      timedOut = true
+      setAuthBusy(false)
+      const msg = 'La connexion a pris trop de temps. Réessayez.'
+      setAuthError(msg)
+      flash(msg, 'err')
+    }, 12000)
     try {
       if (authMode === 'login') {
         const res = await loginUser(authForm.email, authForm.password)
         setUser(res.user)
         setSession(res.session)
-        flash('Session ouverte.')
+        if (res.warning) flash(res.warning, 'warn')
+        else flash('Session ouverte.')
       } else if (authMode === 'register') {
         await registerUser(authForm)
         flash('Compte créé. E-mail de vérification envoyé.')
         const logged = await loginUser(authForm.email, authForm.password)
         setUser(logged.user)
         setSession(logged.session)
+        if (logged.warning) flash(logged.warning, 'warn')
       } else if (authMode === 'forgot') {
-        await requestPasswordReset(authForm.email)
-        flash('E-mail envoyé.')
+        const reset = await requestPasswordReset(authForm.email)
+        const msg = reset?.message || 'E-mail de réinitialisation envoyé.'
+        flash(msg)
+        setAuthError('')
         setAuthMode('reset')
       } else if (authMode === 'reset') {
         await resetPasswordWithToken(authForm.resetToken, authForm.newPassword)
-        flash('Mot de passe mis à jour (Firestore et Auth si le code e-mail était valide). Vous pouvez vous connecter.')
+        flash('Mot de passe mis à jour. Vous pouvez vous connecter.')
         setAuthMode('login')
       }
     } catch (err) {
-      flash(err.message || 'Erreur', 'err')
+      const msg = toUserMessage(err, 'Connexion impossible. Réessayez.')
+      setAuthError(msg)
+      const nextFields = {}
+      if (authMode === 'register') {
+        if (/nom/i.test(msg) && /requis|saisissez/i.test(msg)) nextFields.fullName = msg
+        if (/existe déjà|invalide/i.test(msg)) nextFields.email = msg
+        if (/caractères|faible/i.test(msg)) nextFields.password = msg
+      }
+      if (authMode === 'reset' && /code|jeton/i.test(msg)) nextFields.resetToken = msg
+      if (authMode === 'forgot' && /invalide/i.test(msg)) nextFields.email = msg
+      if (Object.keys(nextFields).length) setAuthFieldErrors(nextFields)
+      flash(msg, 'err')
     } finally {
-      setAuthBusy(false)
+      if (authBusyTimer.current) clearTimeout(authBusyTimer.current)
+      if (!timedOut) setAuthBusy(false)
     }
   }
 
@@ -684,17 +765,21 @@ export default function App() {
 
   if (!user) {
     return (
-      <LandingPage
-        authMode={authMode}
-        setAuthMode={setAuthMode}
-        authForm={authForm}
-        setAuthForm={setAuthForm}
-        authBusy={authBusy}
-        showPass={showPass}
-        setShowPass={setShowPass}
-        handleAuth={handleAuth}
-        toast={toast}
-      />
+      <>
+        <LandingPage
+          authMode={authMode}
+          setAuthMode={setAuthMode}
+          authForm={authForm}
+          setAuthForm={setAuthForm}
+          authBusy={authBusy}
+          showPass={showPass}
+          setShowPass={setShowPass}
+          handleAuth={handleAuth}
+          authError={authError}
+          authFieldErrors={authFieldErrors}
+        />
+        {toast && <Toast toast={toast} />}
+      </>
     )
   }
 
@@ -1086,7 +1171,8 @@ function LandingPage({
   showPass,
   setShowPass,
   handleAuth,
-  toast,
+  authError,
+  authFieldErrors,
 }) {
   const [authOpen, setAuthOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -1443,8 +1529,9 @@ function LandingPage({
         showPass={showPass}
         setShowPass={setShowPass}
         handleAuth={handleAuth}
+        authError={authError}
+        authFieldErrors={authFieldErrors}
       />
-      {toast && <Toast toast={toast} />}
     </div>
   )
 }
@@ -1555,6 +1642,8 @@ function AuthModal({
   showPass,
   setShowPass,
   handleAuth,
+  authError,
+  authFieldErrors = {},
 }) {
   useEffect(() => {
     if (!open) return undefined
@@ -1623,41 +1712,37 @@ function AuthModal({
               </button>
             </div>
           )}
-          <form onSubmit={handleAuth}>
+          <form onSubmit={handleAuth} noValidate>
             {authMode === 'register' && (
-              <Field label="Nom">
+              <Field label="Nom" error={authFieldErrors.fullName}>
                 <input
                   className={inputClass}
                   value={authForm.fullName}
                   onChange={(e) => setAuthForm({ ...authForm, fullName: e.target.value })}
                   autoComplete="name"
-                  required
                 />
               </Field>
             )}
             {(authMode === 'login' || authMode === 'register' || authMode === 'forgot') && (
-              <Field label="E-mail">
+              <Field label="E-mail" error={authFieldErrors.email}>
                 <input
                   type="email"
                   className={inputClass}
                   value={authForm.email}
                   onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
                   autoComplete="email"
-                  required
                 />
               </Field>
             )}
             {(authMode === 'login' || authMode === 'register') && (
-              <Field label="Mot de passe">
+              <Field label="Mot de passe" error={authFieldErrors.password}>
                 <div className="relative">
                   <input
                     type={showPass ? 'text' : 'password'}
                     className={inputClass + ' pr-12'}
                     value={authForm.password}
                     onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
-                    minLength={getMinPasswordLength()}
                     autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
-                    required
                   />
                   <button
                     type="button"
@@ -1672,30 +1757,33 @@ function AuthModal({
             )}
             {authMode === 'reset' && (
               <>
-                <Field label="Code reçu par e-mail">
+                <Field label="Code reçu par e-mail" error={authFieldErrors.resetToken}>
                   <input
                     className={inputClass}
                     value={authForm.resetToken}
                     onChange={(e) => setAuthForm({ ...authForm, resetToken: e.target.value })}
-                    required
                   />
                 </Field>
-                <Field label="Nouveau mot de passe">
+                <Field label="Nouveau mot de passe" error={authFieldErrors.newPassword}>
                   <input
                     type="password"
                     className={inputClass}
                     value={authForm.newPassword}
                     onChange={(e) => setAuthForm({ ...authForm, newPassword: e.target.value })}
-                    minLength={getMinPasswordLength()}
                     autoComplete="new-password"
-                    required
                   />
                 </Field>
               </>
             )}
             <button type="submit" className="mt-1 inline-flex min-h-12 w-full items-center justify-center rounded-full bg-sage-800 px-4 text-sm font-semibold text-white hover:bg-sage-900 disabled:opacity-50" disabled={authBusy}>
               {authBusy
-                ? 'Patientez…'
+                ? authMode === 'login'
+                  ? 'Connexion…'
+                  : authMode === 'register'
+                    ? 'Création…'
+                    : authMode === 'forgot'
+                      ? 'Envoi…'
+                      : 'Réinitialisation…'
                 : authMode === 'login'
                   ? 'Se connecter'
                   : authMode === 'register'
@@ -1704,6 +1792,11 @@ function AuthModal({
                       ? 'Envoyer le lien'
                       : 'Réinitialiser'}
             </button>
+            {authError ? (
+              <p className="mt-3 text-center text-sm font-medium text-red-700" role="alert">
+                {authError}
+              </p>
+            ) : null}
             {authMode === 'login' && (
               <button
                 type="button"
@@ -1730,14 +1823,22 @@ function AuthModal({
 }
 
 function Toast({ toast }) {
-  return (
+  if (typeof document === 'undefined' || !toast?.message) return null
+  const tone =
+    toast.type === 'err'
+      ? 'bg-red-600 text-white'
+      : toast.type === 'warn'
+        ? 'bg-amber-500 text-stone-900'
+        : 'bg-emerald-700 text-white'
+  return createPortal(
     <div
-      className={`fixed bottom-4 left-4 right-4 z-[60] max-w-sm break-words rounded-xl px-4 py-3 text-sm shadow-lg animate-slide-in sm:left-auto sm:right-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] ${
-        toast.type === 'err' ? 'bg-danger text-white' : 'bg-sage-800 text-sage-50'
-      }`}
+      className={`pointer-events-none fixed left-1/2 top-4 z-[100] w-[min(28rem,calc(100%-1.5rem))] -translate-x-1/2 break-words rounded-xl px-4 py-3 text-sm font-medium shadow-lg animate-slide-in ${tone}`}
+      role={toast.type === 'err' ? 'alert' : 'status'}
+      aria-live={toast.type === 'err' ? 'assertive' : 'polite'}
     >
       {toast.message}
-    </div>
+    </div>,
+    document.body,
   )
 }
 

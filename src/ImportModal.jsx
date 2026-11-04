@@ -132,7 +132,9 @@ export default function ImportModal({
       }
       setStep(2)
     } catch (err) {
-      setError(err.message || 'Fichier illisible.')
+      const msg = String(err?.message || 'Fichier illisible.').split('\n')[0].slice(0, 180)
+      setError(msg)
+      flash(msg, 'err')
     }
   }
 
@@ -295,7 +297,10 @@ export default function ImportModal({
       }
       onClose()
     } catch (err) {
-      setError(err.message || 'Import impossible.')
+      const raw = String(err?.message || 'Import impossible.')
+      const msg = /permission[- ]denied/i.test(raw) ? 'Permission refusée.' : raw.split('\n')[0].slice(0, 180)
+      setError(msg)
+      flash(msg, 'err')
     } finally {
       setBusy(false)
     }

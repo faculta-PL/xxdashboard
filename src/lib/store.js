@@ -23,7 +23,7 @@ import {
   limit,
 } from 'firebase/firestore'
 import { ref, uploadBytesResumable, getBlob, deleteObject } from 'firebase/storage'
-import { auth, db, storage, firebaseConfigured, getFirebaseStatus } from './firebase'
+import { auth, db, storage, firebaseConfigured, getFirebaseStatus, firebaseConfig } from './firebase'
 import { sha256, randomToken, randomCode6, uid } from './crypto'
 import {
   ROLES,
@@ -74,6 +74,7 @@ const SESSION_HOURS = 24
 /** Fail-open budget so splash never waits on a hung Firestore/Auth call. */
 const FIRESTORE_BOOT_TIMEOUT_MS = 5000
 const FIRESTORE_OP_TIMEOUT_MS = 4000
+const AUTH_SIGNIN_TIMEOUT_MS = 8000
 
 function withTimeout(promise, ms, label) {
   let timer
@@ -153,7 +154,11 @@ function loadLocal() {
 }
 
 function saveLocal(data) {
-  localStorage.setItem(LOCAL_KEY, JSON.stringify(data))
+  try {
+    localStorage.setItem(LOCAL_KEY, JSON.stringify(data))
+  } catch (err) {
+    console.warn('localStorage save failed:', err.message)
+  }
 }
 
 let memory = loadLocal()
@@ -195,24 +200,27 @@ export function getStoreSnapshot() {
   return snapshotState()
 }
 
-async function persistDoc(col, id, value, { required = false, remote = true } = {}) {
+async function persistDoc(col, id, value, { required = false, remote = true, wait = false } = {}) {
   if (!memory[col]) memory[col] = {}
   memory[col][id] = value
   saveLocal(memory)
   notify()
+  let remoteError = null
   if (remote && firebaseConfigured && db) {
     const write = withTimeout(
       setDoc(doc(db, col, id), value, { merge: true }),
       FIRESTORE_OP_TIMEOUT_MS,
       `Firestore write ${col}/${id}`,
     ).catch((err) => {
+      remoteError = err
       console.warn(`Firestore write ${col}/${id} failed:`, err.message)
       if (required) {
-        throw new Error(`Écriture Firebase impossible (${col}) : ${err.message}`)
+        throw new Error(toUserMessage(err, 'Enregistrement cloud impossible.'))
       }
     })
-    if (required) await write
+    if (required || wait) await write
   }
+  return { remoteError }
 }
 
 async function removeDoc(col, id) {
@@ -508,29 +516,111 @@ async function refreshRemoteAfterAuth() {
 }
 
 function mapAuthError(err) {
-  const code = err?.code || ''
+  const code = String(err?.code || '')
+  const raw = String(err?.message || '')
+  if (/timed out|deadline|abort/i.test(raw)) {
+    return 'La connexion a pris trop de temps. Réessayez.'
+  }
   switch (code) {
     case 'auth/email-already-in-use':
       return 'Un compte existe déjà avec cet e-mail.'
     case 'auth/invalid-email':
       return 'Adresse e-mail invalide.'
     case 'auth/weak-password':
-      return 'Le mot de passe doit contenir au moins 6 caractères (exigence Firebase Auth).'
+      return 'Le mot de passe doit contenir au moins 6 caractères.'
+    case 'auth/missing-password':
+      return 'Saisissez votre mot de passe.'
+    case 'auth/missing-email':
+      return 'Saisissez votre e-mail.'
     case 'auth/user-not-found':
+      return 'Aucun compte ne correspond à cet e-mail.'
     case 'auth/wrong-password':
+      return 'Mot de passe incorrect.'
     case 'auth/invalid-credential':
-      return 'Identifiants incorrects.'
+      return 'E-mail ou mot de passe incorrect.'
     case 'auth/too-many-requests':
       return 'Trop de tentatives. Réessayez dans quelques minutes.'
     case 'auth/network-request-failed':
-      return 'Réseau indisponible : impossible de joindre Firebase.'
+      return 'Réseau indisponible. Vérifiez votre connexion.'
     case 'auth/operation-not-allowed':
-      return 'Activez le fournisseur E-mail/mot de passe dans Firebase Authentication.'
+      return 'La connexion e-mail / mot de passe n’est pas activée.'
     case 'auth/invalid-action-code':
     case 'auth/expired-action-code':
-      return 'Le code e-mail Firebase est invalide ou a expiré. Redemandez un e-mail.'
+      return 'Le code e-mail est invalide ou a expiré. Redemandez un e-mail.'
+    case 'auth/user-disabled':
+      return 'Ce compte a été désactivé.'
+    case 'permission-denied':
+      return 'Permission refusée.'
     default:
-      return err?.message || 'Erreur Firebase Auth.'
+      if (/auth\/invalid-credential/i.test(raw)) return 'E-mail ou mot de passe incorrect.'
+      if (/auth\/user-not-found/i.test(raw)) return 'Aucun compte ne correspond à cet e-mail.'
+      if (/auth\/wrong-password/i.test(raw)) return 'Mot de passe incorrect.'
+      if (/auth\/too-many-requests/i.test(raw)) return 'Trop de tentatives. Réessayez dans quelques minutes.'
+      if (/auth\/network-request-failed/i.test(raw)) return 'Réseau indisponible. Vérifiez votre connexion.'
+      if (/auth\/email-already-in-use/i.test(raw)) return 'Un compte existe déjà avec cet e-mail.'
+      if (/permission[- ]denied/i.test(raw)) return 'Permission refusée.'
+      return 'Connexion impossible. Réessayez.'
+  }
+}
+
+/** One-line French message. Never dumps a stack trace. */
+export function toUserMessage(err, fallback = 'Une erreur est survenue.') {
+  if (err == null || err === '') return fallback
+  if (typeof err === 'string') {
+    const s = err.trim()
+    if (!s) return fallback
+    const codeMatch = s.match(/auth\/[a-z0-9-]+/i)
+    if (codeMatch) return mapAuthError({ code: codeMatch[0], message: s })
+    if (/permission[- ]denied/i.test(s)) return 'Permission refusée.'
+    if (/unavailable|failed to fetch|network-request-failed/i.test(s) && /firebase|firestore|auth/i.test(s)) {
+      return 'Réseau indisponible. Vérifiez votre connexion.'
+    }
+    if (s.includes('\n') || /\s+at\s+\S+/.test(s)) {
+      const first = s.split('\n')[0].replace(/^Error:\s*/i, '').trim()
+      if (first && first.length <= 180 && !/\s+at\s+/.test(first)) return first
+      return fallback
+    }
+    if (s.length > 180) return fallback
+    return s
+  }
+  if (typeof err === 'object') {
+    const code = String(err.code || '')
+    if (code.startsWith('auth/') || code === 'permission-denied') return mapAuthError(err)
+    if (err.message) return toUserMessage(String(err.message), fallback)
+  }
+  return fallback
+}
+
+/** Create a Firebase Auth user via REST so the JS SDK is not signed in. */
+async function provisionAuthUserWithoutSignIn(email, password) {
+  const apiKey = firebaseConfig?.apiKey
+  if (!firebaseConfigured || !apiKey || !email || !password) return null
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null
+  const timer = setTimeout(() => ctrl?.abort(), 5000)
+  try {
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, returnSecureToken: true }),
+        signal: ctrl?.signal,
+      },
+    )
+    const data = await res.json().catch(() => ({}))
+    if (data?.error) {
+      const msg = String(data.error.message || '')
+      if (msg === 'EMAIL_EXISTS') return { existed: true }
+      console.warn('Auth provision:', msg)
+      return null
+    }
+    if (!data?.localId) return null
+    return { created: true, localId: data.localId }
+  } catch (err) {
+    console.warn('Auth provision:', err.message)
+    return null
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -664,19 +754,40 @@ async function ensureDefaultAdmin({ skipRemote = false } = {}) {
       required: false,
       remote: !skipRemote,
     })
-    return
+  } else {
+    const patch = {}
+    if (!user.passwordHash) patch.passwordHash = passwordHash
+    if (!user.emailVerified) patch.emailVerified = true
+    if (user.role !== ROLES.ADMIN) patch.role = ROLES.ADMIN
+    if (Object.keys(patch).length) {
+      user = { ...user, ...patch, updatedAt: now }
+      await persistDoc('xx_users', user.id, user, {
+        required: false,
+        remote: !skipRemote,
+      })
+    }
   }
-  const patch = {}
-  if (!user.passwordHash) patch.passwordHash = passwordHash
-  if (!user.emailVerified) patch.emailVerified = true
-  if (user.role !== ROLES.ADMIN) patch.role = ROLES.ADMIN
-  if (Object.keys(patch).length) {
-    await persistDoc(
-      'xx_users',
-      user.id,
-      { ...user, ...patch, updatedAt: now },
-      { required: false, remote: !skipRemote },
-    )
+
+  if (firebaseConfigured && firebaseConfig?.apiKey) {
+    try {
+      const provisioned = await provisionAuthUserWithoutSignIn(ADMIN_EMAIL, ADMIN_PASSWORD)
+      if (provisioned?.localId && user && user.firebaseUid !== provisioned.localId) {
+        user = { ...user, firebaseUid: provisioned.localId, updatedAt: new Date().toISOString() }
+        await persistDoc('xx_users', user.id, user, {
+          required: false,
+          remote: !skipRemote,
+        })
+      }
+    } catch (err) {
+      console.warn('Admin Auth provision:', err.message)
+    }
+  }
+  if (auth?.currentUser && !localStorage.getItem(SESSION_KEY)) {
+    try {
+      await signOutAuthSafe()
+    } catch (err) {
+      console.warn('boot Auth signOut after provision:', err.message)
+    }
   }
 }
 
@@ -944,47 +1055,65 @@ export async function resendVerificationEmail() {
 }
 
 export async function loginUser(email, password) {
-  const normalized = email.trim().toLowerCase()
-  if (!password) throw new Error('Identifiants incorrects.')
+  const normalized = String(email || '').trim().toLowerCase()
+  if (!normalized) throw new Error('Saisissez votre e-mail.')
+  if (!normalized.includes('@')) throw new Error('Adresse e-mail invalide.')
+  if (!password) throw new Error('Saisissez votre mot de passe.')
 
   let user = await findUserByEmail(normalized)
   const hash = await sha256(password)
   const hashOk = Boolean(user && user.passwordHash === hash)
 
   let authUser = null
+  let localAuthFallback = false
+  const notices = []
+
   if (firebaseConfigured && auth) {
     try {
-      authUser = await withTimeout(
-        signInAuth(normalized, password),
-        FIRESTORE_OP_TIMEOUT_MS,
-        'Firebase Auth sign-in',
+      const cred = await withTimeout(
+        signInWithEmailAndPassword(auth, normalized, password),
+        AUTH_SIGNIN_TIMEOUT_MS,
+        'Firebase Auth',
       )
+      authUser = cred?.user || null
     } catch (err) {
       console.warn('Firebase Auth sign-in:', err.message)
       authUser = null
       if (!hashOk) throw new Error(mapAuthError(err))
+      localAuthFallback = true
+      notices.push('Connexion locale (Firebase Auth indisponible).')
+      const code = String(err?.code || '')
+      if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
+        try {
+          authUser = await withTimeout(
+            ensureAuthUser(normalized, password),
+            AUTH_SIGNIN_TIMEOUT_MS,
+            'Firebase Auth ensure user',
+          )
+          if (authUser) {
+            localAuthFallback = false
+            const idx = notices.indexOf('Connexion locale (Firebase Auth indisponible).')
+            if (idx >= 0) notices.splice(idx, 1)
+          }
+        } catch (ensureErr) {
+          console.warn('Firebase Auth ensure user:', ensureErr.message)
+        }
+      }
     }
     if (!user && authUser) {
       user = await findUserByFirebaseUid(authUser.uid)
     }
-    if (hashOk && !authUser) {
-      try {
-        authUser = await withTimeout(
-          ensureAuthUser(normalized, password),
-          FIRESTORE_OP_TIMEOUT_MS,
-          'Firebase Auth ensure user',
-        )
-      } catch (err) {
-        console.warn('Firebase Auth ensure user:', err.message)
-        authUser = null
-      }
-    }
+  } else if (!hashOk) {
+    throw new Error('E-mail ou mot de passe incorrect.')
+  } else {
+    localAuthFallback = true
+    notices.push('Connexion locale (Firebase Auth indisponible).')
   }
 
-  if (!hashOk && !authUser) throw new Error('Identifiants incorrects.')
+  if (!hashOk && !authUser) throw new Error('E-mail ou mot de passe incorrect.')
 
   if (!user && authUser) {
-    const now = new Date().toISOString()
+    const createdAt = new Date().toISOString()
     user = {
       id: authUser.uid,
       fullName: authUser.displayName || normalized.split('@')[0],
@@ -994,17 +1123,31 @@ export async function loginUser(email, password) {
       emailVerified: Boolean(authUser.emailVerified),
       verificationCode: null,
       firebaseUid: authUser.uid,
-      createdAt: now,
-      updatedAt: now,
+      createdAt,
+      updatedAt: createdAt,
     }
-    await persistDoc('xx_users', user.id, user)
+    try {
+      const written = await persistDoc('xx_users', user.id, user)
+      if (written?.remoteError) notices.push('Session cloud indisponible, mode local')
+    } catch (err) {
+      console.warn('profile upsert:', err.message)
+      if (!memory.xx_users) memory.xx_users = {}
+      memory.xx_users[user.id] = user
+      saveLocal(memory)
+      notify()
+      notices.push('Session cloud indisponible, mode local')
+    }
   }
 
-  if (!user) throw new Error('Identifiants incorrects.')
+  if (!user) throw new Error('E-mail ou mot de passe incorrect.')
 
-  if (authUser && user.passwordHash !== hash) {
-    user = { ...user, passwordHash: hash, updatedAt: new Date().toISOString() }
-    await persistDoc('xx_users', user.id, user)
+  try {
+    if (authUser && user.passwordHash !== hash) {
+      user = { ...user, passwordHash: hash, updatedAt: new Date().toISOString() }
+      await persistDoc('xx_users', user.id, user)
+    }
+  } catch (err) {
+    console.warn('password hash sync:', err.message)
   }
 
   if (authUser) {
@@ -1018,7 +1161,11 @@ export async function loginUser(email, password) {
       console.warn('User Auth uid alignment:', err.message)
       if (user.firebaseUid !== authUser.uid) {
         user = { ...user, firebaseUid: authUser.uid, updatedAt: new Date().toISOString() }
-        await persistDoc('xx_users', user.id, user)
+        try {
+          await persistDoc('xx_users', user.id, user)
+        } catch (persistErr) {
+          console.warn('firebaseUid persist:', persistErr.message)
+        }
       }
     }
   }
@@ -1037,15 +1184,21 @@ export async function loginUser(email, password) {
     active: true,
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
   }
-  localStorage.setItem(SESSION_KEY, token)
   try {
-    await persistDoc('xx_sessions', sessionId, session)
+    localStorage.setItem(SESSION_KEY, token)
+  } catch (err) {
+    console.warn('session token localStorage:', err.message)
+  }
+  if (!memory.xx_sessions) memory.xx_sessions = {}
+  memory.xx_sessions[sessionId] = session
+  saveLocal(memory)
+  notify()
+  try {
+    const written = await persistDoc('xx_sessions', sessionId, session, { wait: Boolean(authUser) })
+    if (written?.remoteError) notices.push('Session cloud indisponible, mode local')
   } catch (err) {
     console.warn('session persist:', err.message)
-    if (!memory.xx_sessions) memory.xx_sessions = {}
-    memory.xx_sessions[sessionId] = session
-    saveLocal(memory)
-    notify()
+    notices.push('Session cloud indisponible, mode local')
   }
   try {
     const seen = new Date().toISOString()
@@ -1059,7 +1212,13 @@ export async function loginUser(email, password) {
     stampOwnedEntities(synced).catch((err) => console.warn('Ownership stamp:', err.message))
     refreshRemoteAfterAuth().catch((err) => console.warn('post-login sync:', err.message))
   }
-  return { user: publicUser(user), session }
+  const uniqueNotices = [...new Set(notices)]
+  return {
+    user: publicUser(user),
+    session,
+    warning: uniqueNotices[0] || null,
+    localOnly: localAuthFallback && !authUser,
+  }
 }
 
 export async function logoutCurrentSession() {
@@ -1153,56 +1312,92 @@ export async function revokeSession(sessionId, requester) {
 }
 
 export async function requestPasswordReset(email) {
-  const normalized = email.trim().toLowerCase()
+  const normalized = String(email || '').trim().toLowerCase()
+  if (!normalized) throw new Error('Saisissez votre e-mail.')
+  if (!normalized.includes('@')) throw new Error('Adresse e-mail invalide.')
+
   let firebaseSent = false
+  let firebaseError = null
   if (firebaseConfigured && auth) {
     try {
-      await sendPasswordResetEmail(auth, normalized)
+      await withTimeout(
+        sendPasswordResetEmail(auth, normalized),
+        AUTH_SIGNIN_TIMEOUT_MS,
+        'Password reset email',
+      )
       firebaseSent = true
     } catch (err) {
       console.warn('sendPasswordResetEmail:', err.message)
+      firebaseError = err
+      const code = String(err?.code || '')
+      if (code === 'auth/too-many-requests' || code === 'auth/network-request-failed') {
+        throw new Error(mapAuthError(err))
+      }
+      if (code && code !== 'auth/user-not-found' && code !== 'auth/invalid-email' && !/timed out/i.test(err.message || '')) {
+        throw new Error(mapAuthError(err))
+      }
     }
   }
+
   const user = await findUserByEmail(normalized)
-  if (!user) {
-    // Ne pas révéler l'existence du compte
-    return { ok: true, firebaseSent }
-  }
-  const token = randomToken(16)
-  const id = uid('reset')
-  const expiresAt = new Date(Date.now() + 2 * 3600 * 1000).toISOString()
-  await persistDoc(
-    'xx_reset_tokens',
-    id,
-    {
+  if (user) {
+    const token = randomToken(16)
+    const id = uid('reset')
+    const expiresAt = new Date(Date.now() + 2 * 3600 * 1000).toISOString()
+    await persistDoc(
+      'xx_reset_tokens',
       id,
-      userId: user.id,
-      email: user.email,
-      token,
-      expiresAt,
-      used: false,
-      createdAt: new Date().toISOString(),
-    },
-    { required: false },
-  )
-  const notifId = uid('notif')
-  await persistDoc(
-    'xx_notifications',
-    notifId,
-    {
-      id: notifId,
-      userId: user.id,
-      email: user.email,
-      type: 'password_reset',
-      title: 'Réinitialisation du mot de passe',
-      body: `Votre jeton temporaire est ${token}. Valable 2 heures. Un e-mail Firebase a aussi été envoyé si le compte Auth existe.`,
-      read: false,
-      createdAt: new Date().toISOString(),
-      meta: { token },
-    },
-    { required: false },
-  )
-  return { ok: true, firebaseSent }
+      {
+        id,
+        userId: user.id,
+        email: user.email,
+        token,
+        expiresAt,
+        used: false,
+        createdAt: new Date().toISOString(),
+      },
+      { required: false },
+    )
+    const notifId = uid('notif')
+    await persistDoc(
+      'xx_notifications',
+      notifId,
+      {
+        id: notifId,
+        userId: user.id,
+        email: user.email,
+        type: 'password_reset',
+        title: 'Réinitialisation du mot de passe',
+        body: `Votre jeton temporaire est ${token}. Valable 2 heures. Un e-mail Firebase a aussi été envoyé si le compte Auth existe.`,
+        read: false,
+        createdAt: new Date().toISOString(),
+        meta: { token },
+      },
+      { required: false },
+    )
+    return {
+      ok: true,
+      firebaseSent,
+      message: firebaseSent
+        ? 'E-mail de réinitialisation envoyé.'
+        : 'Un code a été déposé dans vos notifications (mode local).',
+    }
+  }
+
+  if (firebaseSent) {
+    return { ok: true, firebaseSent, message: 'E-mail de réinitialisation envoyé.' }
+  }
+  if (firebaseError) {
+    const code = String(firebaseError.code || '')
+    if (code === 'auth/user-not-found' || code === 'auth/invalid-email') {
+      return { ok: true, firebaseSent: false, message: 'Si un compte existe, un e-mail a été envoyé.' }
+    }
+    throw new Error(mapAuthError(firebaseError))
+  }
+  if (!firebaseConfigured) {
+    throw new Error('Impossible d’envoyer l’e-mail. Vérifiez l’adresse.')
+  }
+  return { ok: true, firebaseSent: false, message: 'Si un compte existe, un e-mail a été envoyé.' }
 }
 
 async function applyPasswordHash(user, newPassword) {
