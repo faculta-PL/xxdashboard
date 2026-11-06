@@ -62,6 +62,9 @@ VITE_AI_URL=https://us-central1-partagio.cloudfunctions.net/ai
 ```
 
 3. **Authentication** → Sign-in method → activer **E-mail/mot de passe**.
+   Pour un site Vercel, ajouter aussi le domaine Auth (hôte exact, pas de joker `*`) :
+   **Console Firebase** → **Authentication** → **Settings** → **Authorized domains** → **Add** `vercel.app`.
+   Ajoutez aussi l’hôte réel du déploiement (`mon-app.vercel.app`) si Auth affiche `auth/unauthorized-domain`.
 4. **Personnaliser les e-mails Auth (FR)** : Console Firebase → Authentication → **Templates**.
    - **Adresse e-mail** (vérification) : objet `Confirmez votre adresse e-mail — Nazix`. Corps : demander de cliquer le lien **et** préciser qu’un code à 6 chiffres est aussi affiché dans Nazix (Paramètres / Notifications).
    - **Réinitialisation du mot de passe** : objet `Réinitialisation de votre mot de passe — Nazix`. Indiquer de vérifier les indésirables, que le lien expire **après 1 heure**, puis de coller le code dans Nazix si le lien ne s’ouvre pas.
@@ -129,7 +132,12 @@ npm run preview
 
 1. **Frontend** (Vercel ou Netlify) : `npm run build`, publier `dist`, variables `VITE_FIREBASE_*` + `VITE_AI_URL=https://us-central1-partagio.cloudfunctions.net/ai`.
 2. **Backend** (Firebase **partagio**) : données (Auth, Firestore, Storage) + secret OpenAI sur la function `ai` : `firebase functions:secrets:set OPENAI_API_KEY` puis `firebase deploy --only functions`.
-3. Ajouter le domaine `*.vercel.app` (ou Netlify) dans Firebase Console → Authentication → **Settings** → **Authorized domains**.
+3. **Domaines Auth (Vercel)** — Identity Toolkit n’accepte que des hôtes exacts (pas `*.vercel.app`). À faire dans la console, 4 écrans :
+   1. **Console Firebase** (projet **partagio**)
+   2. **Authentication**
+   3. **Settings**
+   4. **Authorized domains** → **Add** `vercel.app` (et `netlify.app` si besoin, plus l’hôte réel `mon-app.vercel.app` / `mon-app.netlify.app`).
+   Sans compte admin Google, cette liste ne peut pas être mise à jour depuis un CLI / cette VM.
 
 Sans `VITE_AI_URL`, le client garde `/api/ai` (Vite en local). Le fichier `api/ai.js` + rewrites `vercel.json` sont un **repli optionnel**, pas le backend : la clé OpenAI et les données restent sur Firebase.
 
