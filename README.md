@@ -118,3 +118,31 @@ Les permissions sont appliquées dans l’UI et à l’écriture des entités (p
 npm run build
 npm run preview
 ```
+
+`npm run preview` (port 3847) exécute encore le middleware Vite `POST /api/ai` en local. **L’hébergement statique (Firebase Hosting, Netlify, Vercel) ne peut pas exécuter `vite.config.js`.** En production il faut un serveur (Cloud Functions / serverless) pour `/api/ai`, `/api/ai/stream` et `/api/ai-search`.
+
+## Déployer
+
+La clé OpenAI est un **secret serveur** (Cloud Functions ou Vercel). Elle ne doit **jamais** aller dans le frontend (`VITE_*`, bundle JS, Firebase Hosting).
+
+### Firebase (projet **partagio**) — recommandé
+
+La région Storage est déjà choisie dans la console : ne pas la recréer.
+
+`firebase login` doit être lancé **sur votre machine** (ce dépôt n’a pas votre jeton CLI).
+
+1. `npm run build`
+2. `firebase login`
+3. `firebase use partagio`
+4. `firebase functions:secrets:set OPENAI_API_KEY` (coller la clé ; elle reste côté Functions, pas dans Hosting)
+5. `firebase deploy`
+
+Hosting sert `dist/` (SPA → `index.html`). Les URLs `/api/**` sont réécrites vers la fonction HTTPS `ai` (Node.js 20, `us-central1`). CORS autorise `https://partagio.web.app` et `https://partagio.firebaseapp.com`.
+
+Sans l’étape 4, la fonction n’a pas la clé : l’assistant affiche « OpenAI indisponible ».
+
+### Alternative Vercel
+
+1. `npm run build` (ou laisser Vercel builder)
+2. Dans le projet Vercel : **Settings → Environment Variables** → `OPENAI_API_KEY` (secret serveur, **pas** `VITE_`)
+3. Déployer. `vercel.json` réécrit `/api/ai/stream` et `/api/ai-search` vers `api/ai.js`, et le reste vers `index.html`.

@@ -1,0 +1,18 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/api/ai/stream",
+      "destination": "/api/ai?__nazix=/api/ai/stream"
+    },
+    {
+      "source": "/api/ai-search",
+      "destination": "/api/ai?__nazix=/api/ai-search"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
