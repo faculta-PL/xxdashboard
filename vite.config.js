@@ -41,6 +41,7 @@ export default defineConfig(({ mode }) => {
     throw new Error('Ne jamais définir VITE_OPENAI_API_KEY — utilisez OPENAI_API_KEY côté serveur.')
   }
   return {
+    appType: 'spa',
     plugins: [react(), tailwindcss(), nazixAiPlugin(process.env)],
     server: {
       host: '0.0.0.0',

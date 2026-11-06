@@ -123,13 +123,26 @@ npm run preview
 
 ## Déployer
 
-La clé OpenAI est un **secret serveur** (Cloud Functions ou Vercel). Elle ne doit **jamais** aller dans le frontend (`VITE_*`, bundle JS, Firebase Hosting).
+**Hébergement recommandé : Vercel** (SPA `dist/` + serverless `api/ai.js`). Auth, Firestore et Storage restent sur Firebase **partagio** via les variables `VITE_FIREBASE_*` (config web, pas un secret OpenAI).
 
-### Firebase (projet **partagio**) — recommandé
+La clé OpenAI est un **secret serveur** (`OPENAI_API_KEY` sur Vercel). Elle ne doit **jamais** aller dans le frontend (`VITE_*`, bundle JS).
+
+### Vercel (SPA + `/api/ai`)
+
+`vercel login` doit être lancé **sur votre machine** (cette VM n’a pas votre jeton CLI).
+
+1. `vercel login`
+2. `vercel env add OPENAI_API_KEY` (coller la clé de `.env` ; secret serveur, **pas** `VITE_`). Ajouter aussi les `VITE_FIREBASE_*` du `.env` pour que le build parle à **partagio**.
+3. `vercel --prod`
+4. URL : `https://<projet>.vercel.app` (affichée en fin de commande)
+
+`vercel.json` envoie `/api/ai`, `/api/ai/stream` et `/api/ai-search` vers la fonction `api/ai.js`, et le reste du SPA vers `/index.html`. Sans l’étape 2, l’assistant affiche « OpenAI indisponible ».
+
+### Firebase Hosting (optionnel, projet **partagio**)
+
+Les données restent sur Firebase même si l’app est sur Vercel. Ce bloc ne sert que si vous voulez aussi servir le SPA depuis Hosting.
 
 La région Storage est déjà choisie dans la console : ne pas la recréer.
-
-`firebase login` doit être lancé **sur votre machine** (ce dépôt n’a pas votre jeton CLI).
 
 1. `npm run build`
 2. `firebase login`
@@ -138,11 +151,3 @@ La région Storage est déjà choisie dans la console : ne pas la recréer.
 5. `firebase deploy`
 
 Hosting sert `dist/` (SPA → `index.html`). Les URLs `/api/**` sont réécrites vers la fonction HTTPS `ai` (Node.js 20, `us-central1`). CORS autorise `https://partagio.web.app` et `https://partagio.firebaseapp.com`.
-
-Sans l’étape 4, la fonction n’a pas la clé : l’assistant affiche « OpenAI indisponible ».
-
-### Alternative Vercel
-
-1. `npm run build` (ou laisser Vercel builder)
-2. Dans le projet Vercel : **Settings → Environment Variables** → `OPENAI_API_KEY` (secret serveur, **pas** `VITE_`)
-3. Déployer. `vercel.json` réécrit `/api/ai/stream` et `/api/ai-search` vers `api/ai.js`, et le reste vers `index.html`.

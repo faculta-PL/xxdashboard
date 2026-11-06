@@ -118,26 +118,63 @@ function stripTrailing(path) {
   return String(path || '/').replace(/\/+$/, '') || '/'
 }
 
-export function requestPath(req) {
-  const headers = req.headers || {}
-  const headerPath =
-    headers['x-invoke-path'] || headers['x-matched-path'] || headers['x-original-path'] || headers['x-forwarded-uri']
-  if (headerPath) {
-    try {
-      const p = String(headerPath).split('?')[0]
-      return normalizeApiPath(p)
-    } catch {
-      /* fall through */
+const AI_PATHS = new Set(['/api/ai', '/api/ai/stream', '/api/ai-search'])
+
+export function isAiPath(path) {
+  return AI_PATHS.has(stripTrailing(path))
+}
+
+function firstQueryValue(value) {
+  if (value == null || value === '') return ''
+  return String(Array.isArray(value) ? value[0] : value)
+}
+
+function pathFromMaybeUrl(raw) {
+  const text = String(raw || '')
+  if (!text) return { path: '', nazix: '' }
+  try {
+    const u = new URL(text, 'http://local')
+    return {
+      path: normalizeApiPath(u.pathname),
+      nazix: u.searchParams.get('__nazix') || u.searchParams.get('__path') || '',
+    }
+  } catch {
+    const [pathname, search = ''] = text.split('?')
+    const params = new URLSearchParams(search)
+    return {
+      path: normalizeApiPath(pathname),
+      nazix: params.get('__nazix') || params.get('__path') || '',
     }
   }
-  try {
-    const u = new URL(req.url || req.path || '/', 'http://local')
-    const fromQuery = u.searchParams.get('__nazix') || u.searchParams.get('__path')
-    if (fromQuery) return normalizeApiPath(fromQuery)
-    return normalizeApiPath(u.pathname)
-  } catch {
-    return normalizeApiPath(String(req.path || req.url || '/').split('?')[0])
+}
+
+/** Prefer rewrite query `__nazix` so Vercel `/api/ai` still dispatches stream/search. */
+export function requestPath(req) {
+  const headers = req.headers || {}
+  const query = req.query || {}
+  const fromReqQuery = firstQueryValue(query.__nazix || query.__path)
+  if (fromReqQuery) return normalizeApiPath(fromReqQuery)
+
+  const candidates = []
+  const consider = (raw) => {
+    if (!raw) return
+    const bits = pathFromMaybeUrl(raw)
+    if (bits.nazix) candidates.push(normalizeApiPath(bits.nazix))
+    if (bits.path) candidates.push(bits.path)
   }
+  consider(req.url || req.path || '/')
+  consider(headers['x-forwarded-uri'])
+  consider(headers['x-original-path'])
+  consider(headers['x-invoke-path'])
+  consider(headers['x-matched-path'])
+
+  const aiCandidates = [...new Set(candidates.filter(isAiPath))]
+  const stream = aiCandidates.find((p) => p === '/api/ai/stream')
+  if (stream) return stream
+  const search = aiCandidates.find((p) => p === '/api/ai-search')
+  if (search) return search
+  if (aiCandidates[0]) return aiCandidates[0]
+  return candidates[0] || normalizeApiPath('/')
 }
 
 function normalizeApiPath(path) {
@@ -580,12 +617,6 @@ async function handleSearch(req, res) {
     searchedAt,
     sourceLabel: 'Web · DuckDuckGo Instant Answer',
   })
-}
-
-const AI_PATHS = new Set(['/api/ai', '/api/ai/stream', '/api/ai-search'])
-
-export function isAiPath(path) {
-  return AI_PATHS.has(stripTrailing(path))
 }
 
 /** Returns a Promise if the path is an AI route, otherwise null (caller should next()). */
