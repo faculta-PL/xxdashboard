@@ -6,7 +6,8 @@ Nazix est un espace de travail collaboratif en temps réel : notes, idées (Kanb
 
 ## Stack
 
-- **Frontend** : React (`src/App.jsx`), Vite, Tailwind CSS, Lucide
+- **Frontend** : React (`src/App.jsx`), Vite, Tailwind CSS, Lucide — site statique (`dist`) sur Vercel / Netlify
+- **Backend** : Firebase **partagio** (Auth, Firestore, Storage, Cloud Function `ai`). Vercel n’est pas le backend.
 - **Persistance** : Firebase Auth + Firestore + Storage, sinon **localStorage** / **IndexedDB**
 - **Exports** : CSV (UTF-8 BOM), XLSX, DOCX, JSON, PDF
 
@@ -147,7 +148,7 @@ Navigation **Assistant IA** (`Sparkles`) : liste des conversations + chat. Bouto
 ### Sécurité
 
 - Le client **n’a jamais** de clé API. Pas de `VITE_OPENAI_*` ni secret dans le bundle.
-- Middleware Vite `POST /api/ai`, `POST /api/ai/stream` (SSE) et `POST /api/ai-search` (`configureServer` **et** `configurePreviewServer`) : lit `OPENAI_API_KEY` (prioritaire) ou `ANTHROPIC_API_KEY` / `GROK_API_KEY` **côté serveur**. Avec clé : `{ ok:true }` — conversation OpenAI (`gpt-4o-mini`, ~30 s, multi-tour). Sans clé : `{ ok:false, error:'OPENAI_API_KEY manquante' }` et repli extractif local, avec le message **« OpenAI indisponible: {raison} »**.
+- Production : Cloud Function Firebase `ai` (`VITE_AI_URL`). Vercel/Netlify = front statique uniquement, pas le backend. Local : middleware Vite `POST /api/ai`, `POST /api/ai/stream` (SSE) et `POST /api/ai-search` (`configureServer` **et** `configurePreviewServer`) : lit `OPENAI_API_KEY` (prioritaire) ou `ANTHROPIC_API_KEY` / `GROK_API_KEY` **côté serveur**. Avec clé : `{ ok:true }` — conversation OpenAI (`gpt-4o-mini`, ~30 s, multi-tour). Sans clé : `{ ok:false, error:'OPENAI_API_KEY manquante' }` et repli extractif local, avec le message **« OpenAI indisponible: {raison} »**.
 - Par défaut, si le serveur a une clé, OpenAI est utilisé automatiquement. Bannière : « Réponses via OpenAI. N’envoyez que le contexte de vos contenus autorisés. »
 - Recherche web : fetch **serveur** DuckDuckGo Instant Answer (pas de CORS). Sources + date, libellé **Web** distinct de **Nazix**. L’assistant peut l’utiliser si l’utilisateur le demande.
 - Contexte : uniquement `canReadEntity` (ids, titres, extraits). Affiché : « Contexte : Notes (3) · Projet X ».

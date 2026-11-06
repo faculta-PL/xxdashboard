@@ -6,7 +6,8 @@ Palette vert cassé / sauge · entièrement responsive · **aucune donnée ficti
 
 ## Stack
 
-- **Frontend** : React (App monolithique `src/App.jsx`), Vite, Tailwind CSS, Lucide
+- **Frontend** : React (App monolithique `src/App.jsx`), Vite, Tailwind CSS, Lucide — site **statique** (`dist`) sur **Vercel** ou **Netlify**
+- **Backend** : Firebase projet **partagio** — Auth, Firestore, Storage, Cloud Function `ai` (OpenAI, région `us-central1`). **Vercel n’est pas le backend** : pas de serverless Vercel comme serveur produit
 - **Persistance** : Firebase Auth + Firestore lorsque `VITE_FIREBASE_*` est renseigné, sinon repli **localStorage**
 - **Auth** : `createUserWithEmailAndPassword` / `signInWithEmailAndPassword` + profil `xx_users` (SHA-256 Web Crypto), sessions `xx_sessions` (24 h), RBAC
 - **Exports** : CSV (UTF-8 BOM), XLSX, DOCX, JSON, PDF
@@ -23,7 +24,7 @@ L’app écoute sur [http://127.0.0.1:3847](http://127.0.0.1:3847).
 
 **Firebase** : si un fichier `.env` est présent (projet partagio), la persistance cloud fonctionne tout de suite. Sinon, copiez `.env.example` vers `.env` et renseignez les variables `VITE_FIREBASE_*` (API key, auth domain, project id, storage bucket, messaging sender id, app id). Sans ces variables, l’app tourne en mode **localStorage**. Redémarrer Vite après toute modification du `.env`.
 
-**OpenAI** : ajoutez `OPENAI_API_KEY=` dans `.env` (serveur uniquement, **jamais** `VITE_OPENAI_*`). Vite charge ce fichier pour `dev` et `preview`. Sans clé, l’assistant affiche « OpenAI indisponible ».
+**OpenAI** : en local, ajoutez `OPENAI_API_KEY=` dans `.env` (serveur Vite uniquement, **jamais** `VITE_OPENAI_*`). En production, la clé est le secret de la Cloud Function `ai` ; le front utilise `VITE_AI_URL`. Sans clé, l’assistant affiche « OpenAI indisponible ».
 
 ## Démarrage rapide
 
@@ -57,6 +58,7 @@ VITE_FIREBASE_PROJECT_ID=
 VITE_FIREBASE_STORAGE_BUCKET=
 VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
+VITE_AI_URL=https://us-central1-partagio.cloudfunctions.net/ai
 ```
 
 3. **Authentication** → Sign-in method → activer **E-mail/mot de passe**.
@@ -104,7 +106,7 @@ Collections : `xx_users`, `xx_sessions`, `xx_notes`, `xx_ideas`, `xx_projects`, 
 11. Export CSV / XLSX / DOCX / JSON / PDF
 12. Centre de notifications
 13. Paramètres, sessions, diagnostic Firebase, kit d’exportation
-14. Assistant IA (OpenAI `gpt-4o-mini` via `POST /api/ai` + flux `POST /api/ai/stream` ; clé `OPENAI_API_KEY` **serveur uniquement**, jamais `VITE_*`. Repli extractif local seulement si la clé manque ou si l’API échoue.)
+14. Assistant IA (OpenAI `gpt-4o-mini` via Cloud Function Firebase `ai` / `VITE_AI_URL`, ou `POST /api/ai` en local Vite ; clé `OPENAI_API_KEY` **serveur Firebase uniquement**, jamais dans le bundle. Repli extractif local seulement si la clé manque ou si l’API échoue.)
 
 ## Rôles (RBAC)
 
@@ -119,35 +121,26 @@ npm run build
 npm run preview
 ```
 
-`npm run preview` (port 3847) exécute encore le middleware Vite `POST /api/ai` en local. **L’hébergement statique (Firebase Hosting, Netlify, Vercel) ne peut pas exécuter `vite.config.js`.** En production il faut un serveur (Cloud Functions / serverless) pour `/api/ai`, `/api/ai/stream` et `/api/ai-search`.
+`npm run preview` (port 3847) exécute encore le middleware Vite `POST /api/ai` en local. **Vercel / Netlify ne servent que le `dist` statique** : ils n’exécutent pas `vite.config.js`. En production, le client appelle la Cloud Function Firebase `ai` (`VITE_AI_URL`).
 
-## Déployer
+## Déployer ailleurs
 
-**Hébergement recommandé : Vercel** (SPA `dist/` + serverless `api/ai.js`). Auth, Firestore et Storage restent sur Firebase **partagio** via les variables `VITE_FIREBASE_*` (config web, pas un secret OpenAI).
+**Vercel / Netlify = le site. Firebase partagio = le backend** (Auth, Firestore, Storage, function OpenAI). Ne pas s’appuyer sur les serverless Vercel comme backend produit.
 
-La clé OpenAI est un **secret serveur** (`OPENAI_API_KEY` sur Vercel). Elle ne doit **jamais** aller dans le frontend (`VITE_*`, bundle JS).
+1. **Frontend** (Vercel ou Netlify) : `npm run build`, publier `dist`, variables `VITE_FIREBASE_*` + `VITE_AI_URL=https://us-central1-partagio.cloudfunctions.net/ai`.
+2. **Backend** (Firebase **partagio**) : données (Auth, Firestore, Storage) + secret OpenAI sur la function `ai` : `firebase functions:secrets:set OPENAI_API_KEY` puis `firebase deploy --only functions`.
+3. Ajouter le domaine `*.vercel.app` (ou Netlify) dans Firebase Console → Authentication → **Settings** → **Authorized domains**.
 
-### Vercel (SPA + `/api/ai`)
+Sans `VITE_AI_URL`, le client garde `/api/ai` (Vite en local). Le fichier `api/ai.js` + rewrites `vercel.json` sont un **repli optionnel**, pas le backend : la clé OpenAI et les données restent sur Firebase.
 
-`vercel login` doit être lancé **sur votre machine** (cette VM n’a pas votre jeton CLI).
+### Firebase Hosting (optionnel, même projet **partagio**)
 
-1. `vercel login`
-2. `vercel env add OPENAI_API_KEY` (coller la clé de `.env` ; secret serveur, **pas** `VITE_`). Ajouter aussi les `VITE_FIREBASE_*` du `.env` pour que le build parle à **partagio**.
-3. `vercel --prod`
-4. URL : `https://<projet>.vercel.app` (affichée en fin de commande)
-
-`vercel.json` envoie `/api/ai`, `/api/ai/stream` et `/api/ai-search` vers la fonction `api/ai.js`, et le reste du SPA vers `/index.html`. Sans l’étape 2, l’assistant affiche « OpenAI indisponible ».
-
-### Firebase Hosting (optionnel, projet **partagio**)
-
-Les données restent sur Firebase même si l’app est sur Vercel. Ce bloc ne sert que si vous voulez aussi servir le SPA depuis Hosting.
-
-La région Storage est déjà choisie dans la console : ne pas la recréer.
+La région Storage est déjà choisie dans la console : ne pas la recréer. `firebase login` se lance **sur votre machine**.
 
 1. `npm run build`
 2. `firebase login`
 3. `firebase use partagio`
-4. `firebase functions:secrets:set OPENAI_API_KEY` (coller la clé ; elle reste côté Functions, pas dans Hosting)
+4. `firebase functions:secrets:set OPENAI_API_KEY` (coller la clé ; elle reste côté Functions)
 5. `firebase deploy`
 
-Hosting sert `dist/` (SPA → `index.html`). Les URLs `/api/**` sont réécrites vers la fonction HTTPS `ai` (Node.js 20, `us-central1`). CORS autorise `https://partagio.web.app` et `https://partagio.firebaseapp.com`.
+Hosting sert `dist/` (SPA → `index.html`). Les URLs `/api/**` sont réécrites vers la function HTTPS `ai` (`us-central1`). CORS autorise `partagio.web.app`, `*.vercel.app` et `*.netlify.app`.

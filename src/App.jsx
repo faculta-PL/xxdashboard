@@ -163,6 +163,7 @@ import {
 } from './lib/rbac'
 import {
   FAB_VIEWS,
+  aiEndpoint,
   readExternalPref,
   writeExternalPref,
   readWebPref,
@@ -5855,7 +5856,7 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
     setExtBusy(true)
     setExtErr('')
     try {
-      const res = await fetch('/api/ai-search', {
+      const res = await fetch(aiEndpoint('/api/ai-search'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ q }),
@@ -5873,7 +5874,7 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
       if (!items.length) setExtErr(data.error || 'Aucun résultat externe.')
     } catch {
       setExtErr(
-        'Recherche web indisponible. Relancez Vite (dev ou preview) pour activer POST /api/ai-search.',
+        'Recherche web indisponible. Vérifiez VITE_AI_URL (production) ou relancez Vite en local.',
       )
       setExternal([])
     } finally {

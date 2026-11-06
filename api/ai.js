@@ -1,5 +1,6 @@
-/** Vercel serverless — /api/ai, plus rewrites for /api/ai/stream and /api/ai-search.
- * Set OPENAI_API_KEY in the Vercel project (server env), never VITE_OPENAI_API_KEY. */
+/** Optional Vercel fallback for relative /api/ai — NOT the product backend.
+ * Product AI is Firebase Cloud Function `ai` (set VITE_AI_URL on the frontend).
+ * OPENAI_API_KEY stays a Firebase Functions secret, never VITE_. */
 
 import { createNodeHandler } from '../server/ai-http.mjs'
 

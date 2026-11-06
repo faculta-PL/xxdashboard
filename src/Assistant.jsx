@@ -1052,9 +1052,11 @@ export function AiSettingsBlock({ user: _user, allowExternal: _allowExternal, on
         Réponses via OpenAI. N’envoyez que le contexte de vos contenus autorisés.
       </p>
       <p className="mt-2 text-sm text-sage-600">
-        La clé <code className="rounded bg-sage-100 px-1">OPENAI_API_KEY</code> reste côté serveur (middleware Vite{' '}
-        <code className="rounded bg-sage-100 px-1">POST /api/ai</code> et <code className="rounded bg-sage-100 px-1">/api/ai/stream</code>)
-        — jamais dans <code className="rounded bg-sage-100 px-1">VITE_*</code> ni le bundle. Sans clé, le chat affiche clairement
+        La clé <code className="rounded bg-sage-100 px-1">OPENAI_API_KEY</code> reste côté serveur Firebase
+        (Cloud Function <code className="rounded bg-sage-100 px-1">ai</code>, URL{' '}
+        <code className="rounded bg-sage-100 px-1">VITE_AI_URL</code> ; en local, middleware Vite{' '}
+        <code className="rounded bg-sage-100 px-1">POST /api/ai</code>)
+        — jamais dans le bundle. Sans clé, le chat affiche clairement
         « OpenAI indisponible » et bascule sur un repli extractif local.
       </p>
       <p className="mt-2 flex items-center gap-1 text-xs text-sage-500">

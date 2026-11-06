@@ -1,4 +1,18 @@
-/** Assistant Nazix — client : OpenAI via /api/ai (serveur). Repli extractif local si la clé manque. */
+/** Assistant Nazix — client : OpenAI via Firebase Cloud Function `ai` (VITE_AI_URL)
+ * ou via /api/ai en local (middleware Vite). Repli extractif si la clé manque. */
+
+/** Base URL of Cloud Function `ai` when set (Vercel/Netlify). Empty → relative /api/ai (Vite). */
+export function aiEndpoint(relPath) {
+  const path = relPath.startsWith('/') ? relPath : `/${relPath}`
+  let base = ''
+  try {
+    base = String(import.meta.env?.VITE_AI_URL || '').trim().replace(/\/+$/, '')
+  } catch {
+    base = ''
+  }
+  if (!base) return path
+  return `${base}${path}`
+}
 
 const STOP = new Set(
   `le la les un une des de du et ou à a au aux en ce cet cette ces je tu il elle on nous vous ils elles
@@ -701,7 +715,7 @@ export function stripExternalContext(ctx) {
 
 export async function fetchAiStatus() {
   try {
-    const res = await fetch('/api/ai', { method: 'GET' })
+    const res = await fetch(aiEndpoint('/api/ai'), { method: 'GET' })
     if (!res.ok) return { mode: 'local', ok: false, hasKey: false, error: `HTTP ${res.status}` }
     return await res.json()
   } catch {
@@ -717,7 +731,7 @@ function slimMessages(messages) {
 }
 
 export async function askExternal({ messages, context, web, signal }) {
-  const res = await fetch('/api/ai', {
+  const res = await fetch(aiEndpoint('/api/ai'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -751,7 +765,7 @@ function parseSseBuffer(buffer, onEvent) {
 }
 
 export async function askExternalStream({ messages, context, web, signal, onDelta }) {
-  const res = await fetch('/api/ai/stream', {
+  const res = await fetch(aiEndpoint('/api/ai/stream'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
     body: JSON.stringify({
@@ -810,7 +824,7 @@ export async function askExternalStream({ messages, context, web, signal, onDelt
 }
 
 export async function searchWeb(query) {
-  const res = await fetch('/api/ai-search', {
+  const res = await fetch(aiEndpoint('/api/ai-search'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ q: query }),

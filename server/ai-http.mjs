@@ -36,6 +36,7 @@ export function isAllowedOrigin(origin, env = process.env) {
       if (u.hostname.endsWith('.partagio.web.app')) return true
       if (/^partagio--[a-z0-9-]+\.web\.app$/i.test(u.hostname)) return true
       if (u.hostname.endsWith('.vercel.app')) return true
+      if (u.hostname.endsWith('.netlify.app')) return true
     }
     if (env.VERCEL_URL && origin === `https://${env.VERCEL_URL}`) return true
   } catch {
@@ -179,6 +180,7 @@ export function requestPath(req) {
 
 function normalizeApiPath(path) {
   let p = stripTrailing(path)
+  // Direct Cloud Function URL: …/ai/api/ai → /api/ai
   if (p.startsWith('/ai/api/')) p = p.slice(3)
   else if (p === '/ai/api') p = '/api'
   return p

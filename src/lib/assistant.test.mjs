@@ -1,4 +1,5 @@
 import {
+  aiEndpoint,
   buildContextPayload,
   contextLabel,
   localAnswer,
@@ -80,6 +81,10 @@ const jsonActions = parseActionsFromAssistant(
 )
 assert(jsonActions.some((a) => a.kind === 'create_note' && a.draft?.title === 'Suivi'), JSON.stringify(jsonActions))
 assert(openAiUnavailable('clé absente') === 'OpenAI indisponible: clé absente', 'error format')
+
+assert(aiEndpoint('/api/ai') === '/api/ai', 'relative /api/ai without VITE_AI_URL')
+assert(aiEndpoint('/api/ai/stream') === '/api/ai/stream', 'relative stream')
+assert(aiEndpoint('/api/ai-search') === '/api/ai-search', 'relative search')
 
 assert(wantsWebSearch('cherche en ligne React', false) === true, 'web intent')
 assert(wantsWebSearch('résume', false) === false, 'no web')
