@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { ChevronDown, HelpCircle } from 'lucide-react'
-import { MODULE_CHROME, MODULE_GUIDES, readIntroCollapsed, writeIntroCollapsed } from './guideContent'
+import { useI18n } from '../i18n'
+import { MODULE_CHROME, getModuleGuide, readIntroCollapsed, writeIntroCollapsed } from './guideContent'
 
 export function ModuleIntro({ view, onOpenGuide, forceOpen, onToggle }) {
-  const data = MODULE_GUIDES[view]
+  const { t, lang } = useI18n()
+  const data = getModuleGuide(lang, view)
   const [collapsedMap, setCollapsedMap] = useState(readIntroCollapsed)
   const collapsed = forceOpen ? false : Boolean(collapsedMap[view])
 
@@ -25,7 +27,9 @@ export function ModuleIntro({ view, onOpenGuide, forceOpen, onToggle }) {
         aria-expanded={!collapsed}
       >
         <HelpCircle size={18} className="shrink-0 text-sage-600" />
-        <span className="min-w-0 flex-1 font-display text-lg text-sage-900">À propos — {data.title}</span>
+        <span className="min-w-0 flex-1 font-display text-lg text-sage-900">
+          {t('about.heading', { title: data.title })}
+        </span>
         <ChevronDown size={18} className={`shrink-0 text-sage-500 transition ${collapsed ? '-rotate-90' : ''}`} />
       </button>
       {!collapsed && (
@@ -49,7 +53,7 @@ export function ModuleIntro({ view, onOpenGuide, forceOpen, onToggle }) {
               className="mt-3 text-sm font-semibold text-sage-800 underline decoration-sage-300 underline-offset-2 hover:text-sage-950"
               onClick={onOpenGuide}
             >
-              Ouvrir le Guide
+              {t('about.openGuide')}
             </button>
           )}
         </div>
@@ -58,14 +62,16 @@ export function ModuleIntro({ view, onOpenGuide, forceOpen, onToggle }) {
   )
 }
 
-export function HelpHeaderButton({ onClick, label = 'Aide du module' }) {
+export function HelpHeaderButton({ onClick, label }) {
+  const { t } = useI18n()
+  const text = label || t('about.helpModule')
   return (
     <button
       type="button"
       className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-sage-700 hover:bg-sage-200"
       onClick={onClick}
-      aria-label={label}
-      title={label}
+      aria-label={text}
+      title={text}
     >
       <HelpCircle size={20} />
     </button>

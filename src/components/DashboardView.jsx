@@ -43,16 +43,16 @@ export const DEFAULT_WIDGET_ORDER = [
   'chat',
 ]
 
-const WIDGET_LABELS = {
-  shortcuts: 'Raccourcis',
-  projects: 'Projets récents',
-  tasks: 'Tâches / idées à faire',
-  events: 'Événements à venir',
-  notes: 'Notes récentes',
-  files: 'Fichiers récents',
-  budget: 'Reste budgétaire',
-  risks: 'Risques élevés',
-  chat: 'Chat récent',
+const WIDGET_KEYS = {
+  shortcuts: 'dash.wShortcuts',
+  projects: 'dash.wProjects',
+  tasks: 'dash.wTasks',
+  events: 'dash.wEvents',
+  notes: 'dash.wNotes',
+  files: 'dash.wFiles',
+  budget: 'dash.wBudget',
+  risks: 'dash.wRisks',
+  chat: 'dash.wChat',
 }
 
 const IDEA_DONE = new Set(['Abandonnée'])
@@ -80,11 +80,11 @@ function writeLocalPrefs(userId, prefs) {
 }
 
 function normalizePrefs(raw) {
-  const hidden = Array.isArray(raw?.hidden) ? raw.hidden.filter((id) => WIDGET_LABELS[id]) : []
+  const hidden = Array.isArray(raw?.hidden) ? raw.hidden.filter((id) => WIDGET_KEYS[id]) : []
   const seen = new Set()
   const order = []
   for (const id of [...(Array.isArray(raw?.order) ? raw.order : []), ...DEFAULT_WIDGET_ORDER]) {
-    if (WIDGET_LABELS[id] && !seen.has(id)) {
+    if (WIDGET_KEYS[id] && !seen.has(id)) {
       seen.add(id)
       order.push(id)
     }
@@ -97,6 +97,7 @@ function normalizePrefs(raw) {
 }
 
 function WidgetCard({ title, delay, onHide, onUp, onDown, children, action }) {
+  const { t } = useI18n()
   return (
     <section
       className="rounded-2xl border border-sage-200 bg-white/70 p-5 animate-fade-up"
@@ -106,13 +107,31 @@ function WidgetCard({ title, delay, onHide, onUp, onDown, children, action }) {
         <h2 className="min-w-0 flex-1 font-display text-lg text-sage-900">{title}</h2>
         {action}
         <div className="flex items-center gap-1">
-          <button type="button" className={iconBtn} onClick={onUp} aria-label={`Monter ${title}`} title="Monter">
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={onUp}
+            aria-label={t('dash.moveUp', { title })}
+            title={t('dash.moveUp', { title })}
+          >
             <ChevronUp size={16} />
           </button>
-          <button type="button" className={iconBtn} onClick={onDown} aria-label={`Descendre ${title}`} title="Descendre">
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={onDown}
+            aria-label={t('dash.moveDown', { title })}
+            title={t('dash.moveDown', { title })}
+          >
             <ChevronDown size={16} />
           </button>
-          <button type="button" className={iconBtn} onClick={onHide} aria-label={`Masquer ${title}`} title="Masquer">
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={onHide}
+            aria-label={t('dash.hide', { title })}
+            title={t('dash.hide', { title })}
+          >
             <EyeOff size={16} />
           </button>
         </div>
@@ -178,7 +197,8 @@ export default function DashboardView({
   const restore = () => persist({ hidden: [], order: DEFAULT_WIDGET_ORDER, favoriteProjectId: '' })
 
   const nameOf = (id) => users.find((u) => u.id === id)?.fullName || '—'
-  const groupName = (id) => groups.find((g) => g.id === id)?.name || 'Groupe'
+  const groupName = (id) => groups.find((g) => g.id === id)?.name || t('dash.groupFallback')
+  const widgetTitle = (id) => t(WIDGET_KEYS[id])
 
   const recentProjects = useMemo(() => {
     const list = [...projects].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
@@ -257,7 +277,7 @@ export default function DashboardView({
     shortcuts: (
       <WidgetCard
         id="shortcuts"
-        title="Créer"
+        title={t('dash.wShortcuts')}
         delay={40}
         onHide={() => hide('shortcuts')}
         onUp={() => move('shortcuts', -1)}
@@ -265,12 +285,12 @@ export default function DashboardView({
       >
         <div className="flex flex-wrap gap-2">
           {[
-            ['notes', 'Note', StickyNote],
-            ['projects', 'Projet', FolderKanban],
-            ['ideas', 'Idée', Lightbulb],
-            ['calendar', 'Événement', CalendarDays],
-            ['risks', 'Risque', ShieldAlert],
-            ['budget', 'Dépense', Wallet],
+            ['notes', t('dash.shortcutNote'), StickyNote],
+            ['projects', t('dash.shortcutProject'), FolderKanban],
+            ['ideas', t('dash.shortcutIdea'), Lightbulb],
+            ['calendar', t('dash.shortcutEvent'), CalendarDays],
+            ['risks', t('dash.shortcutRisk'), ShieldAlert],
+            ['budget', t('dash.shortcutExpense'), Wallet],
           ].map(([id, label, Icon]) => (
             <button
               key={id}
@@ -303,26 +323,26 @@ export default function DashboardView({
     projects: (
       <WidgetCard
         id="projects"
-        title="Projets récents"
+        title={t('dash.wProjects')}
         delay={80}
         onHide={() => hide('projects')}
         onUp={() => move('projects', -1)}
         onDown={() => move('projects', 1)}
         action={
           <button type="button" className={btnGhost + ' !min-h-9 !py-1 text-xs'} onClick={() => onQuick('projects')}>
-            Voir
+            {t('common.view')}
           </button>
         }
       >
         {projects.length > 0 && (
           <label className="mb-3 block text-xs text-sage-600">
-            Projet favori
+            {t('dash.favoriteProject')}
             <select
               className="mt-1 w-full rounded-lg border border-sage-300 bg-white px-2 py-1.5 text-sm text-sage-900"
               value={prefs.favoriteProjectId}
               onChange={(e) => persist({ ...prefs, favoriteProjectId: e.target.value })}
             >
-              <option value="">Aucun</option>
+              <option value="">{t('common.none')}</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.title}
@@ -332,7 +352,7 @@ export default function DashboardView({
           </label>
         )}
         {recentProjects.length === 0 ? (
-          <p className="text-sm text-sage-500">Pas encore de projet visible de votre côté.</p>
+          <p className="text-sm text-sage-500">{t('dash.noProject')}</p>
         ) : (
           <ul className="space-y-3">
             {recentProjects.slice(0, 5).map((p) => (
@@ -340,7 +360,7 @@ export default function DashboardView({
                 <div className="mb-1 flex items-center justify-between gap-2 text-sm">
                   <span className="min-w-0 truncate font-medium text-sage-900">
                     {p.title}
-                    {p.id === prefs.favoriteProjectId ? ' · favori' : ''}
+                    {p.id === prefs.favoriteProjectId ? t('dash.favoriteMark') : ''}
                   </span>
                   <span className="flex shrink-0 items-center gap-1">
                     <VisibilityBadge value={p.visibility || 'Partagée'} />
@@ -357,19 +377,19 @@ export default function DashboardView({
     tasks: (
       <WidgetCard
         id="tasks"
-        title="Kanban à faire"
+        title={t('dash.wTasks')}
         delay={120}
         onHide={() => hide('tasks')}
         onUp={() => move('tasks', -1)}
         onDown={() => move('tasks', 1)}
         action={
           <button type="button" className={btnGhost + ' !min-h-9 !py-1 text-xs'} onClick={() => onQuick('ideas')}>
-            Kanban
+            {t('nav.ideas')}
           </button>
         }
       >
         {todoIdeas.length === 0 ? (
-          <p className="text-sm text-sage-500">Aucune idée ouverte.</p>
+          <p className="text-sm text-sage-500">{t('dash.noIdea')}</p>
         ) : (
           <ul className="space-y-2">
             {todoIdeas.map((idea) => (
@@ -385,19 +405,19 @@ export default function DashboardView({
     events: (
       <WidgetCard
         id="events"
-        title="Événements à venir"
+        title={t('dash.wEvents')}
         delay={160}
         onHide={() => hide('events')}
         onUp={() => move('events', -1)}
         onDown={() => move('events', 1)}
         action={
           <button type="button" className={btnGhost + ' !min-h-9 !py-1 text-xs'} onClick={() => onQuick('calendar')}>
-            Voir
+            {t('common.view')}
           </button>
         }
       >
         {upcoming.length === 0 ? (
-          <p className="text-sm text-sage-500">Aucun événement planifié.</p>
+          <p className="text-sm text-sage-500">{t('dash.noEvent')}</p>
         ) : (
           <ul className="space-y-3">
             {upcoming.map((e) => (
@@ -415,25 +435,25 @@ export default function DashboardView({
     notes: (
       <WidgetCard
         id="notes"
-        title="Notes récentes"
+        title={t('dash.wNotes')}
         delay={200}
         onHide={() => hide('notes')}
         onUp={() => move('notes', -1)}
         onDown={() => move('notes', 1)}
         action={
           <button type="button" className={btnGhost + ' !min-h-9 !py-1 text-xs'} onClick={() => onQuick('notes')}>
-            Voir
+            {t('common.view')}
           </button>
         }
       >
         {recentNotes.length === 0 ? (
-          <p className="text-sm text-sage-500">Pas encore de note de votre côté.</p>
+          <p className="text-sm text-sage-500">{t('dash.noNote')}</p>
         ) : (
           <ul className="space-y-2">
             {recentNotes.map((n) => (
               <li key={n.id} className="text-sm">
                 <p className="flex items-center gap-1.5 truncate font-medium text-sage-900">
-                  <span className="min-w-0 truncate">{n.title || 'Sans titre'}</span>
+                  <span className="min-w-0 truncate">{n.title || t('dash.untitled')}</span>
                   <VisibilityBadge value={n.visibility || 'Privée'} />
                 </p>
                 <p className="text-xs text-sage-500">{clipText(n.body || n.content || '', 90)}</p>
@@ -446,19 +466,19 @@ export default function DashboardView({
     files: (
       <WidgetCard
         id="files"
-        title="Fichiers récents"
+        title={t('dash.wFiles')}
         delay={240}
         onHide={() => hide('files')}
         onUp={() => move('files', -1)}
         onDown={() => move('files', 1)}
         action={
           <button type="button" className={btnGhost + ' !min-h-9 !py-1 text-xs'} onClick={() => onQuick('files')}>
-            Voir
+            {t('common.view')}
           </button>
         }
       >
         {recentFiles.length === 0 ? (
-          <p className="text-sm text-sage-500">Pas encore de fichier visible.</p>
+          <p className="text-sm text-sage-500">{t('dash.noFile')}</p>
         ) : (
           <ul className="space-y-2 text-sm">
             {recentFiles.map((f) => (
@@ -477,26 +497,26 @@ export default function DashboardView({
     budget: (
       <WidgetCard
         id="budget"
-        title="Reste budgétaire"
+        title={t('dash.wBudget')}
         delay={280}
         onHide={() => hide('budget')}
         onUp={() => move('budget', -1)}
         onDown={() => move('budget', 1)}
         action={
           <button type="button" className={btnGhost + ' !min-h-9 !py-1 text-xs'} onClick={() => onQuick('budget')}>
-            Voir
+            {t('common.view')}
           </button>
         }
       >
         {budgetRows.length === 0 ? (
-          <p className="text-sm text-sage-500">Aucun budget lisible.</p>
+          <p className="text-sm text-sage-500">{t('dash.noBudget')}</p>
         ) : (
           <ul className="space-y-3">
             {budgetRows.map((b) => (
               <li key={b.id}>
                 <p className="text-sm font-medium text-sage-900">{b.name}</p>
                 <p className="font-display text-xl text-sage-900">{formatMoney(b.remaining, b.currency)}</p>
-                <ProgressBar value={b.pct} label="Consommé (payé)" />
+                <ProgressBar value={b.pct} label={t('dash.consumed')} />
               </li>
             ))}
           </ul>
@@ -506,19 +526,19 @@ export default function DashboardView({
     risks: (
       <WidgetCard
         id="risks"
-        title="Risques élevés et actions en retard"
+        title={t('dash.wRisks')}
         delay={320}
         onHide={() => hide('risks')}
         onUp={() => move('risks', -1)}
         onDown={() => move('risks', 1)}
         action={
           <button type="button" className={btnGhost + ' !min-h-9 !py-1 text-xs'} onClick={() => onQuick('risks')}>
-            Voir
+            {t('common.view')}
           </button>
         }
       >
         {highRisks.length === 0 && overdueActions.length === 0 ? (
-          <p className="text-sm text-sage-500">Aucun risque élevé ni action en retard.</p>
+          <p className="text-sm text-sage-500">{t('dash.noRisk')}</p>
         ) : (
           <div className="space-y-3">
             {highRisks.map((r) => (
@@ -540,19 +560,19 @@ export default function DashboardView({
     chat: (
       <WidgetCard
         id="chat"
-        title="Chat récent"
+        title={t('dash.wChat')}
         delay={360}
         onHide={() => hide('chat')}
         onUp={() => move('chat', -1)}
         onDown={() => move('chat', 1)}
         action={
           <button type="button" className={btnGhost + ' !min-h-9 !py-1 text-xs'} onClick={() => onQuick('chat')}>
-            Ouvrir
+            {t('guidePage.open')}
           </button>
         }
       >
         {recentChat.length === 0 ? (
-          <p className="text-sm text-sage-500">Aucun message récent.</p>
+          <p className="text-sm text-sage-500">{t('dash.noChat')}</p>
         ) : (
           <ul className="space-y-3">
             {recentChat.map((m) => (
@@ -575,10 +595,9 @@ export default function DashboardView({
   return (
     <div className="space-y-6">
       <section className="rounded-3xl border border-sage-200 bg-gradient-to-br from-sage-700 to-sage-900 p-5 text-sage-50 animate-fade-up md:p-8">
-        <p className="font-display text-3xl md:text-4xl">Vue d’ensemble</p>
+        <p className="font-display text-3xl md:text-4xl">{t('dash.overview')}</p>
         <p className="mt-2 max-w-2xl text-sage-200">
-          Widgets alimentés uniquement par des données lisibles ({localMode ? 'mode local' : 'Firebase'}). Masquez,
-          réordonnez, ou restaurez la disposition.
+          {t('dash.overviewHint', { mode: localMode ? t('nav.localMode') : t('nav.firebase') })}
         </p>
         <div className="mt-5 flex flex-wrap gap-2">
           <button
@@ -586,21 +605,21 @@ export default function DashboardView({
             onClick={() => onQuick('notes')}
             className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-cream-green px-3 py-2 text-sm font-semibold text-sage-900 hover:bg-white"
           >
-            <Plus size={16} /> Nouvelle note
+            <Plus size={16} /> {t('dash.newNote')}
           </button>
           <button type="button" className={btnGhost + ' !border-sage-500 !bg-sage-800 !text-sage-50'} onClick={restore}>
-            <RotateCcw size={16} /> Disposition par défaut
+            <RotateCcw size={16} /> {t('dash.restoreLayout')}
           </button>
         </div>
       </section>
 
       {visible.length === 0 && (
         <EmptyState
-          title="Tous les widgets sont masqués"
-          hint="Restaurez la disposition ou réaffichez un bloc ci-dessous."
+          title={t('empty.widgetsTitle')}
+          hint={t('empty.widgetsHint')}
           action={
             <button type="button" className={`${btnPrimary} mt-4`} onClick={restore}>
-              Restaurer
+              {t('dash.restore')}
             </button>
           }
         />
@@ -610,7 +629,7 @@ export default function DashboardView({
 
       {hidden.length > 0 && (
         <section className="rounded-2xl border border-dashed border-sage-300 bg-white/40 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">Widgets masqués</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">{t('dash.hiddenWidgets')}</p>
           <div className="mt-2 flex flex-wrap gap-2">
             {hidden.map((id) => (
               <button
@@ -618,9 +637,9 @@ export default function DashboardView({
                 type="button"
                 className={btnGhost + ' !min-h-9 !py-1 text-xs'}
                 onClick={() => show(id)}
-                aria-label={`Afficher ${WIDGET_LABELS[id]}`}
+                aria-label={t('dash.show', { title: widgetTitle(id) })}
               >
-                <Eye size={14} /> {WIDGET_LABELS[id]}
+                <Eye size={14} /> {widgetTitle(id)}
               </button>
             ))}
           </div>

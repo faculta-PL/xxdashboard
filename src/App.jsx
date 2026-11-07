@@ -61,13 +61,13 @@ import FeedbackView from './FeedbackView'
 import CreateToolsView from './CreateToolsView'
 import VoiceModal from './VoiceModal'
 import { NoteRichContent, NoteLinkedFiles } from './NoteMedia'
-import { LangToggle, useI18n, calendarLabels, landingPlanPoints } from './i18n'
+import { LangToggle, useI18n, calendarLabels, dateLocale, landingPlanPoints } from './i18n'
 import { GuideView } from './onboarding/GuideView'
 import { GuideOverlay } from './onboarding/GuideOverlay'
 import { ModuleIntro, HelpHeaderButton } from './onboarding/ModuleIntro'
 import { DemoGrid } from './onboarding/DemoClips'
 import { EmailNoticeModal } from './onboarding/EmailNotice'
-import { MODULE_CHROME, readGuideDone } from './onboarding/guideContent'
+import { readGuideDone } from './onboarding/guideContent'
 import {
   verifyUserMessage,
   resetUserMessage,
@@ -1151,7 +1151,7 @@ export default function App() {
         <button
           type="button"
           className="fixed inset-0 z-30 bg-ink/40 lg:hidden"
-          aria-label="Fermer le menu"
+          aria-label={t('nav.closeMenu')}
           onClick={() => setMobileNav(false)}
         />
       )}
@@ -1162,7 +1162,7 @@ export default function App() {
             type="button"
             className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-sage-800 hover:bg-sage-200 lg:hidden"
             onClick={() => setMobileNav(true)}
-            aria-label="Ouvrir le menu"
+            aria-label={t('nav.openMenu')}
           >
             <Menu size={20} />
           </button>
@@ -1176,8 +1176,8 @@ export default function App() {
                 : null}
               <span className="truncate">{t(`nav.${view}`) || NAV_FLAT.find((n) => n.id === view)?.label}</span>
             </h1>
-            {MODULE_CHROME[view]?.subtitle ? (
-              <p className="mt-0.5 truncate text-xs text-sage-600">{MODULE_CHROME[view].subtitle}</p>
+            {t(`chrome.${view}`) && t(`chrome.${view}`) !== `chrome.${view}` ? (
+              <p className="mt-0.5 truncate text-xs text-sage-600">{t(`chrome.${view}`)}</p>
             ) : null}
           </div>
           <button
@@ -1580,7 +1580,7 @@ function LandingPage({
               type="button"
               className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-sage-800 hover:bg-sage-200/70 lg:hidden"
               onClick={() => setMobileOpen((v) => !v)}
-              aria-label={mobileOpen ? 'Fermer le menu' : 'Ouvrir le menu'}
+              aria-label={mobileOpen ? t('nav.closeMenu') : t('nav.openMenu')}
             >
               {mobileOpen ? <X size={22} /> : <Menu size={22} />}
             </button>
@@ -1898,12 +1898,13 @@ function LandingPage({
 }
 
 function ProductMockup() {
+  const { t } = useI18n()
   const mockNav = [LayoutDashboard, StickyNote, Lightbulb, FolderKanban, FolderOpen, MessageCircle]
   return (
     <div className="relative mx-auto aspect-[16/11] w-full max-w-[640px] lg:max-w-none">
       <div className="pointer-events-none absolute -inset-6 rounded-[2.5rem] bg-gradient-to-br from-sage-200/50 via-transparent to-sage-300/30 blur-2xl" />
       <div className="landing-float absolute left-2 top-[18%] z-20 hidden flex-col gap-2 sm:flex sm:left-[-8px] lg:left-[-18px]">
-        {['Notes', 'Kanban', 'Chat'].map((label) => (
+        {[t('nav.notes'), t('nav.ideas'), t('nav.chat')].map((label) => (
           <span
             key={label}
             className="landing-pill inline-flex w-fit rounded-full bg-sage-800 px-3 py-1.5 text-[11px] font-semibold text-sage-50 sm:px-3.5 sm:text-xs"
@@ -1920,7 +1921,9 @@ function ProductMockup() {
             <span className="h-2 w-2 rounded-full bg-[#b7c4ad]" />
           </span>
           <span className="font-display text-[11px] text-sage-800">Nazix</span>
-          <span className="rounded-md bg-sage-100 px-2 py-0.5 text-[10px] font-medium text-sage-600">Dashboard</span>
+          <span className="rounded-md bg-sage-100 px-2 py-0.5 text-[10px] font-medium text-sage-600">
+            {t('landing.mockDashboard')}
+          </span>
           <span className="ml-auto flex -space-x-1">
             <span className="h-4 w-4 rounded-full bg-sage-300" />
             <span className="h-4 w-4 rounded-full bg-sage-500" />
@@ -1939,25 +1942,25 @@ function ProductMockup() {
             ))}
           </aside>
           <div className="hidden flex-col gap-1.5 overflow-hidden border-r border-sage-200/70 bg-[#f7f9f5] p-2 sm:flex">
-            <p className="text-[10px] font-semibold text-sage-800">Notes & Idées</p>
+            <p className="text-[10px] font-semibold text-sage-800">{t('landing.mockNotesIdeas')}</p>
             {[
-              ['Brief sprint', 'Prioriser les notes partagées.'],
-              ['Idées retenues', 'Kanban mis à jour en réunion.'],
-              ['Compte rendu', 'Décisions du chat Général.'],
-            ].map(([t, d]) => (
-              <div key={t} className="rounded-lg bg-white p-1.5 shadow-sm">
-                <p className="text-[9px] font-semibold text-sage-800">{t}</p>
+              [t('landing.mockNote1t'), t('landing.mockNote1d')],
+              [t('landing.mockNote2t'), t('landing.mockNote2d')],
+              [t('landing.mockNote3t'), t('landing.mockNote3d')],
+            ].map(([title, d]) => (
+              <div key={title} className="rounded-lg bg-white p-1.5 shadow-sm">
+                <p className="text-[9px] font-semibold text-sage-800">{title}</p>
                 <p className="text-[8px] leading-snug text-sage-500">{d}</p>
               </div>
             ))}
           </div>
           <div className="flex min-w-0 flex-col overflow-hidden bg-white p-2">
-            <p className="mb-1.5 text-[10px] font-semibold text-sage-800">Tableau Kanban</p>
+            <p className="mb-1.5 text-[10px] font-semibold text-sage-800">{t('landing.mockKanban')}</p>
             <div className="grid min-h-0 flex-1 grid-cols-3 gap-1.5">
               {[
-                ['#dce6d4', ['À préparer', 'Cadrer le livrable']],
-                ['#edd8d2', ['En saison', 'Suivi équipe']],
-                ['#efe3c4', ['Retenue', 'Prête à lancer']],
+                ['#dce6d4', [t('landing.mockCol1a'), t('landing.mockCol1b')]],
+                ['#edd8d2', [t('landing.mockCol2a'), t('landing.mockCol2b')]],
+                ['#efe3c4', [t('landing.mockCol3a'), t('landing.mockCol3b')]],
               ].map(([bg, cards]) => (
                 <div key={cards[0]} className="flex flex-col gap-1 rounded-lg p-1" style={{ background: bg }}>
                   {cards.map((c) => (
@@ -1970,20 +1973,20 @@ function ProductMockup() {
             </div>
           </div>
           <div className="hidden min-w-0 flex-col overflow-hidden border-l border-sage-200/70 bg-[#f7f9f5] p-2 sm:flex">
-            <p className="mb-1.5 text-[10px] font-semibold text-sage-800">Chat</p>
+            <p className="mb-1.5 text-[10px] font-semibold text-sage-800">{t('nav.chat')}</p>
             <div className="space-y-1.5">
               <div className="max-w-[90%] rounded-xl rounded-tl-sm bg-sage-100 px-2 py-1 text-[8px] text-sage-800">
-                On valide le tableau ce matin ?
+                {t('landing.mockChat1')}
               </div>
               <div className="ml-auto max-w-[90%] rounded-xl rounded-tr-sm bg-sage-700 px-2 py-1 text-[8px] text-sage-50">
-                Oui — notes déjà partagées.
+                {t('landing.mockChat2')}
               </div>
               <div className="max-w-[90%] rounded-xl rounded-tl-sm bg-sage-100 px-2 py-1 text-[8px] text-sage-800">
-                Parfait, on avance.
+                {t('landing.mockChat3')}
               </div>
             </div>
             <div className="mt-auto flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[8px] text-sage-400">
-              Écrire un message…
+              {t('landing.mockWrite')}
             </div>
           </div>
         </div>
@@ -2031,7 +2034,7 @@ function AuthModal({
 
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-end sm:items-stretch">
-      <button type="button" className="absolute inset-0 bg-ink/40" aria-label="Fermer" onClick={onClose} />
+      <button type="button" className="absolute inset-0 bg-ink/40" aria-label={t('auth.close')} onClick={onClose} />
       <div
         className="landing-drawer relative z-10 flex max-h-[min(94dvh,100%)] w-full max-w-full flex-col overflow-hidden rounded-t-2xl bg-[#f5f6f1] shadow-2xl sm:h-full sm:max-h-none sm:w-[26.5rem] sm:rounded-none"
         onClick={(e) => e.stopPropagation()}
@@ -2047,7 +2050,7 @@ function AuthModal({
             type="button"
             onClick={onClose}
             className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-sage-600 hover:bg-sage-200"
-            aria-label="Fermer"
+            aria-label={t('auth.close')}
           >
             <X size={18} />
           </button>
@@ -2111,7 +2114,7 @@ function AuthModal({
                     type="button"
                     className="absolute right-1 top-1/2 min-h-11 min-w-11 -translate-y-1/2 p-2 text-sage-500"
                     onClick={() => setShowPass((v) => !v)}
-                    aria-label={showPass ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                    aria-label={showPass ? t('auth.hidePassword') : t('auth.showPassword')}
                   >
                     {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
@@ -6409,6 +6412,7 @@ function CalendarView({ user, events, users, flash }) {
 }
 
 function SearchView({ notes, ideas, projects, events, files = [], budgets = [], risks = [] }) {
+  const { t, lang } = useI18n()
   const [q, setQ] = useState('')
   const [category, setCategory] = useState('')
   const [status, setStatus] = useState('')
@@ -6452,23 +6456,23 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
       const notesById = Object.fromEntries(notes.map((x) => [x.id, x]))
       return [
         ...n.map((x) => ({
-          kind: x.parentId ? 'Sous-note' : 'Note',
+          kind: x.parentId ? t('searchUi.subnote') : t('searchUi.note'),
           parentTitle: x.parentId ? notesById[x.parentId]?.title : '',
           ...x,
         })),
-        ...i.map((x) => ({ kind: 'Idée', ...x })),
-        ...p.map((x) => ({ kind: 'Projet', ...x })),
-        ...e.map((x) => ({ kind: 'Événement', ...x })),
-        ...f.map((x) => ({ kind: 'Fichier', title: x.name, ...x })),
-        ...b.map((x) => ({ kind: 'Budget', title: x.name, ...x })),
-        ...r.map((x) => ({ kind: 'Risque', ...x })),
+        ...i.map((x) => ({ kind: t('searchUi.idea'), ...x })),
+        ...p.map((x) => ({ kind: t('searchUi.project'), ...x })),
+        ...e.map((x) => ({ kind: t('searchUi.event'), ...x })),
+        ...f.map((x) => ({ kind: t('searchUi.file'), title: x.name, ...x })),
+        ...b.map((x) => ({ kind: t('searchUi.budget'), title: x.name, ...x })),
+        ...r.map((x) => ({ kind: t('searchUi.risk'), ...x })),
       ]
     }
     const filtered = collect(true)
     if (filtered.length || !query) return filtered
     if (category || status || tag || projectId) return collect(false)
     return filtered
-  }, [notes, ideas, projects, events, files, budgets, risks, query, category, status, tag, projectId])
+  }, [notes, ideas, projects, events, files, budgets, risks, query, category, status, tag, projectId, t])
 
   const runExternal = async () => {
     if (!query) return
@@ -6507,24 +6511,24 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sage-400" size={16} />
             <input
               className={inputClass + ' pl-9'}
-              placeholder="Rechercher notes, sous-notes, fichiers, budgets, risques…"
+              placeholder={t('searchUi.placeholder')}
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
           </div>
           <button type="button" className={btnPrimary} onClick={runExternal} disabled={extBusy || !query}>
-            <ExternalLink size={16} /> {extBusy ? 'Recherche…' : 'Recherche externe'}
+            <ExternalLink size={16} /> {extBusy ? t('searchUi.searching') : t('searchUi.external')}
           </button>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <select className={inputClass + ' max-w-full md:!w-auto'} value={category} onChange={(e) => setCategory(e.target.value)}>
-            <option value="">Catégorie</option>
+            <option value="">{t('searchUi.category')}</option>
             {NOTE_CATEGORIES.map((c) => (
               <option key={c}>{c}</option>
             ))}
           </select>
           <select className={inputClass + ' max-w-full md:!w-auto'} value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">Statut</option>
+            <option value="">{t('searchUi.status')}</option>
             {[...IDEA_STATUSES, ...PROJECT_STATUSES].map((s) => (
               <option key={s}>{s}</option>
             ))}
@@ -6572,14 +6576,14 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
 
       {!webHidden && (
         <section>
-          <h2 className="mb-3 font-display text-lg text-sage-900">Web (hors Nazix)</h2>
+          <h2 className="mb-3 font-display text-lg text-sage-900">{t('searchUi.web')}</h2>
           {extErr && <p className="mb-2 text-sm text-sage-500">{extErr}</p>}
           {external.length === 0 && !extErr && (
-            <p className="text-sm text-sage-500">Lancez une recherche externe pour ancrer vos contenus.</p>
+            <p className="text-sm text-sage-500">{t('searchUi.webLaunch')}</p>
           )}
           {external[0]?.searchedAt && (
             <p className="mb-2 text-xs text-sage-500">
-              Recherche du {new Date(external[0].searchedAt).toLocaleString('fr-FR')} · DuckDuckGo — ce ne sont pas des faits Nazix.
+              {t('searchUi.webOf', { date: new Date(external[0].searchedAt).toLocaleString(dateLocale(lang)) })}
             </p>
           )}
           <ul className="space-y-2">
@@ -6608,6 +6612,7 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
 }
 
 function ExportView({ notes, ideas, projects, events, flash }) {
+  const { t } = useI18n()
   const rows = buildExportRows({ notes, ideas, projects, events })
   const bundle = {
     exportedAt: new Date().toISOString(),
@@ -6625,25 +6630,22 @@ function ExportView({ notes, ideas, projects, events, flash }) {
       if (kind === 'docx') await exportDOCX(buildDocSections({ notes, ideas, projects, events }))
       if (kind === 'pdf')
         exportPDF('Export Nazix', buildPdfTables({ notes, ideas, projects, events }))
-      flash(`Export ${kind.toUpperCase()} téléchargé.`)
+      flash(t('exportUi.downloaded', { kind: kind.toUpperCase() }))
     } catch (err) {
-      flash(err.message || 'Échec export', 'err')
+      flash(err.message || t('exportUi.failed'), 'err')
     }
   }
 
   return (
     <div className="animate-fade-up">
-      <p className="mb-4 max-w-2xl text-sm text-sage-600">
-        Générez un fichier à partir des entités visibles pour votre compte. Encodage UTF-8 BOM pour
-        CSV / XLSX.
-      </p>
+      <p className="mb-4 max-w-2xl text-sm text-sage-600">{t('exportUi.hint')}</p>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
         {[
-          ['csv', 'CSV (Excel UTF-8)'],
-          ['xlsx', 'XLSX'],
-          ['docx', 'DOCX (rapport)'],
-          ['json', 'JSON (brut)'],
-          ['pdf', 'PDF'],
+          ['csv', t('exportUi.csv')],
+          ['xlsx', t('exportUi.xlsx')],
+          ['docx', t('exportUi.docx')],
+          ['json', t('exportUi.json')],
+          ['pdf', t('exportUi.pdf')],
         ].map(([id, label]) => (
           <button
             key={id}
@@ -6653,7 +6655,7 @@ function ExportView({ notes, ideas, projects, events, flash }) {
           >
             <Download className="text-sage-600" size={22} />
             <p className="mt-3 font-display text-lg text-sage-900">{label}</p>
-            <p className="text-xs text-sage-500">{rows.length} lignes consolidées</p>
+            <p className="text-xs text-sage-500">{t('exportUi.rows', { n: rows.length })}</p>
           </button>
         ))}
       </div>
@@ -6662,6 +6664,7 @@ function ExportView({ notes, ideas, projects, events, flash }) {
 }
 
 function NotificationsView({ notifications, flash, user }) {
+  const { t, lang } = useI18n()
   return (
     <div className="space-y-4 animate-fade-up">
       <div className="flex flex-wrap gap-2">
@@ -6670,14 +6673,14 @@ function NotificationsView({ notifications, flash, user }) {
           className={btnPrimary}
           onClick={async () => {
             await markAllNotificationsRead(user.id)
-            flash('Toutes marquées comme lues.')
+            flash(t('notif.marked'))
           }}
         >
-          <Check size={16} /> Tout marquer lu
+          <Check size={16} /> {t('notif.markAll')}
         </button>
       </div>
       {notifications.length === 0 ? (
-        <EmptyState title="Tout est calme" hint="Les invitations, partages et retours arriveront ici." />
+        <EmptyState title={t('empty.notificationsTitle')} hint={t('empty.notificationsHint')} />
       ) : (
         <ul className="space-y-2">
           {notifications.map((n) => (
@@ -6692,7 +6695,7 @@ function NotificationsView({ notifications, flash, user }) {
                   <p className="font-semibold text-sage-900">{n.title}</p>
                   <p className="text-sm text-sage-700">{n.body}</p>
                   <p className="mt-1 text-xs text-sage-500">
-                    {new Date(n.createdAt).toLocaleString('fr-FR')}
+                    {new Date(n.createdAt).toLocaleString(dateLocale(lang))}
                   </p>
                 </div>
                 {!n.read && (
@@ -6701,7 +6704,7 @@ function NotificationsView({ notifications, flash, user }) {
                     className={btnGhost}
                     onClick={() => markNotificationRead(n.id)}
                   >
-                    Lu
+                    {t('notif.read')}
                   </button>
                 )}
               </div>
@@ -6714,6 +6717,7 @@ function NotificationsView({ notifications, flash, user }) {
 }
 
 function SettingsView({ user, session, users, flash, onUserUpdated, allowExternal, onAllowExternal }) {
+  const { t, lang } = useI18n()
   const [fullName, setFullName] = useState(user.fullName)
   const [code, setCode] = useState('')
   const [diag, setDiag] = useState(null)
@@ -6728,20 +6732,20 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
     <div className="space-y-6 animate-fade-up">
       <section className="rounded-2xl border border-sage-200 bg-white/80 p-5">
         <h2 className="flex items-center gap-2 font-display text-lg text-sage-900">
-          <Users size={18} /> Profil
+          <Users size={18} /> {t('settingsUi.profile')}
         </h2>
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-          <Field label="Nom complet">
+          <Field label={t('settingsUi.fullName')}>
             <input className={inputClass} value={fullName} onChange={(e) => setFullName(e.target.value)} />
           </Field>
-          <Field label="E-mail">
+          <Field label={t('auth.email')}>
             <input className={inputClass} value={user.email} disabled />
           </Field>
-          <Field label="Rôle">
+          <Field label={t('settingsUi.role')}>
             <input className={inputClass} value={user.role} disabled />
           </Field>
-          <Field label="E-mail vérifié">
-            <input className={inputClass} value={user.emailVerified ? 'Oui' : 'Non'} disabled />
+          <Field label={t('settingsUi.emailVerified')}>
+            <input className={inputClass} value={user.emailVerified ? t('settingsUi.yes') : t('settingsUi.no')} disabled />
           </Field>
         </div>
         <button
@@ -6750,10 +6754,10 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
           onClick={async () => {
             await updateProfile(user.id, { fullName })
             await onUserUpdated()
-            flash('Profil mis à jour.')
+            flash(t('settingsUi.profileUpdated'))
           }}
         >
-          Enregistrer le profil
+          {t('settingsUi.saveProfile')}
         </button>
 
         {!user.emailVerified && (
@@ -6823,7 +6827,7 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
 
       <section className="rounded-2xl border border-sage-200 bg-white/80 p-5">
         <h2 className="flex items-center gap-2 font-display text-lg text-sage-900">
-          <Shield size={18} /> Sessions actives
+          <Shield size={18} /> {t('settingsUi.sessions')}
         </h2>
         <ul className="mt-3 space-y-2">
           {sessions.map((s) => (
@@ -6833,12 +6837,12 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
             >
               <div>
                 <p className="font-medium text-sage-900">
-                  {s.active ? 'Active' : 'Révoquée'}
-                  {session?.id === s.id ? ' · session courante' : ''}
+                  {s.active ? t('settingsUi.active') : t('settingsUi.revoked')}
+                  {session?.id === s.id ? t('settingsUi.currentSession') : ''}
                 </p>
                 <p className="text-xs text-sage-500">
-                  Créée {new Date(s.createdAt).toLocaleString('fr-FR')} · expire{' '}
-                  {new Date(s.expiresAt).toLocaleString('fr-FR')}
+                  {t('settingsUi.created', { date: new Date(s.createdAt).toLocaleString(dateLocale(lang)) })} ·{' '}
+                  {t('settingsUi.expires', { date: new Date(s.expiresAt).toLocaleString(dateLocale(lang)) })}
                 </p>
               </div>
               {s.active && (
@@ -6848,10 +6852,10 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
                   onClick={async () => {
                     await revokeSession(s.id, user)
                     await onUserUpdated()
-                    flash('Session révoquée.')
+                    flash(t('settingsUi.revokedToast'))
                   }}
                 >
-                  Révoquer
+                  {t('settingsUi.revoke')}
                 </button>
               )}
             </li>
@@ -7046,18 +7050,23 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
 }
 
 function TeamView({ users, presentIds }) {
+  const { t, lang } = useI18n()
   const present = new Set(presentIds)
   const sorted = [...users].sort((a, b) =>
-    String(a.fullName || '').localeCompare(String(b.fullName || ''), 'fr'),
+    String(a.fullName || '').localeCompare(String(b.fullName || ''), dateLocale(lang)),
   )
 
   if (sorted.length === 0) {
-    return <EmptyState title="L’équipe se construit ici" hint="Les comptes inscrits apparaîtront au fil de l’eau." />
+    return <EmptyState title={t('empty.teamTitle')} hint={t('empty.teamHint')} />
   }
 
   return (
     <div className="space-y-3 animate-fade-up">
-      <p className="text-sm text-sage-600">{sorted.length} personne{sorted.length > 1 ? 's' : ''}.</p>
+      <p className="text-sm text-sage-600">
+        {sorted.length === 1
+          ? t('teamUi.countOne', { n: sorted.length })
+          : t('teamUi.countMany', { n: sorted.length })}
+      </p>
       <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
         {sorted.map((u) => {
           const online = present.has(u.id)
@@ -7077,7 +7086,7 @@ function TeamView({ users, presentIds }) {
                       online ? 'bg-ok/15 text-ok' : 'bg-sage-100 text-sage-500'
                     }`}
                   >
-                    {online ? 'En ligne' : 'Hors ligne'}
+                    {online ? t('teamUi.online') : t('teamUi.offline')}
                   </span>
                 </div>
                 <p className="break-all text-sm text-sage-600 md:truncate md:break-normal">{u.email}</p>
@@ -7244,7 +7253,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
       <section className={`${showThread ? 'flex' : 'hidden lg:flex'} min-h-[calc(100dvh-8rem)] min-w-0 flex-1 flex-col lg:min-h-0`}>
         {!selected ? (
           <div className="flex flex-1 items-center justify-center p-6">
-            <EmptyState title="Choisissez un groupe" hint="Ouvrez Général pour dire bonjour, ou créez un cercle plus petit." />
+            <EmptyState title={t('empty.chatTitle')} hint={t('empty.chatHint')} />
           </div>
         ) : (
           <>
