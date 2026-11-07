@@ -1,4 +1,4 @@
-import { extractMediaUrls, safeHttpUrl, splitContentMedia } from './lib/noteMedia'
+import { safeHttpUrl, splitContentMedia } from './lib/noteMedia'
 import { isImageExt, isPdfExt } from './lib/files'
 
 export function NoteRichContent({ content, imageUrl, className = '' }) {
