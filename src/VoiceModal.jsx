@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Mic, MicOff } from 'lucide-react'
 import { useI18n } from './i18n'
-import { createRecognizer, speechSupported, VOICE_DESTS } from './lib/voice'
+import { createRecognizer, firstLine, speechSupported, VOICE_DESTS } from './lib/voice'
 import { canWriteRole } from './lib/rbac'
 
 const inputClass =
