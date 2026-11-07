@@ -67,6 +67,7 @@ const dicts = {
       demoTitle: 'Nazix en dix secondes.',
       demoHint:
         'Clips bouclés (notes, kanban, projets, chat). Ce sont des animations, pas des films — le vrai travail se fait après connexion.',
+      demoVideoCaption: '24 secondes pour comprendre Nazix',
       featuresKicker: 'Fonctionnalités',
       featuresTitle: 'Tout ce qu’il faut, au même endroit.',
       featuresHint: 'Modules réellement présents dans l’app — pas une liste marketing inventée.',
@@ -438,6 +439,7 @@ const dicts = {
       demoKicker: 'Demo',
       demoTitle: 'Nazix in ten seconds.',
       demoHint: 'Looping clips (notes, kanban, projects, chat). Animations, not films — real work starts after sign-in.',
+      demoVideoCaption: '24 seconds to understand Nazix',
       featuresKicker: 'Features',
       featuresTitle: 'Everything you need, in one place.',
       featuresHint: 'Modules that actually exist in the app — not a made-up marketing list.',

@@ -1705,6 +1705,20 @@ function LandingPage({
           <h2 className="mt-2 font-display text-3xl text-sage-900 md:text-4xl">{t('landing.demoTitle')}</h2>
           <p className="mt-3 text-sage-600">{t('landing.demoHint')}</p>
         </div>
+        <figure className="mt-8 w-full max-w-3xl">
+          <video
+            className="aspect-video w-full rounded-2xl border border-sage-200/80 bg-sage-950 shadow-[0_8px_24px_rgba(47,56,44,0.12)]"
+            controls
+            playsInline
+            preload="metadata"
+            poster="/nazix-brag.jpg"
+          >
+            <source src="/nazix-brag.mp4" type="video/mp4" />
+          </video>
+          <figcaption className="mt-3 text-center text-sm text-sage-600">
+            {t('landing.demoVideoCaption')}
+          </figcaption>
+        </figure>
         <div className="mt-8">
           <DemoGrid />
         </div>
