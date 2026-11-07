@@ -256,6 +256,30 @@ const btnPrimary =
   'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-sage-700 px-4 py-2.5 text-sm font-semibold text-sage-50 transition hover:bg-sage-800 disabled:opacity-50'
 const btnGhost =
   'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-sage-300 bg-white/70 px-3 py-2 text-sm font-medium text-sage-800 transition hover:bg-sage-100'
+const btnCardAction =
+  'inline-flex min-h-10 min-w-10 items-center justify-center gap-1.5 rounded-xl border border-sage-500 bg-white px-2.5 py-2 text-xs font-semibold text-sage-800 shadow-sm transition hover:border-sage-700 hover:bg-sage-100 sm:text-sm'
+
+function CardActionButton({ icon: Icon, label, onClick, danger = false, title }) {
+  const text = title || label
+  return (
+    <button
+      type="button"
+      className={`${btnCardAction}${danger ? ' !border-danger/50 !text-danger hover:!border-danger hover:!bg-red-50' : ''}`}
+      onClick={onClick}
+      title={text}
+      aria-label={text}
+    >
+      <Icon size={16} strokeWidth={2.25} className="shrink-0 text-current" aria-hidden="true" />
+      <span>{label}</span>
+    </button>
+  )
+}
+
+function entityAuthorName(users, entity, selfId) {
+  if (!entity?.ownerId || entity.ownerId === selfId) return null
+  const u = users.find((x) => x.id === entity.ownerId)
+  return u?.fullName || entity.ownerEmail || 'Auteur'
+}
 
 function Modal({
   open,
@@ -3542,6 +3566,7 @@ function NotesView({
 }) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [viewing, setViewing] = useState(null)
   const [confirmId, setConfirmId] = useState(null)
   const [filterCat, setFilterCat] = useState('Tous')
   const [form, setForm] = useState(emptyNote())
@@ -3581,6 +3606,14 @@ function NotesView({
     setEditing(null)
     setForm(emptyNote())
     setOpen(true)
+  }
+
+  const openView = (n) => {
+    if (!canReadEntity(user, n)) {
+      flash('Permission refusée.', 'err')
+      return
+    }
+    setViewing(n)
   }
 
   const openEdit = (n) => {
@@ -3671,8 +3704,8 @@ function NotesView({
     return (
       <div key={n.id} className={depth ? 'mt-2 border-l border-sage-200 pl-3' : ''}>
         <article className={`rounded-2xl border p-4 transition hover:border-sage-400 ${selectedNoteIds.includes(n.id) ? 'border-sage-500 bg-sage-100/80' : 'border-sage-200 bg-white/80'}`}>
-          <div className="flex items-start justify-between gap-2">
-            <div>
+          <div className="flex flex-col gap-3">
+            <div className="min-w-0">
               {onToggleNote && (
                 <label className="mb-1 flex items-center gap-1.5 text-[11px] text-sage-600">
                   <input
@@ -3690,20 +3723,21 @@ function NotesView({
                 {n.parentId ? ` · sous-note de ${notesById[n.parentId]?.title || '…'}` : ''}
               </p>
             </div>
-            <div className="flex gap-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              {canReadEntity(user, n) && (
+                <CardActionButton icon={Eye} label="Voir" title="Voir la note" onClick={() => openView(n)} />
+              )}
               {canEditEntity(user, n) && (
-                <button type="button" className={btnGhost + ' !px-2'} onClick={() => openEdit(n)}>
-                  <Pencil size={14} />
-                </button>
+                <CardActionButton icon={Pencil} label="Modifier" title="Modifier la note" onClick={() => openEdit(n)} />
               )}
               {canDeleteEntity(user, n) && (
-                <button
-                  type="button"
-                  className={btnGhost + ' !px-2 !text-danger'}
+                <CardActionButton
+                  icon={Trash2}
+                  label="Supprimer"
+                  title="Supprimer la note"
+                  danger
                   onClick={() => setConfirmId(n.id)}
-                >
-                  <Trash2 size={14} />
-                </button>
+                />
               )}
             </div>
           </div>
@@ -3741,6 +3775,8 @@ function NotesView({
       [key]: f[key].includes(id) ? f[key].filter((x) => x !== id) : [...f[key], id],
     }))
   }
+
+  const viewingAuthor = viewing ? entityAuthorName(users, viewing, user.id) : null
 
   return (
     <div className="space-y-4 animate-fade-up">
@@ -3951,6 +3987,53 @@ function NotesView({
             />
           )}
         </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(viewing)}
+        title={viewing?.title || 'Note'}
+        onClose={() => setViewing(null)}
+        wide
+        footer={
+          <>
+            <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setViewing(null)}>
+              Fermer
+            </button>
+            {viewing && canEditEntity(user, viewing) && (
+              <button
+                type="button"
+                className={btnPrimary + ' w-full sm:w-auto'}
+                onClick={() => {
+                  const n = viewing
+                  setViewing(null)
+                  openEdit(n)
+                }}
+              >
+                <Pencil size={16} /> Modifier
+              </button>
+            )}
+          </>
+        }
+      >
+        {viewing && (
+          <div className="space-y-3">
+            <p className="text-sm text-sage-600">
+              Catégorie : {viewing.category || 'Général'} · Visibilité : {viewing.visibility || 'Privée'}
+              {viewing.parentId ? ` · sous-note de ${notesById[viewing.parentId]?.title || '…'}` : ''}
+            </p>
+            {viewingAuthor ? <p className="text-sm text-sage-600">Auteur : {viewingAuthor}</p> : null}
+            <p className="whitespace-pre-wrap text-sm text-sage-800">{viewing.content || '—'}</p>
+            {(viewing.tags || []).length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {viewing.tags.map((t) => (
+                  <span key={t} className="rounded-md bg-sage-100 px-2 py-0.5 text-xs text-sage-700">
+                    #{t}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
 
       <Modal
@@ -5048,37 +5131,74 @@ function IdeasView({ user, ideas, users, flash }) {
                       <p className="font-medium text-sage-900">{idea.title}</p>
                       <p className="mt-1 line-clamp-2 text-xs text-sage-600">{idea.description}</p>
                     </button>
-                    <div className="mt-2 flex items-center justify-between">
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <CardActionButton
+                        icon={Eye}
+                        label="Voir"
+                        title="Voir l’idée"
+                        onClick={() => setDetail(idea)}
+                      />
+                      {canEditEntity(user, idea) && (
+                        <CardActionButton
+                          icon={Pencil}
+                          label="Modifier"
+                          title="Modifier l’idée"
+                          onClick={() => {
+                            setEditing(idea)
+                            setForm({
+                              title: idea.title,
+                              description: idea.description || '',
+                              status: idea.status,
+                              visibility: idea.visibility || 'Publique',
+                              shares: idea.shares || [],
+                            })
+                            setOpen(true)
+                          }}
+                        />
+                      )}
+                      {canDeleteEntity(user, idea) && (
+                        <CardActionButton
+                          icon={Trash2}
+                          label="Supprimer"
+                          title="Supprimer l’idée"
+                          danger
+                          onClick={async () => {
+                            if (confirm('Supprimer cette idée ?')) {
+                              await deleteIdea(idea.id, user)
+                              flash('Idée supprimée.')
+                            }
+                          }}
+                        />
+                      )}
                       <button
                         type="button"
-                        className={`${btnGhost} !px-2 !py-1 text-xs ${
+                        className={`${btnCardAction} text-xs ${
                           (idea.votes || []).includes(user.id) ? '!bg-sage-200' : ''
                         }`}
+                        title="Voter pour cette idée"
+                        aria-label="Voter pour cette idée"
                         onClick={async () => {
                           await voteIdea(idea.id, user.id)
                         }}
                       >
-                        <ThumbsUp size={12} /> {(idea.votes || []).length}
+                        <ThumbsUp size={16} strokeWidth={2.25} className="shrink-0" aria-hidden="true" />
+                        {(idea.votes || []).length}
                       </button>
                       {idea.status === 'Retenue' && (
-                        <div className="flex gap-1">
-                          <button
-                            type="button"
-                            title="En note"
-                            className={btnGhost + ' !px-2 !py-1'}
+                        <>
+                          <CardActionButton
+                            icon={StickyNote}
+                            label="En note"
+                            title="Transformer en note"
                             onClick={() => transform(idea, 'note')}
-                          >
-                            <StickyNote size={12} />
-                          </button>
-                          <button
-                            type="button"
-                            title="En projet"
-                            className={btnGhost + ' !px-2 !py-1'}
+                          />
+                          <CardActionButton
+                            icon={FolderKanban}
+                            label="En projet"
+                            title="Transformer en projet"
                             onClick={() => transform(idea, 'project')}
-                          >
-                            <FolderKanban size={12} />
-                          </button>
-                        </div>
+                          />
+                        </>
                       )}
                     </div>
                   </div>
@@ -5154,10 +5274,16 @@ function IdeasView({ user, ideas, users, flash }) {
       >
         {detail && (
           <div className="space-y-4">
-            <p className="whitespace-pre-wrap text-sm text-sage-700">{detail.description}</p>
-            <p className="text-xs text-sage-500">
-              Statut : {detail.status} · Votes : {(detail.votes || []).length}
+            <p className="text-sm text-sage-600">
+              Statut : {detail.status} · Visibilité : {detail.visibility || 'Publique'} · Votes :{' '}
+              {(detail.votes || []).length}
             </p>
+            {entityAuthorName(users, detail, user.id) ? (
+              <p className="text-sm text-sage-600">
+                Auteur : {entityAuthorName(users, detail, user.id)}
+              </p>
+            ) : null}
+            <p className="whitespace-pre-wrap text-sm text-sage-800">{detail.description || '—'}</p>
             <div>
               <h4 className="mb-2 font-semibold text-sage-800">Historique</h4>
               <ul className="max-h-48 space-y-2 overflow-y-auto text-sm xx-scroll">
@@ -5414,16 +5540,53 @@ function ProjectsView({
                 key={p.id}
                 className="rounded-2xl border border-sage-200 bg-white/80 p-5"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
+                <div className="flex flex-col gap-3">
+                  <div className="min-w-0">
                     <h3 className="font-display text-xl text-sage-900">{p.title}</h3>
                     <p className="text-xs text-sage-500">
                       {p.status} · Responsable : {lead?.fullName || '—'}
                     </p>
                   </div>
-                  <button type="button" className={btnGhost + ' !px-2'} onClick={() => setDetail(p)}>
-                    <Eye size={14} />
-                  </button>
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <CardActionButton icon={Eye} label="Voir" title="Voir le projet" onClick={() => setDetail(p)} />
+                    {canEditEntity(user, p) && (
+                      <CardActionButton
+                        icon={Pencil}
+                        label="Modifier"
+                        title="Modifier le projet"
+                        onClick={() => {
+                          setEditing(p)
+                          setForm({
+                            title: p.title,
+                            description: p.description || '',
+                            status: p.status,
+                            progress: p.progress || 0,
+                            leadId: p.leadId || user.id,
+                            memberIds: p.memberIds || [],
+                            startDate: p.startDate || '',
+                            dueDate: p.dueDate || '',
+                            visibility: p.visibility || 'Partagée',
+                            shares: p.shares || [],
+                          })
+                          setOpen(true)
+                        }}
+                      />
+                    )}
+                    {canDeleteEntity(user, p) && (
+                      <CardActionButton
+                        icon={Trash2}
+                        label="Supprimer"
+                        title="Supprimer le projet"
+                        danger
+                        onClick={async () => {
+                          if (confirm('Supprimer ce projet ?')) {
+                            await deleteProject(p.id, user)
+                            flash('Projet supprimé.')
+                          }
+                        }}
+                      />
+                    )}
+                  </div>
                 </div>
                 <p className="mt-3 line-clamp-3 text-sm text-sage-700">{p.description}</p>
                 <div className="mt-4">
@@ -5450,46 +5613,6 @@ function ProjectsView({
                     }}
                   />
                 )}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {canEditEntity(user, p) && (
-                    <button
-                      type="button"
-                      className={btnGhost}
-                      onClick={() => {
-                        setEditing(p)
-                        setForm({
-                          title: p.title,
-                          description: p.description || '',
-                          status: p.status,
-                          progress: p.progress || 0,
-                          leadId: p.leadId || user.id,
-                          memberIds: p.memberIds || [],
-                          startDate: p.startDate || '',
-                          dueDate: p.dueDate || '',
-                          visibility: p.visibility || 'Partagée',
-                          shares: p.shares || [],
-                        })
-                        setOpen(true)
-                      }}
-                    >
-                      <Pencil size={14} /> Modifier
-                    </button>
-                  )}
-                  {canDeleteEntity(user, p) && (
-                    <button
-                      type="button"
-                      className={btnGhost + ' !text-danger'}
-                      onClick={async () => {
-                        if (confirm('Supprimer ce projet ?')) {
-                          await deleteProject(p.id, user)
-                          flash('Projet supprimé.')
-                        }
-                      }}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                </div>
               </article>
             )
           })}
@@ -5629,16 +5752,24 @@ function ProjectsView({
 
       <Modal open={Boolean(detail)} title={detail?.title || ''} onClose={() => setDetail(null)} wide>
         {detail && (
-          <ProjectDetailBody
-            detail={detail}
-            notes={notes}
-            ideas={ideas}
-            files={files}
-            events={events}
-            budgets={budgets}
-            risks={risks}
-            links={links}
-          />
+          <div className="space-y-3">
+            <p className="text-sm text-sage-600">
+              Statut : {detail.status} · Visibilité : {detail.visibility || 'Partagée'}
+            </p>
+            {entityAuthorName(users, detail, user.id) ? (
+              <p className="text-sm text-sage-600">Auteur : {entityAuthorName(users, detail, user.id)}</p>
+            ) : null}
+            <ProjectDetailBody
+              detail={detail}
+              notes={notes}
+              ideas={ideas}
+              files={files}
+              events={events}
+              budgets={budgets}
+              risks={risks}
+              links={links}
+            />
+          </div>
         )}
       </Modal>
     </div>

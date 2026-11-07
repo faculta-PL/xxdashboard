@@ -60,6 +60,7 @@ export const MODULE_GUIDES = {
     lead: 'Captures rapides, catégories, étiquettes, sous-notes et liens vers le reste de Nazix.',
     bullets: [
       'Une note racine peut porter des sous-notes (note parente).',
+      'Voir ouvre la note en lecture (les vôtres et celles partagées). Modifier et Supprimer restent selon vos droits.',
       'Visibilité Privée, Partagée ou Publique, avec droits Lecture / Édition.',
       'Importez un fichier : titre + contenu extraits, ou « Note (texte brut) » pour tout coller.',
     ],
