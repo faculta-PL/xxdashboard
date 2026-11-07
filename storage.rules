@@ -4,7 +4,7 @@ service firebase.storage {
     // Collez ce fichier dans Firebase Console → Storage → Règles
     // (firebase deploy --only storage si la CLI est connectée).
     // Choisir la région du bucket DANS LA CONSOLE avant de créer le bucket :
-    // le client ne peut pas la définir. Bucket attendu : partagio.firebasestorage.app
+    // le client ne peut pas la définir. Bucket : VITE_FIREBASE_STORAGE_BUCKET
     //
     // Pas d’objets publics sans jeton. Lecture / écriture uniquement si Auth.
     // Le client n’utilise getDownloadURL qu’après un contrôle Firestore ;
@@ -20,8 +20,7 @@ service firebase.storage {
 
     function isAdmin() {
       return isSignedIn() && (
-        authEmail() == 'admin@xxdashboard.fr'
-        || authEmail() == 'facultamalika@gmail.com'
+        authEmail() == 'admin@example.com'
         || (
           firestore.exists(/databases/(default)/documents/xx_users/$(request.auth.uid))
           && firestore.get(/databases/(default)/documents/xx_users/$(request.auth.uid)).data.role == 'Administrateur'

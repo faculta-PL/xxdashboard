@@ -7,13 +7,13 @@ Nazix est un espace de travail collaboratif en temps réel : notes, idées (Kanb
 ## Stack
 
 - **Frontend** : React (`src/App.jsx`), Vite, Tailwind CSS, Lucide — site statique (`dist`) sur Vercel / Netlify
-- **Backend** : Firebase **partagio** (Auth, Firestore, Storage, Cloud Function `ai`). Vercel n’est pas le backend.
+- **Backend** : Firebase (Auth, Firestore, Storage, Cloud Function `ai`). Vercel n’est pas le backend.
 - **Persistance** : Firebase Auth + Firestore + Storage, sinon **localStorage** / **IndexedDB**
 - **Exports** : CSV (UTF-8 BOM), XLSX, DOCX, JSON, PDF
 
 ## Comptes
 
-- Administrateurs : `admin@xxdashboard.fr` et `facultamalika@gmail.com`
+- Administrateurs : `admin@example.com` (mot de passe via `.env`, jamais dans le dépôt)
 - Les autres comptes s’inscrivent via Connexion / Inscription.
 
 ## Modules
@@ -66,7 +66,7 @@ Collections Firestore `xx_files` et `xx_folders` (écoute `onSnapshot`, comme le
 - **Types bloqués** : exécutables et formats XSS (`exe`, `bat`, `cmd`, `sh`, `js`, `msi`, `apk`, `html`, `svg`, etc.). Validation **avant** téléversement (extension + MIME + taille).
 - **Partage** : membres choisis (même `ShareEditor` que les notes, droits **Lecture / Modification / Gestion**) **et** case **« Toute l’équipe »** (visibilité **Équipe** = lisible par tout compte connecté, analogue à Publique).
 - **Projet associé** : optionnel, liste des projets existants.
-- **Région Storage** : **impossible à définir depuis le client**. L’utilisateur doit choisir la région dans **Firebase Console avant de créer le bucket**. Bucket existant : `partagio.firebasestorage.app` (`VITE_FIREBASE_STORAGE_BUCKET`).
+- **Région Storage** : **impossible à définir depuis le client**. L’utilisateur doit choisir la région dans **Firebase Console avant de créer le bucket** (`VITE_FIREBASE_STORAGE_BUCKET`).
 
 ### Données
 
@@ -115,7 +115,7 @@ Collection Firestore `xx_budgets` (fiche budget rattachée à un projet) et `xx_
 - **Membre** : crée ; modifie s’il est propriétaire ou a le partage **Édition**
 - **Lecteur** : lecture des budgets partagés (ou Équipe / Publique) uniquement — pas de création, édition ni suppression
 
-Contrôle **dans `store.js` à l’écriture**. Règles Firestore : connecté, propriétaire, `shareUserIds`, visibilité Équipe / Publique, admins `admin@xxdashboard.fr` et `facultamalika@gmail.com`.
+Contrôle **dans `store.js` à l’écriture**. Règles Firestore : connecté, propriétaire, `shareUserIds`, visibilité Équipe / Publique, rôle Administrateur.
 
 ## Module Risques et solutions
 

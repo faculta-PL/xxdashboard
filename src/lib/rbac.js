@@ -6,7 +6,18 @@ export const ROLES = {
 }
 
 /** Built-in admin accounts — keep in sync with firestore.rules / storage.rules. */
-export const ADMIN_EMAILS = ['admin@xxdashboard.fr', 'facultamalika@gmail.com']
+function adminEmailsFromEnv() {
+  const extras = String(import.meta.env.VITE_ADMIN_EMAILS || '')
+    .split(/[,;]/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+  const singles = [import.meta.env.VITE_ADMIN_EMAIL, import.meta.env.VITE_ADMIN_EMAIL_2]
+    .map((s) => String(s || '').trim().toLowerCase())
+    .filter(Boolean)
+  return [...new Set(['admin@example.com', ...extras, ...singles])]
+}
+
+export const ADMIN_EMAILS = adminEmailsFromEnv()
 
 export function isAdminEmail(email) {
   const normalized = String(email || '').trim().toLowerCase()

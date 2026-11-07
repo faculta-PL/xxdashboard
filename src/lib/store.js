@@ -64,10 +64,21 @@ import {
 } from './files'
 import { VERIFY_EMAIL, RESET_EMAIL, firebaseUnavailableLine } from './emailCopy'
 
-const DEFAULT_ADMINS = [
-  { email: 'admin@xxdashboard.fr', password: 'Admin123!', fullName: 'Administrateur' },
-  { email: 'facultamalika@gmail.com', password: 'Malika2026!', fullName: 'Administrateur' },
-]
+function adminsFromEnv() {
+  const pairs = [
+    [import.meta.env.VITE_ADMIN_EMAIL, import.meta.env.VITE_ADMIN_PASSWORD],
+    [import.meta.env.VITE_ADMIN_EMAIL_2, import.meta.env.VITE_ADMIN_PASSWORD_2],
+  ]
+  const out = []
+  for (const [emailRaw, passwordRaw] of pairs) {
+    const email = String(emailRaw || '').trim().toLowerCase()
+    const password = String(passwordRaw || '').trim()
+    if (email && password) out.push({ email, password, fullName: 'Administrateur' })
+  }
+  return out
+}
+
+const DEFAULT_ADMINS = adminsFromEnv()
 const AUTH_MIN_PASSWORD = firebaseConfigured ? 6 : 4
 const LOCAL_FALLBACK_NOTICE = 'Connexion en mode local — synchronisation plus tard.'
 

@@ -21,8 +21,7 @@ service cloud.firestore {
 
     function isAdminEmail() {
       return isSignedIn() && (
-        authEmail() == 'admin@xxdashboard.fr'
-        || authEmail() == 'facultamalika@gmail.com'
+        authEmail() == 'admin@example.com'
       );
     }
 
