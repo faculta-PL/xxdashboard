@@ -10,6 +10,8 @@ export {
   translate,
   landingPlanPoints,
   calendarLabels,
+  dateLocale,
+  dictKeyList,
 } from './lib/i18nCore.js'
 import { LANGS, readLang, writeLang, translate } from './lib/i18nCore.js'
 

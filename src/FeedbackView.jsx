@@ -5,24 +5,25 @@ import { askExternal } from './lib/assistant'
 import { parseFeedbackRewrite } from './lib/feedback'
 import { isAdmin } from './lib/rbac'
 import { ConfirmDialog, EmptyState, StatusBadge, btnGhost, btnPrimary, inputClass } from './components/ui'
+import { dateLocale, useI18n } from './i18n'
 
-const FEEDBACK_MODULES = [
-  { id: '', label: '— (optionnel)' },
-  { id: 'dashboard', label: 'Tableau de bord' },
-  { id: 'projects', label: 'Projets' },
-  { id: 'notes', label: 'Notes' },
-  { id: 'ideas', label: 'Kanban' },
-  { id: 'calendar', label: 'Calendrier' },
-  { id: 'files', label: 'Fichiers' },
-  { id: 'budget', label: 'Budget' },
-  { id: 'risks', label: 'Risques' },
-  { id: 'canvas', label: 'Espace visuel' },
-  { id: 'team', label: 'Équipe' },
-  { id: 'chat', label: 'Chat' },
-  { id: 'assistant', label: 'Assistant IA' },
-  { id: 'create', label: 'Création' },
-  { id: 'games', label: 'Jeux' },
-  { id: 'autre', label: 'Autre' },
+const FEEDBACK_MODULE_IDS = [
+  '',
+  'dashboard',
+  'projects',
+  'notes',
+  'ideas',
+  'calendar',
+  'files',
+  'budget',
+  'risks',
+  'canvas',
+  'team',
+  'chat',
+  'assistant',
+  'create',
+  'games',
+  'autre',
 ]
 
 function Field({ label, hint, children }) {
@@ -36,6 +37,7 @@ function Field({ label, hint, children }) {
 }
 
 export default function FeedbackView({ user, users = [], items = [], flash, onSubmit, onDelete }) {
+  const { t, lang } = useI18n()
   const admin = isAdmin(user)
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
@@ -46,7 +48,13 @@ export default function FeedbackView({ user, users = [], items = [], flash, onSu
   const [deleteId, setDeleteId] = useState(null)
 
   const nameOf = (id) => users.find((u) => u.id === id)?.fullName || users.find((u) => u.id === id)?.email || '—'
-  const moduleLabel = (id) => FEEDBACK_MODULES.find((m) => m.id === id)?.label || id || '—'
+  const moduleLabel = (id) => {
+    if (!id) return t('feedback.fieldModule')
+    if (id === 'autre') return t('feedback.other')
+    const key = `nav.${id}`
+    const label = t(key)
+    return label === key ? id : label
+  }
 
   const listed = useMemo(
     () =>
@@ -58,7 +66,7 @@ export default function FeedbackView({ user, users = [], items = [], flash, onSu
     const draftTitle = title.trim()
     const draftBody = body.trim()
     if (!draftTitle && !draftBody) {
-      flash('Saisissez un titre ou un message à clarifier.', 'err')
+      flash(t('feedback.needDraft'), 'err')
       return
     }
     setBusy(true)
@@ -73,13 +81,13 @@ export default function FeedbackView({ user, users = [], items = [], flash, onSu
         context: { label: 'Feedback' },
       })
       const parsed = parseFeedbackRewrite(result.content || result.text || '')
-      if (!parsed.body && !parsed.title) throw new Error('Réécriture vide.')
+      if (!parsed.body && !parsed.title) throw new Error(t('feedback.rewriteEmpty'))
       setRewrite({
         title: parsed.title || draftTitle,
         body: parsed.body || draftBody,
       })
     } catch (err) {
-      flash(err.message || 'Reformulation impossible.', 'err')
+      flash(err.message || t('feedback.rewriteFail'), 'err')
     } finally {
       setBusy(false)
     }
@@ -90,7 +98,7 @@ export default function FeedbackView({ user, users = [], items = [], flash, onSu
     setTitle(rewrite.title)
     setBody(rewrite.body)
     setRewrite(null)
-    flash('Texte clarifié — relisez puis envoyez.')
+    flash(t('feedback.clarified'))
   }
 
   const send = async () => {
@@ -105,9 +113,9 @@ export default function FeedbackView({ user, users = [], items = [], flash, onSu
       setBody('')
       setModuleId('')
       setConfirmSend(false)
-      flash('Retour envoyé. Merci.')
+      flash(t('feedback.sent'))
     } catch (err) {
-      flash(err.message || 'Envoi impossible.', 'err')
+      flash(err.message || t('feedback.sendFail'), 'err')
     } finally {
       setBusy(false)
     }
@@ -119,9 +127,9 @@ export default function FeedbackView({ user, users = [], items = [], flash, onSu
     try {
       await onDelete(deleteId)
       setDeleteId(null)
-      flash('Retour supprimé.')
+      flash(t('feedback.deleted'))
     } catch (err) {
-      flash(err.message || 'Suppression impossible.', 'err')
+      flash(err.message || t('feedback.deleteFail'), 'err')
     } finally {
       setBusy(false)
     }
@@ -132,47 +140,45 @@ export default function FeedbackView({ user, users = [], items = [], flash, onSu
       <section className="rounded-2xl border border-sage-200 bg-white/80 p-5">
         <h2 className="flex items-center gap-2 font-display text-lg text-sage-900">
           <MessageSquarePlus size={18} className="text-sage-700" aria-hidden="true" />
-          Proposer une amélioration
+          {t('feedback.propose')}
         </h2>
-        <p className="mt-1 text-sm text-sage-600">
-          Une idée, un manque, un module à inventer. L’équipe admin est notifiée. Aucun secret dans ce formulaire.
-        </p>
+        <p className="mt-1 text-sm text-sage-600">{t('feedback.hint')}</p>
         <form
           className="mt-4"
           onSubmit={(e) => {
             e.preventDefault()
             if (!title.trim() || !body.trim()) {
-              flash('Titre et message sont requis.', 'err')
+              flash(t('feedback.needFields'), 'err')
               return
             }
             setConfirmSend(true)
           }}
         >
-          <Field label="Titre">
+          <Field label={t('feedback.fieldTitle')}>
             <input
               className={inputClass}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               maxLength={200}
               required
-              placeholder="Ex. Export PDF des notes liées"
+              placeholder={t('feedback.placeholderTitle')}
             />
           </Field>
-          <Field label="Message">
+          <Field label={t('feedback.fieldMessage')}>
             <textarea
               className={inputClass + ' min-h-32'}
               value={body}
               onChange={(e) => setBody(e.target.value)}
               required
               maxLength={8000}
-              placeholder="Décrivez le besoin, le module concerné, et ce que cela changerait."
+              placeholder={t('feedback.placeholderBody')}
             />
           </Field>
-          <Field label="Module (optionnel)">
+          <Field label={t('feedback.fieldModule')}>
             <select className={inputClass} value={moduleId} onChange={(e) => setModuleId(e.target.value)}>
-              {FEEDBACK_MODULES.map((m) => (
-                <option key={m.id || 'none'} value={m.id}>
-                  {m.label}
+              {FEEDBACK_MODULE_IDS.map((id) => (
+                <option key={id || 'none'} value={id}>
+                  {moduleLabel(id)}
                 </option>
               ))}
             </select>
@@ -180,11 +186,11 @@ export default function FeedbackView({ user, users = [], items = [], flash, onSu
           <div className="flex flex-wrap gap-2">
             <button type="button" className={btnGhost} onClick={helpFormulate} disabled={busy}>
               <Sparkles size={16} aria-hidden="true" />
-              Aider-moi à formuler
+              {t('feedback.helpWrite')}
             </button>
             <button type="submit" className={btnPrimary} disabled={busy}>
               <Send size={16} aria-hidden="true" />
-              Envoyer
+              {t('feedback.send')}
             </button>
           </div>
         </form>
@@ -192,13 +198,13 @@ export default function FeedbackView({ user, users = [], items = [], flash, onSu
 
       <section>
         <h2 className="mb-3 font-display text-lg text-sage-900">
-          {admin ? 'Tous les retours' : 'Vos retours'}
+          {admin ? t('feedback.all') : t('feedback.yours')}
         </h2>
         {listed.length === 0 ? (
           <EmptyState
             icon={MessageSquarePlus}
-            title="Aucun retour pour l’instant"
-            hint="Une idée d’amélioration ? Écrivez-la ci-dessus — même une phrase suffit."
+            title={t('feedback.empty')}
+            hint={t('feedback.emptyHint')}
           />
         ) : (
           <ul className="space-y-3">
@@ -213,7 +219,7 @@ export default function FeedbackView({ user, users = [], items = [], flash, onSu
                       {admin ? <span>{nameOf(item.userId)}</span> : null}
                       <span>
                         {item.createdAt
-                          ? new Date(item.createdAt).toLocaleString('fr-FR')
+                          ? new Date(item.createdAt).toLocaleString(dateLocale(lang))
                           : ''}
                       </span>
                     </p>
@@ -223,10 +229,10 @@ export default function FeedbackView({ user, users = [], items = [], flash, onSu
                       type="button"
                       className={btnGhost + ' !text-danger'}
                       onClick={() => setDeleteId(item.id)}
-                      aria-label="Supprimer ce retour"
+                      aria-label={t('feedback.confirmDelete')}
                     >
                       <Trash2 size={16} />
-                      Supprimer
+                      {t('common.delete')}
                     </button>
                   )}
                 </div>
@@ -239,32 +245,32 @@ export default function FeedbackView({ user, users = [], items = [], flash, onSu
 
       <ConfirmDialog
         open={Boolean(rewrite)}
-        title="Appliquer la reformulation ?"
+        title={t('feedback.confirmRewrite')}
         body={
           rewrite
-            ? `Titre : ${rewrite.title}\n\n${rewrite.body}`
+            ? `${t('feedback.fieldTitle')} : ${rewrite.title}\n\n${rewrite.body}`
             : ''
         }
-        confirmLabel="Utiliser ce texte"
-        cancelLabel="Garder le mien"
+        confirmLabel={t('feedback.useText')}
+        cancelLabel={t('feedback.keepMine')}
         onConfirm={applyRewrite}
         onClose={() => setRewrite(null)}
         busy={busy}
       />
       <ConfirmDialog
         open={confirmSend}
-        title="Envoyer ce retour ?"
-        body="Un administrateur sera notifié. Vérifiez qu’il n’y a aucun mot de passe ni clé."
-        confirmLabel="Envoyer"
+        title={t('feedback.confirmSend')}
+        body={t('feedback.confirmSendHint')}
+        confirmLabel={t('feedback.send')}
         onConfirm={send}
         onClose={() => setConfirmSend(false)}
         busy={busy}
       />
       <ConfirmDialog
         open={Boolean(deleteId)}
-        title="Supprimer ce retour ?"
-        body="Cette action est définitive."
-        confirmLabel="Supprimer"
+        title={t('feedback.confirmDelete')}
+        body={t('feedback.confirmDeleteHint')}
+        confirmLabel={t('common.delete')}
         danger
         onConfirm={remove}
         onClose={() => setDeleteId(null)}

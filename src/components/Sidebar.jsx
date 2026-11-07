@@ -90,8 +90,17 @@ function readGroups() {
   }
 }
 
+const GROUP_I18N = {
+  workspace: 'nav.groupWorkspace',
+  collab: 'nav.groupCollab',
+  tools: 'nav.groupTools',
+  fun: 'nav.groupFun',
+}
+
 function navLabel(t, item) {
-  return t(`nav.${item.id}`) || item.label
+  const key = `nav.${item.id}`
+  const translated = t(key)
+  return translated === key ? item.label : translated
 }
 
 export function Sidebar({
@@ -160,9 +169,10 @@ export function Sidebar({
           </button>
         </div>
 
-        <nav className="flex-1 space-y-3 overflow-y-auto xx-scroll" aria-label="Navigation principale">
+        <nav className="flex-1 space-y-3 overflow-y-auto xx-scroll" aria-label={t('nav.primary')}>
           {NAV_GROUPS.map((group) => {
             const closed = Boolean(closedGroups[group.id]) && !collapsed
+            const groupLabel = t(GROUP_I18N[group.id] || group.label)
             return (
               <div key={group.id}>
                 <button
@@ -173,7 +183,7 @@ export function Sidebar({
                   onClick={() => toggleGroup(group.id)}
                   aria-expanded={!closed}
                 >
-                  <span className="min-w-0 flex-1 truncate text-left">{t(`nav.group${group.id === 'workspace' ? 'Workspace' : group.id === 'collab' ? 'Collab' : group.id === 'tools' ? 'Tools' : 'Fun'}`)}</span>
+                  <span className="min-w-0 flex-1 truncate text-left">{groupLabel}</span>
                   <ChevronDown size={14} className={`shrink-0 transition ${closed ? '-rotate-90' : ''}`} />
                 </button>
                 {collapsed && <div className="hidden h-px bg-sage-600/80 lg:block" aria-hidden />}
