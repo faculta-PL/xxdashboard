@@ -192,10 +192,8 @@ function couldBeActionJson(partial) {
   const s = String(partial || '').trimStart()
   if (!s.startsWith('{') && !s.startsWith('[')) return false
   const head = s.slice(0, 160)
-  const first = head.trimStart()[0]
-  if (first !== '{' && first !== '[') return false
-  if (/^\s*[{[]\s*$/.test(head)) return true
-  if (/^\s*[{[]\s*"/.test(head)) return true
+  if (head === '{' || head === '[') return true
+  if (head.startsWith('{"') || head.startsWith('{ "') || head.startsWith('["') || head.startsWith('[ "')) return true
   return ACTION_HINT_RE.test(head) || /function_call|functionCall/i.test(head)
 }
 

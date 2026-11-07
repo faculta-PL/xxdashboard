@@ -109,6 +109,21 @@ assert(visibleStreamContent(partial) === 'Je rédige', visibleStreamContent(part
 assert(!visibleStreamContent(partial).includes('json'), visibleStreamContent(partial))
 const heldBrace = 'Texte\n{"kind":'
 assert(visibleStreamContent(heldBrace) === 'Texte', visibleStreamContent(heldBrace))
+
+const streamed = 'Voici.\n```json\n{"kind":"create_note","draft":{"title":"Live","content":"x"}}\n```\nMerci.'
+let acc = ''
+let lastVisible = ''
+for (const ch of streamed) {
+  acc += ch
+  lastVisible = visibleStreamContent(acc)
+  assert(!lastVisible.includes('"kind"'), lastVisible)
+  assert(!lastVisible.includes('```'), lastVisible)
+}
+const done = splitDisplayAndActions(acc)
+assert(done.content.includes('Voici'), done.content)
+assert(done.content.includes('Merci'), done.content)
+assert(!done.content.includes('create_note'), done.content)
+assert(done.actions[0]?.draft?.title === 'Live', JSON.stringify(done.actions))
 assert(openAiUnavailable('clé absente') === 'OpenAI indisponible: clé absente', 'error format')
 
 assert(aiEndpoint('/api/ai') === '/api/ai', 'relative /api/ai without VITE_AI_URL')
