@@ -43,6 +43,7 @@ export default defineConfig(({ mode }) => {
   return {
     appType: 'spa',
     plugins: [react(), tailwindcss(), nazixAiPlugin(process.env)],
+    // nazixAiPlugin: GET/POST /api/ai, /api/ai/stream, /api/ai-search on dev + preview (port 3847).
     server: {
       host: '0.0.0.0',
       port: 3847,

@@ -1,17 +1,77 @@
-/** Assistant Nazix — client : OpenAI via Firebase Cloud Function `ai` (VITE_AI_URL)
+/** Assistant Nazix — client : OpenAI via Firebase Cloud Function `ai`
  * ou via /api/ai en local (middleware Vite). Repli extractif si la clé manque. */
+
+import {
+  displayAiContent,
+  extractJsonActions,
+  mergeAiActions,
+  splitDisplayAndActions,
+  visibleStreamContent,
+} from '../../server/ai-actions.mjs'
+
+export {
+  displayAiContent,
+  extractJsonActions,
+  mergeAiActions,
+  splitDisplayAndActions,
+  visibleStreamContent,
+}
+
+export const WEB_EMPTY_MESSAGE = 'Aucun résultat web pour le moment.'
+
+function viteAiBase() {
+  try {
+    return String(import.meta.env?.VITE_AI_URL || '').trim().replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
+}
 
 /** Base URL of Cloud Function `ai` when set (Vercel/Netlify). Empty → relative /api/ai (Vite). */
 export function aiEndpoint(relPath) {
   const path = relPath.startsWith('/') ? relPath : `/${relPath}`
-  let base = ''
-  try {
-    base = String(import.meta.env?.VITE_AI_URL || '').trim().replace(/\/+$/, '')
-  } catch {
-    base = ''
-  }
+  const base = viteAiBase()
   if (!base) return path
   return `${base}${path}`
+}
+
+export function isLocalAiHost(hostname, port, devFlag) {
+  const h = String(hostname || '')
+  const p = String(port || '')
+  if (h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '0.0.0.0') return true
+  if (p === '3847' || p === '4173') return true
+  return Boolean(devFlag)
+}
+
+function browserHost() {
+  if (typeof location === 'undefined') {
+    return { hostname: 'localhost', port: '3847', dev: true }
+  }
+  let dev = false
+  try {
+    dev = Boolean(import.meta.env?.DEV)
+  } catch {
+    dev = false
+  }
+  return { hostname: location.hostname, port: location.port, dev }
+}
+
+/** Local Vite (dev + preview): always same-origin `/api/ai-search`.
+ * Production: Cloud Function `/search` or `/api/ai-search`, then same-origin fallback. */
+export function webSearchUrls(query, loc = {}) {
+  const q = encodeURIComponent(String(query || '').trim())
+  const local = `/api/ai-search?q=${q}`
+  const host = loc.hostname != null ? loc : browserHost()
+  const localHost = isLocalAiHost(host.hostname, host.port, host.dev)
+  if (localHost) return [local]
+  const urls = []
+  const base = loc.aiBase != null ? String(loc.aiBase || '').replace(/\/+$/, '') : viteAiBase()
+  if (base) {
+    urls.push(`${base}/search?q=${q}`)
+    urls.push(`${base}/api/ai-search?q=${q}`)
+  }
+  urls.push(local)
+  return [...new Set(urls)]
 }
 
 const STOP = new Set(
@@ -533,45 +593,12 @@ export function localAnswer(query, ctx, style = '') {
   return { text: text.trim(), sources: items.map((i) => ({ id: i.id, title: i.title, kind: i.kind || i.category || '' })) }
 }
 
-const ACTION_KINDS = ['create_note', 'create_subnote', 'create_idea', 'create_risk', 'create_budget_line', 'draft_message']
 const LAST_N = 20
 
-function extractJsonActions(text) {
-  const actions = []
-  const push = (parsed) => {
-    if (!parsed || typeof parsed !== 'object') return
-    const list = Array.isArray(parsed) ? parsed : [parsed]
-    for (const item of list) {
-      if (item && ACTION_KINDS.includes(item.kind)) {
-        actions.push({
-          kind: item.kind,
-          label: item.label || item.kind,
-          draft: item.draft || item,
-        })
-      }
-    }
-  }
-  const src = String(text || '')
-  for (const m of src.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
-    try {
-      push(JSON.parse(m[1].trim()))
-    } catch {
-      /* ignore */
-    }
-  }
-  const loose = src.match(
-    /\{[^{}]*"kind"\s*:\s*"(create_note|create_subnote|create_idea|create_risk|create_budget_line|draft_message)"[^{}]*\}/g,
-  )
-  if (loose) {
-    for (const raw of loose) {
-      try {
-        push(JSON.parse(raw))
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-  return actions
+/** JSON in assistant text is parsed for confirm buttons only — never executed. */
+export function actionsFromReply(text, extra = []) {
+  const split = splitDisplayAndActions(text)
+  return mergeAiActions(extra, split.actions)
 }
 
 export function openAiUnavailable(reason) {
@@ -661,24 +688,13 @@ export function parseActions(query, ctx = {}) {
     })
   }
 
-  for (const a of extractJsonActions(q)) actions.push(a)
-  const seen = new Set()
-  return actions.filter((a) => {
-    if (seen.has(a.kind)) return false
-    seen.add(a.kind)
-    return true
-  })
+  return mergeAiActions(actions, extractJsonActions(q))
 }
 
 export function parseActionsFromAssistant(text, ctx) {
-  const fromText = extractJsonActions(text)
-  const heuristic = parseActions(String(text || ''), ctx)
-  const seen = new Set()
-  return [...fromText, ...heuristic].filter((a) => {
-    if (seen.has(a.kind)) return false
-    seen.add(a.kind)
-    return true
-  })
+  const split = splitDisplayAndActions(text)
+  const heuristic = parseActions(split.content, ctx)
+  return mergeAiActions(split.actions, heuristic)
 }
 
 export function stripExternalContext(ctx) {
@@ -727,7 +743,24 @@ function slimMessages(messages) {
   return (messages || [])
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && m.content)
     .slice(-LAST_N)
-    .map((m) => ({ role: m.role, content: m.content }))
+    .map((m) => ({
+      role: m.role,
+      content: m.role === 'assistant' ? displayAiContent(m.content) : m.content,
+    }))
+}
+
+function normalizeAiResponse(data, rawText = '') {
+  const raw = String(data?.content || data?.text || rawText || '')
+  const split = splitDisplayAndActions(raw)
+  const content = split.content
+  const actions = mergeAiActions(data?.actions, split.actions)
+  return {
+    ...data,
+    ok: data?.ok !== false,
+    text: content,
+    content,
+    actions,
+  }
 }
 
 export async function askExternal({ messages, context, web, signal }) {
@@ -744,7 +777,7 @@ export async function askExternal({ messages, context, web, signal }) {
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
   if (!data.ok) throw new Error(data.error || 'OPENAI_API_KEY manquante')
-  return data
+  return normalizeAiResponse(data)
 }
 
 function parseSseBuffer(buffer, onEvent) {
@@ -779,8 +812,9 @@ export async function askExternalStream({ messages, context, web, signal, onDelt
   if (!ct.includes('text/event-stream')) {
     const data = await res.json().catch(() => ({}))
     if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
-    if (data.text && onDelta) onDelta(data.text, data.text)
-    return data
+    const normalized = normalizeAiResponse(data)
+    if (normalized.content && onDelta) onDelta(normalized.content, normalized.content)
+    return normalized
   }
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
@@ -792,46 +826,77 @@ export async function askExternalStream({ messages, context, web, signal, onDelt
   let buffer = ''
   let full = ''
   let provider = 'openai'
+  let streamActions = []
+  const emitVisible = (raw) => {
+    if (onDelta) onDelta(visibleStreamContent(raw), raw)
+  }
+  const onEvent = (evt) => {
+    if (evt.error) throw new Error(evt.error)
+    if (evt.provider) provider = evt.provider
+    if (Array.isArray(evt.actions)) streamActions = evt.actions
+    if (evt.delta) {
+      full += evt.delta
+      emitVisible(full)
+    }
+    if (evt.content && !evt.delta) {
+      full = evt.content
+      emitVisible(full)
+    }
+    if (evt.done) {
+      const doneText = evt.content || evt.text
+      if (doneText && (!full || full.length < String(doneText).length)) {
+        full = doneText
+        emitVisible(full)
+      }
+    }
+  }
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
     buffer += decoder.decode(value, { stream: true })
-    buffer = parseSseBuffer(buffer, (evt) => {
-      if (evt.error) throw new Error(evt.error)
-      if (evt.provider) provider = evt.provider
-      if (evt.delta) {
-        full += evt.delta
-        if (onDelta) onDelta(evt.delta, full)
-      }
-      if (evt.done && evt.text && !full) {
-        full = evt.text
-        if (onDelta) onDelta(evt.text, full)
-      }
-    })
+    buffer = parseSseBuffer(buffer, onEvent)
   }
-  if (buffer.trim()) {
-    parseSseBuffer(`${buffer}\n\n`, (evt) => {
-      if (evt.error) throw new Error(evt.error)
-      if (evt.delta) {
-        full += evt.delta
-        if (onDelta) onDelta(evt.delta, full)
-      }
-      if (evt.done && evt.text && !full) full = evt.text
-    })
-  }
+  if (buffer.trim()) parseSseBuffer(`${buffer}\n\n`, onEvent)
   if (!full) throw new Error('Réponse OpenAI vide.')
-  return { ok: true, text: full, provider, mode: 'external' }
+  return normalizeAiResponse(
+    { ok: true, text: full, content: full, actions: streamActions, provider, mode: 'external' },
+    full,
+  )
 }
 
-export async function searchWeb(query) {
-  const res = await fetch(aiEndpoint('/api/ai-search'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ q: query }),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
-  return data
+export async function searchWeb(query, loc) {
+  const q = String(query || '').trim()
+  if (!q) {
+    return { ok: true, query: '', results: [], searchedAt: new Date().toISOString() }
+  }
+  const urls = webSearchUrls(q, loc)
+  let lastError = null
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } })
+      const data = await res.json().catch(() => null)
+      if (res.ok && data && Array.isArray(data.results)) return data
+      lastError = data?.error || `HTTP ${res.status}`
+    } catch (err) {
+      lastError = err
+    }
+    try {
+      const path = url.split('?')[0]
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ q }),
+      })
+      const data = await res.json().catch(() => null)
+      if (res.ok && data && Array.isArray(data.results)) return data
+      lastError = data?.error || `HTTP ${res.status}`
+    } catch (err) {
+      lastError = err
+    }
+  }
+  const error = new Error(typeof lastError === 'string' ? lastError : 'search failed')
+  error.offline = typeof navigator !== 'undefined' && navigator.onLine === false
+  throw error
 }
 
 export function formatWebBlock(search) {

@@ -31,6 +31,10 @@ import {
   writeExternalPref,
   writeWebPref,
   openAiUnavailable,
+  displayAiContent,
+  visibleStreamContent,
+  mergeAiActions,
+  splitDisplayAndActions,
 } from './lib/assistant'
 import {
   saveAiThread,
@@ -94,6 +98,7 @@ function OpenAiBanner({ openaiOk, openaiError }) {
 
 function Bubble({ msg, onCopy }) {
   const isAi = msg.role !== 'user'
+  const shown = isAi ? displayAiContent(msg.content) : msg.content
   return (
     <div className={`flex ${isAi ? 'justify-start' : 'justify-end'}`}>
       <div
@@ -112,14 +117,14 @@ function Bubble({ msg, onCopy }) {
             <button
               type="button"
               className="rounded p-1 text-sage-500 hover:bg-sage-200 hover:text-sage-800"
-              onClick={() => onCopy(msg.content)}
+              onClick={() => onCopy(shown)}
               aria-label="Copier la réponse"
             >
               <Copy size={12} />
             </button>
           )}
         </div>
-        {msg.content}
+        {shown}
         {msg.streaming && <span className="ml-0.5 inline-block animate-pulse text-sage-500">▍</span>}
         {msg.fallback && (
           <p className="mt-2 text-[11px] font-medium text-warn">Repli extractif local — ce n’est pas le mode prévu.</p>
@@ -478,16 +483,17 @@ function useAiChat({
           webSources = web.results || []
           webSearchedAt = web.searchedAt || nowIso()
         } catch {
-          flash?.('Recherche web indisponible.', 'warn')
+          /* section web masquée / aucun résultat — jamais de nom d’env */
         }
       }
 
       let answerText = ''
+      let apiActions = []
       let sources = []
 
       const onDelta = (_delta, full) => {
         streamRef.current = full
-        setStreamText(full)
+        setStreamText(visibleStreamContent(full))
       }
 
       const skipOpenAi = statusReady && !hasKey && !openaiOk
@@ -501,9 +507,10 @@ function useAiChat({
             signal: ctrl.signal,
             onDelta,
           })
-          if (ext.ok && ext.text) {
-            answerText = ext.text
+          if (ext.ok && (ext.content || ext.text)) {
+            answerText = ext.content || ext.text
             usedExternal = true
+            apiActions = Array.isArray(ext.actions) ? ext.actions : []
           }
         } catch (err) {
           if (ctrl.signal.aborted && streamRef.current) {
@@ -523,11 +530,12 @@ function useAiChat({
                 web: webPayload,
                 signal: ctrl.signal,
               })
-              if (ext.ok && ext.text) {
-                answerText = ext.text
+              if (ext.ok && (ext.content || ext.text)) {
+                answerText = ext.content || ext.text
                 usedExternal = true
-                streamRef.current = ext.text
-                setStreamText(ext.text)
+                apiActions = Array.isArray(ext.actions) ? ext.actions : []
+                streamRef.current = answerText
+                setStreamText(visibleStreamContent(answerText))
               }
             } catch (err2) {
               const reason = err2?.message || err?.message || 'erreur inconnue'
@@ -554,16 +562,14 @@ function useAiChat({
         answerText += formatWebBlock(webPayload)
       }
 
-      const heuristicActions = [
-        ...parseActions(text, context),
-        ...parseActionsFromAssistant(answerText, context),
-      ]
-      const seen = new Set()
-      const actions = heuristicActions.filter((a) => {
-        if (seen.has(a.kind)) return false
-        seen.add(a.kind)
-        return true
-      })
+      const split = splitDisplayAndActions(answerText)
+      answerText = split.content
+      const actions = mergeAiActions(
+        apiActions,
+        split.actions,
+        parseActions(text, context),
+        parseActionsFromAssistant(answerText, context),
+      )
 
       const aiMsg = {
         role: 'assistant',
@@ -607,6 +613,7 @@ function useAiChat({
   const followUp = (style, label) => runTurn(label, style)
 
   const applyAction = async (action) => {
+    // Never run from JSON in the bubble — only the confirm dialog calls this.
     if (action.kind !== 'draft_message' && !canWriteRole(user)) {
       flash?.('Permission refusée (Lecteur).', 'err')
       return
@@ -774,9 +781,13 @@ function ChatPane({
         {chat.messages.map((m, i) => (
           <div key={`${m.at}-${i}`} className="space-y-1.5">
             <Bubble msg={m} onCopy={chat.copy} />
-            {m.role === 'assistant' && m.actions?.length > 0 && (
+            {m.role === 'assistant' && (
               <ActionButtons
-                actions={m.actions}
+                actions={
+                  m.actions?.length
+                    ? m.actions
+                    : parseActionsFromAssistant(m.content, context)
+                }
                 canWrite={canWrite}
                 onPick={chat.setPendingAction}
               />
@@ -1052,11 +1063,7 @@ export function AiSettingsBlock({ user: _user, allowExternal: _allowExternal, on
         Réponses via OpenAI. N’envoyez que le contexte de vos contenus autorisés.
       </p>
       <p className="mt-2 text-sm text-sage-600">
-        La clé <code className="rounded bg-sage-100 px-1">OPENAI_API_KEY</code> reste côté serveur Firebase
-        (Cloud Function <code className="rounded bg-sage-100 px-1">ai</code>, URL{' '}
-        <code className="rounded bg-sage-100 px-1">VITE_AI_URL</code> ; en local, middleware Vite{' '}
-        <code className="rounded bg-sage-100 px-1">POST /api/ai</code>)
-        — jamais dans le bundle. Sans clé, le chat affiche clairement
+        La clé OpenAI reste côté serveur — jamais dans le navigateur. Sans clé, le chat affiche
         « OpenAI indisponible » et bascule sur un repli extractif local.
       </p>
       <p className="mt-2 flex items-center gap-1 text-xs text-sage-500">

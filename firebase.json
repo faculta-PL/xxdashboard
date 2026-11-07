@@ -11,7 +11,7 @@
       "codebase": "default",
       "runtime": "nodejs20",
       "predeploy": [
-        "node -e \"require('fs').copyFileSync('server/ai-http.mjs','functions/ai-http.mjs')\""
+        "node -e \"const fs=require('fs');fs.copyFileSync('server/ai-http.mjs','functions/ai-http.mjs');fs.copyFileSync('server/ai-actions.mjs','functions/ai-actions.mjs')\""
       ]
     }
   ],
@@ -25,6 +25,13 @@
       }
     ],
     "rewrites": [
+      {
+        "source": "/search",
+        "function": {
+          "functionId": "ai",
+          "region": "us-central1"
+        }
+      },
       {
         "source": "/api/**",
         "function": {

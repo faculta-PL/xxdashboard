@@ -3,9 +3,17 @@
  * Keys stay on the server (OPENAI_API_KEY | ANTHROPIC_API_KEY | GROK_API_KEY).
  * Never expose secrets to the client. Never prefix VITE_. */
 
+import {
+  createActionStreamStripper,
+  displayAiContent,
+  splitDisplayAndActions,
+} from './ai-actions.mjs'
+
 const MAX_BODY = 256 * 1024
 const LLM_TIMEOUT_MS = 30000
-const SEARCH_TIMEOUT_MS = 8000
+const SEARCH_TIMEOUT_MS = 10000
+const SEARCH_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 NazixSearch/1.0'
 const LAST_N = 20
 
 const DEFAULT_ORIGINS = [
@@ -119,7 +127,7 @@ function stripTrailing(path) {
   return String(path || '/').replace(/\/+$/, '') || '/'
 }
 
-const AI_PATHS = new Set(['/api/ai', '/api/ai/stream', '/api/ai-search'])
+const AI_PATHS = new Set(['/api/ai', '/api/ai/stream', '/api/ai-search', '/search'])
 
 export function isAiPath(path) {
   return AI_PATHS.has(stripTrailing(path))
@@ -180,8 +188,8 @@ export function requestPath(req) {
 
 function normalizeApiPath(path) {
   let p = stripTrailing(path)
-  // Direct Cloud Function URL: …/ai/api/ai → /api/ai
-  if (p.startsWith('/ai/api/')) p = p.slice(3)
+  // Direct Cloud Function URL: …/ai/api/ai → /api/ai, …/ai/search → /search
+  if (p.startsWith('/ai/')) p = p.slice(3) || '/'
   else if (p === '/ai/api') p = '/api'
   return p
 }
@@ -213,13 +221,9 @@ Cite les titres entre « ». N’invente jamais de données privées absentes du
 Si tu manques d’information : dis-le clairement (« je n’ai pas trouvé ») plutôt que de fabuler.
 Distingue les faits Nazix des résultats web (libellé Web).
 Ne propose jamais de supprimer, de partager, ni de modifier les droits d’accès.
-Tu ne crées rien tout seul : si une création est utile (note, sous-note, idée, risque, ligne budgétaire, brouillon de message), propose-la et ajoute éventuellement un bloc JSON, l’humain confirmera :
+Tu ne crées rien tout seul : si une création est utile (note, sous-note, idée, risque, ligne budgétaire, brouillon de message), décris-la en une ou deux phrases en français. L’interface affichera un bouton de confirmation. N’exécute jamais l’action.
 
-\`\`\`json
-{"kind":"create_note","label":"Créer une note","draft":{"title":"…","content":"…"}}
-\`\`\`
-
-Kinds possibles : create_note, create_subnote, create_idea, create_risk, create_budget_line, draft_message.`
+INTERDICTION ABSOLUE : n’inclus JAMAIS de JSON, de bloc \`\`\`json, de {"kind":...}, de function-call, ni d’appel d’outil dans ta réponse. Pas de payload, pas de code. Uniquement du texte français visible par l’utilisateur.`
 
 function toChatMessages(body) {
   const incoming = Array.isArray(body.messages) ? body.messages : []
@@ -228,7 +232,7 @@ function toChatMessages(body) {
     .slice(-LAST_N)
     .map((m) => ({
       role: m.role,
-      content: String(m.content).slice(0, 8000),
+      content: (m.role === 'assistant' ? displayAiContent(m.content) : String(m.content)).slice(0, 8000),
     }))
   const context = body.context && typeof body.context === 'object' ? body.context : {}
   const contextText = JSON.stringify(context).slice(0, 24000)
@@ -429,7 +433,8 @@ async function streamOpenAI(key, messages, req, res) {
   const reader = openaiRes.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  let full = ''
+  const stripper = createActionStreamStripper()
+  let lastVisible = ''
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
@@ -449,14 +454,34 @@ async function streamOpenAI(key, messages, req, res) {
       }
       const delta = parsed?.choices?.[0]?.delta?.content || ''
       if (delta) {
-        full += delta
-        sseWrite(res, { delta })
+        const { visible } = stripper.push(delta)
+        if (visible.startsWith(lastVisible)) {
+          const extra = visible.slice(lastVisible.length)
+          if (extra) sseWrite(res, { delta: extra })
+        } else {
+          sseWrite(res, { content: visible })
+        }
+        lastVisible = visible
       }
     }
   }
-  sseWrite(res, { done: true, text: full, provider: 'openai', ok: true })
+  const finished = stripper.finish()
+  if (finished.content.startsWith(lastVisible)) {
+    const extra = finished.content.slice(lastVisible.length)
+    if (extra) sseWrite(res, { delta: extra })
+  } else if (finished.content !== lastVisible) {
+    sseWrite(res, { content: finished.content })
+  }
+  sseWrite(res, {
+    done: true,
+    text: finished.content,
+    content: finished.content,
+    actions: finished.actions,
+    provider: 'openai',
+    ok: true,
+  })
   res.end()
-  return full
+  return finished.content
 }
 
 async function handleAi(req, res, env) {
@@ -480,8 +505,16 @@ async function handleAi(req, res, env) {
   }
   const body = await readBody(req)
   const messages = toChatMessages(body)
-  const text = await callLlm(provider, messages, req)
-  json(res, 200, { ok: true, mode: 'external', provider: provider.name, text })
+  const raw = await callLlm(provider, messages, req)
+  const { content, actions } = splitDisplayAndActions(raw)
+  json(res, 200, {
+    ok: true,
+    mode: 'external',
+    provider: provider.name,
+    text: content,
+    content,
+    actions,
+  })
 }
 
 async function handleAiStream(req, res, env) {
@@ -511,9 +544,17 @@ async function handleAiStream(req, res, env) {
       await streamOpenAI(provider.key, messages, req, res)
       return
     }
-    const text = await callLlm(provider, messages, req)
-    sseWrite(res, { delta: text })
-    sseWrite(res, { done: true, text, provider: provider.name, ok: true })
+    const raw = await callLlm(provider, messages, req)
+    const { content, actions } = splitDisplayAndActions(raw)
+    if (content) sseWrite(res, { delta: content })
+    sseWrite(res, {
+      done: true,
+      text: content,
+      content,
+      actions,
+      provider: provider.name,
+      ok: true,
+    })
     res.end()
   } catch (err) {
     const error = err?.name === 'AbortError' ? 'délai dépassé (30 s)' : err.message || 'Erreur flux IA.'
@@ -526,20 +567,62 @@ async function handleAiStream(req, res, env) {
   }
 }
 
+function decodeHtml(text) {
+  return String(text || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function decodeDdgHref(href) {
+  const raw = String(href || '')
+    .trim()
+    .replace(/&amp;/g, '&')
+  if (!raw) return ''
+  try {
+    const u = new URL(raw, 'https://duckduckgo.com')
+    const uddg = u.searchParams.get('uddg')
+    if (uddg) return uddg
+    return u.href
+  } catch {
+    return raw
+  }
+}
+
+function uniqueResults(items, q, limit = 8) {
+  const seen = new Set()
+  const out = []
+  for (const item of items) {
+    const title = decodeHtml(item.title || q)
+    const snippet = decodeHtml(item.snippet || '')
+    const url = String(item.url || '').trim()
+    if (!title && !snippet) continue
+    const key = url || title.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({
+      title: title || q,
+      snippet: snippet.slice(0, 400),
+      url,
+      source: item.source || 'DuckDuckGo',
+      origin: 'web',
+    })
+    if (out.length >= limit) break
+  }
+  return out
+}
+
 function collectDdgResults(data, q) {
   const items = []
   const push = (title, snippet, url, source) => {
-    const t = String(title || '').trim()
-    const s = String(snippet || '').trim()
-    const u = String(url || '').trim()
-    if (!t && !s) return
-    items.push({
-      title: t || q,
-      snippet: s.slice(0, 400),
-      url: u,
-      source: source || 'DuckDuckGo',
-      origin: 'web',
-    })
+    items.push({ title, snippet, url, source: source || 'DuckDuckGo' })
   }
   if (data.AbstractText) {
     push(data.Heading || q, data.AbstractText, data.AbstractURL, data.AbstractSource || 'DuckDuckGo')
@@ -559,15 +642,138 @@ function collectDdgResults(data, q) {
       }
     }
   }
-  const seen = new Set()
-  return items
-    .filter((item) => {
-      const key = item.url || item.title
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
+  return uniqueResults(items, q)
+}
+
+function parseDdgHtml(html, q) {
+  const items = []
+  const snippets = []
+  const snippetRe = /<(?:a|span|td)[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/(?:a|span|td)>/gi
+  let sn
+  while ((sn = snippetRe.exec(html))) snippets.push(decodeHtml(sn[1]))
+  const linkRe = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi
+  let m
+  let i = 0
+  while ((m = linkRe.exec(html))) {
+    items.push({
+      title: decodeHtml(m[2]),
+      url: decodeDdgHref(m[1]),
+      snippet: snippets[i++] || '',
+      source: 'DuckDuckGo',
     })
-    .slice(0, 8)
+  }
+  if (!items.length) {
+    const liteRe = /<a[^>]*rel="nofollow"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi
+    while ((m = liteRe.exec(html))) {
+      const url = decodeDdgHref(m[1])
+      if (!url || /duckduckgo\.com/i.test(url)) continue
+      items.push({ title: decodeHtml(m[2]), url, snippet: '', source: 'DuckDuckGo' })
+    }
+  }
+  return uniqueResults(items, q)
+}
+
+function searchQueryFromReq(req, body = {}) {
+  const fromQuery = firstQueryValue(req.query?.q || req.query?.query)
+  if (fromQuery) return String(fromQuery).trim()
+  try {
+    const u = new URL(req.url || '/', 'http://local')
+    const q = u.searchParams.get('q') || u.searchParams.get('query') || ''
+    if (q) return q.trim()
+  } catch {
+    /* ignore */
+  }
+  return String(body.q || body.query || '').trim()
+}
+
+async function fetchDdgInstant(q) {
+  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_redirect=1&no_html=1&skip_disambig=1`
+  const ddg = await fetchWithTimeout(
+    url,
+    { headers: { Accept: 'application/json', 'User-Agent': SEARCH_UA } },
+    SEARCH_TIMEOUT_MS,
+  )
+  if (!ddg.ok) return []
+  const data = await ddg.json().catch(() => ({}))
+  return collectDdgResults(data || {}, q)
+}
+
+async function fetchDdgHtml(q) {
+  const headers = {
+    'User-Agent': SEARCH_UA,
+    Accept: 'text/html,application/xhtml+xml',
+  }
+  const attempts = [
+    { url: `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`, method: 'GET', headers },
+    {
+      url: 'https://html.duckduckgo.com/html/',
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `q=${encodeURIComponent(q)}&kl=wt-wt`,
+    },
+    { url: `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}`, method: 'GET', headers },
+  ]
+  for (const att of attempts) {
+    try {
+      const res = await fetchWithTimeout(
+        att.url,
+        { method: att.method, headers: att.headers, body: att.body, redirect: 'follow' },
+        SEARCH_TIMEOUT_MS,
+      )
+      if (!res.ok) continue
+      const html = await res.text()
+      const items = parseDdgHtml(html, q)
+      if (items.length) return items
+    } catch {
+      /* try next source */
+    }
+  }
+  return []
+}
+
+async function fetchWiki(q) {
+  const items = []
+  for (const lang of ['fr', 'en']) {
+    try {
+      const url = `https://${lang}.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(q)}&limit=8&namespace=0&format=json`
+      const res = await fetchWithTimeout(
+        url,
+        { headers: { Accept: 'application/json', 'User-Agent': SEARCH_UA } },
+        SEARCH_TIMEOUT_MS,
+      )
+      if (!res.ok) continue
+      const data = await res.json().catch(() => [])
+      const titles = data[1] || []
+      const descs = data[2] || []
+      const urls = data[3] || []
+      for (let i = 0; i < titles.length; i++) {
+        items.push({
+          title: titles[i],
+          snippet: descs[i] || '',
+          url: urls[i] || '',
+          source: 'Wikipedia',
+        })
+      }
+      if (items.length) break
+    } catch {
+      /* next language */
+    }
+  }
+  return uniqueResults(items, q)
+}
+
+async function webSearchResults(q) {
+  try {
+    const instant = await fetchDdgInstant(q)
+    if (instant.length) return instant
+  } catch {
+    /* fallback */
+  }
+  const [html, wiki] = await Promise.all([
+    fetchDdgHtml(q).catch(() => []),
+    fetchWiki(q).catch(() => []),
+  ])
+  return uniqueResults([...html, ...wiki], q)
 }
 
 async function handleSearch(req, res) {
@@ -575,49 +781,30 @@ async function handleSearch(req, res) {
     json(res, 405, { ok: false, error: 'Méthode non autorisée.' })
     return
   }
-  let q = ''
-  if (req.method === 'POST') {
-    const body = await readBody(req)
-    q = String(body.q || body.query || '').trim()
-  } else {
-    q = new URL(req.url || '/', 'http://local').searchParams.get('q') || ''
-    q = q.trim()
-  }
-  if (!q) {
-    json(res, 400, { ok: false, error: 'Requête vide.' })
-    return
-  }
+  let body = {}
+  if (req.method === 'POST') body = await readBody(req)
+  const q = searchQueryFromReq(req, body)
   const searchedAt = new Date().toISOString()
-  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_redirect=1&no_html=1&skip_disambig=1`
-  const ddg = await fetchWithTimeout(
-    url,
-    {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'NazixAssistant/1.0',
-      },
-    },
-    SEARCH_TIMEOUT_MS,
-  )
-  if (!ddg.ok) {
+  if (!q) {
     json(res, 200, {
-      ok: false,
+      ok: true,
       mode: 'web',
+      origin: 'web',
+      query: '',
       results: [],
       searchedAt,
-      error: `DuckDuckGo ${ddg.status}`,
     })
     return
   }
-  const data = await ddg.json()
+  const results = await webSearchResults(q)
   json(res, 200, {
     ok: true,
     mode: 'web',
     origin: 'web',
     query: q,
-    results: collectDdgResults(data, q),
+    results,
     searchedAt,
-    sourceLabel: 'Web · DuckDuckGo Instant Answer',
+    sourceLabel: 'Web',
   })
 }
 

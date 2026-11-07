@@ -163,11 +163,12 @@ import {
 } from './lib/rbac'
 import {
   FAB_VIEWS,
-  aiEndpoint,
   readExternalPref,
   writeExternalPref,
   readWebPref,
   buildContextPayload,
+  searchWeb,
+  WEB_EMPTY_MESSAGE,
 } from './lib/assistant'
 import {
   MAX_FILE_BYTES,
@@ -5807,6 +5808,7 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
   const [external, setExternal] = useState([])
   const [extBusy, setExtBusy] = useState(false)
   const [extErr, setExtErr] = useState('')
+  const [webHidden, setWebHidden] = useState(false)
 
   const query = q.trim().toLowerCase()
 
@@ -5815,54 +5817,57 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
       const blob = `${obj.title || ''} ${obj.name || ''} ${obj.description || ''} ${obj.content || ''} ${(obj.tags || []).join(' ')}`.toLowerCase()
       return !query || blob.includes(query)
     }
-    let n = notes.filter(matchText)
-    let i = ideas.filter(matchText)
-    let p = projects.filter(matchText)
-    let e = events.filter(matchText)
-    let f = files.filter(matchText)
-    let b = budgets.filter(matchText)
-    let r = risks.filter(matchText)
-    if (category) n = n.filter((x) => x.category === category)
-    if (status) {
-      i = i.filter((x) => x.status === status)
-      p = p.filter((x) => x.status === status)
-      r = r.filter((x) => x.status === status)
+    const collect = (applyFilters) => {
+      let n = notes.filter(matchText)
+      let i = ideas.filter(matchText)
+      let p = projects.filter(matchText)
+      let e = events.filter(matchText)
+      let f = files.filter(matchText)
+      let b = budgets.filter(matchText)
+      let r = risks.filter(matchText)
+      if (applyFilters) {
+        if (category) n = n.filter((x) => x.category === category)
+        if (status) {
+          i = i.filter((x) => x.status === status)
+          p = p.filter((x) => x.status === status)
+          r = r.filter((x) => x.status === status)
+        }
+        if (tag) n = n.filter((x) => (x.tags || []).some((t) => t.toLowerCase().includes(tag.toLowerCase())))
+        if (projectId) {
+          n = n.filter((x) => x.projectId === projectId)
+          f = f.filter((x) => x.projectId === projectId)
+          b = b.filter((x) => x.projectId === projectId)
+          r = r.filter((x) => x.projectId === projectId)
+        }
+      }
+      const notesById = Object.fromEntries(notes.map((x) => [x.id, x]))
+      return [
+        ...n.map((x) => ({
+          kind: x.parentId ? 'Sous-note' : 'Note',
+          parentTitle: x.parentId ? notesById[x.parentId]?.title : '',
+          ...x,
+        })),
+        ...i.map((x) => ({ kind: 'Idée', ...x })),
+        ...p.map((x) => ({ kind: 'Projet', ...x })),
+        ...e.map((x) => ({ kind: 'Événement', ...x })),
+        ...f.map((x) => ({ kind: 'Fichier', title: x.name, ...x })),
+        ...b.map((x) => ({ kind: 'Budget', title: x.name, ...x })),
+        ...r.map((x) => ({ kind: 'Risque', ...x })),
+      ]
     }
-    if (tag) n = n.filter((x) => (x.tags || []).some((t) => t.toLowerCase().includes(tag.toLowerCase())))
-    if (projectId) {
-      n = n.filter((x) => x.projectId === projectId)
-      f = f.filter((x) => x.projectId === projectId)
-      b = b.filter((x) => x.projectId === projectId)
-      r = r.filter((x) => x.projectId === projectId)
-    }
-    const notesById = Object.fromEntries(notes.map((x) => [x.id, x]))
-    return [
-      ...n.map((x) => ({
-        kind: x.parentId ? 'Sous-note' : 'Note',
-        parentTitle: x.parentId ? notesById[x.parentId]?.title : '',
-        ...x,
-      })),
-      ...i.map((x) => ({ kind: 'Idée', ...x })),
-      ...p.map((x) => ({ kind: 'Projet', ...x })),
-      ...e.map((x) => ({ kind: 'Événement', ...x })),
-      ...f.map((x) => ({ kind: 'Fichier', title: x.name, ...x })),
-      ...b.map((x) => ({ kind: 'Budget', title: x.name, ...x })),
-      ...r.map((x) => ({ kind: 'Risque', ...x })),
-    ]
+    const filtered = collect(true)
+    if (filtered.length || !query) return filtered
+    if (category || status || tag || projectId) return collect(false)
+    return filtered
   }, [notes, ideas, projects, events, files, budgets, risks, query, category, status, tag, projectId])
 
   const runExternal = async () => {
     if (!query) return
     setExtBusy(true)
     setExtErr('')
+    setWebHidden(false)
     try {
-      const res = await fetch(aiEndpoint('/api/ai-search'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ q }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || 'API indisponible')
+      const data = await searchWeb(q)
       const items = (data.results || []).map((r) => ({
         title: r.title,
         snippet: r.snippet,
@@ -5871,12 +5876,15 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
         searchedAt: data.searchedAt,
       }))
       setExternal(items.slice(0, 12))
-      if (!items.length) setExtErr(data.error || 'Aucun résultat externe.')
-    } catch {
-      setExtErr(
-        'Recherche web indisponible. Vérifiez VITE_AI_URL (production) ou relancez Vite en local.',
-      )
+      setExtErr(items.length ? '' : WEB_EMPTY_MESSAGE)
+    } catch (err) {
       setExternal([])
+      if (err?.offline || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+        setWebHidden(true)
+        setExtErr('')
+      } else {
+        setExtErr(WEB_EMPTY_MESSAGE)
+      }
     } finally {
       setExtBusy(false)
     }
@@ -5934,7 +5942,9 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
           <Filter size={16} /> Résultats internes ({internal.length})
         </h2>
         {internal.length === 0 ? (
-          <p className="text-sm text-sage-500">Aucun résultat.</p>
+          <p className="text-sm text-sage-500">
+            {query ? 'Aucun résultat interne.' : 'Saisissez un mot-clé pour parcourir vos contenus.'}
+          </p>
         ) : (
           <ul className="space-y-2">
             {internal.map((item) => (
@@ -5951,37 +5961,39 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
         )}
       </section>
 
-      <section>
-        <h2 className="mb-3 font-display text-lg text-sage-900">Web (hors Nazix)</h2>
-        {extErr && <p className="mb-2 text-sm text-warn">{extErr}</p>}
-        {external.length === 0 && !extErr && (
-          <p className="text-sm text-sage-500">Lancez une recherche externe pour ancrer vos contenus.</p>
-        )}
-        {external[0]?.searchedAt && (
-          <p className="mb-2 text-xs text-sage-500">
-            Recherche du {new Date(external[0].searchedAt).toLocaleString('fr-FR')} · DuckDuckGo — ce ne sont pas des faits Nazix.
-          </p>
-        )}
-        <ul className="space-y-2">
-          {external.map((item, idx) => (
-            <li key={idx} className="rounded-xl border border-sage-200 bg-white/70 px-4 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-sage-500">Web</p>
-              <p className="font-medium text-sage-900">{item.title}</p>
-              <p className="text-sm text-sage-600">{item.snippet}</p>
-              {item.url && (
-                <a
-                  href={item.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-sage-700 underline"
-                >
-                  {item.source} <ArrowRight size={12} />
-                </a>
-              )}
-            </li>
-          ))}
-        </ul>
-      </section>
+      {!webHidden && (
+        <section>
+          <h2 className="mb-3 font-display text-lg text-sage-900">Web (hors Nazix)</h2>
+          {extErr && <p className="mb-2 text-sm text-sage-500">{extErr}</p>}
+          {external.length === 0 && !extErr && (
+            <p className="text-sm text-sage-500">Lancez une recherche externe pour ancrer vos contenus.</p>
+          )}
+          {external[0]?.searchedAt && (
+            <p className="mb-2 text-xs text-sage-500">
+              Recherche du {new Date(external[0].searchedAt).toLocaleString('fr-FR')} · DuckDuckGo — ce ne sont pas des faits Nazix.
+            </p>
+          )}
+          <ul className="space-y-2">
+            {external.map((item, idx) => (
+              <li key={idx} className="rounded-xl border border-sage-200 bg-white/70 px-4 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-sage-500">Web</p>
+                <p className="font-medium text-sage-900">{item.title}</p>
+                <p className="text-sm text-sage-600">{item.snippet}</p>
+                {item.url && (
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-sage-700 underline"
+                  >
+                    {item.source} <ArrowRight size={12} />
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   )
 }

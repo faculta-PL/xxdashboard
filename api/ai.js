@@ -1,6 +1,7 @@
-/** Optional Vercel fallback for relative /api/ai — NOT the product backend.
- * Product AI is Firebase Cloud Function `ai` (set VITE_AI_URL on the frontend).
- * OPENAI_API_KEY stays a Firebase Functions secret, never VITE_. */
+/** Optional Vercel fallback for relative /api/ai and /api/ai-search.
+ * Product AI is Firebase Cloud Function `ai`. Same-origin /api/ai-search still
+ * works here if the Cloud Function URL is missing. OPENAI_API_KEY stays a
+ * Firebase Functions secret, never a VITE_ frontend var. */
 
 import { createNodeHandler } from '../server/ai-http.mjs'
 

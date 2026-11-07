@@ -5,7 +5,11 @@
   "outputDirectory": "dist",
   "functions": {
     "api/ai.js": {
-      "includeFiles": "server/ai-http.mjs",
+      "includeFiles": "server/{ai-http,ai-actions}.mjs",
+      "maxDuration": 60
+    },
+    "api/ai-search.js": {
+      "includeFiles": "server/{ai-http,ai-actions}.mjs",
       "maxDuration": 60
     }
   },
@@ -20,6 +24,10 @@
     },
     {
       "source": "/api/ai-search",
+      "destination": "/api/ai?__nazix=/api/ai-search"
+    },
+    {
+      "source": "/search",
       "destination": "/api/ai?__nazix=/api/ai-search"
     },
     {
