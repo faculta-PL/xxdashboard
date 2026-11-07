@@ -30,7 +30,9 @@ import {
   Send,
   UserPlus,
   ChevronLeft,
+  ChevronRight,
   ChevronDown,
+  Volume2,
   Columns3,
   HelpCircle,
   FolderOpen,
@@ -190,6 +192,18 @@ import {
   buildDocSections,
   buildPdfTables,
 } from './lib/export'
+import {
+  WEEKDAYS_FR,
+  addMonths,
+  formatDayLong,
+  formatMonthTitle,
+  groupEventsByDate,
+  monthCells,
+  parseIsoDate,
+  toIsoDate,
+  weekDates,
+} from './lib/calendar'
+import { bindNotifAudioUnlock, playNotifBeep, readSoundPref, writeSoundPref } from './lib/notifSound'
 
 const GamesHub = lazy(() => import('./games/GamesHub.jsx'))
 
@@ -660,6 +674,9 @@ export default function App() {
     [db, user],
   )
   const unread = notifications.filter((n) => !n.read).length
+  const unreadReadyRef = useRef(false)
+  const unreadPrevRef = useRef(0)
+  const unreadArmedAtRef = useRef(0)
   const groups = useMemo(
     () => (db && user ? listGroupsForUser(user) : []),
     [db, user],
@@ -724,6 +741,27 @@ export default function App() {
       writeExternalPref(prefs.aiExternalEnabled)
     }
   }, [user, db])
+
+  useEffect(() => {
+    unreadReadyRef.current = false
+    unreadPrevRef.current = 0
+    unreadArmedAtRef.current = 0
+  }, [user?.id])
+
+  useEffect(() => bindNotifAudioUnlock(), [])
+
+  useEffect(() => {
+    if (!user || !db) return
+    if (!unreadReadyRef.current) {
+      unreadReadyRef.current = true
+      unreadPrevRef.current = unread
+      unreadArmedAtRef.current = Date.now()
+      return
+    }
+    const hydrating = Date.now() - unreadArmedAtRef.current < 1500
+    if (unread > unreadPrevRef.current && !hydrating) playNotifBeep()
+    unreadPrevRef.current = unread
+  }, [user, db, unread])
 
   useEffect(() => {
     if (!user) return
@@ -5608,20 +5646,58 @@ function ProjectsView({
 }
 
 function CalendarView({ user, events, users, flash }) {
+  const [todayIso] = useState(() => toIsoDate(new Date()))
+  const [cursor, setCursor] = useState(() => {
+    const t = new Date()
+    return { year: t.getFullYear(), month: t.getMonth() }
+  })
+  const [mode, setMode] = useState('month')
+  const [selectedDate, setSelectedDate] = useState(todayIso)
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState({
     title: '',
     description: '',
-    date: '',
+    date: todayIso,
     time: '09:00',
     participantIds: [],
     visibility: 'Partagée',
     shares: [],
   })
 
+  const byDate = useMemo(() => groupEventsByDate(events), [events])
   const sorted = [...events].sort((a, b) =>
     `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`),
   )
+  const cells = useMemo(() => monthCells(cursor.year, cursor.month), [cursor.year, cursor.month])
+  const weekIso = useMemo(() => {
+    const anchor = parseIsoDate(selectedDate) || new Date(cursor.year, cursor.month, 1)
+    return weekDates(anchor)
+  }, [selectedDate, cursor.year, cursor.month])
+  const dayEvents = byDate[selectedDate] || []
+
+  const blankForm = (date) => ({
+    title: '',
+    description: '',
+    date: date || selectedDate || todayIso,
+    time: '09:00',
+    participantIds: [],
+    visibility: 'Partagée',
+    shares: [],
+  })
+
+  const openCreate = (date) => {
+    const iso = date || selectedDate || todayIso
+    setSelectedDate(iso)
+    setForm(blankForm(iso))
+    setOpen(true)
+  }
+
+  const pickDay = (iso) => {
+    if (!iso) return
+    setSelectedDate(iso)
+    const d = parseIsoDate(iso)
+    if (d) setCursor({ year: d.getFullYear(), month: d.getMonth() })
+  }
 
   const submit = async (e) => {
     e.preventDefault()
@@ -5651,36 +5727,255 @@ function CalendarView({ user, events, users, flash }) {
         },
       )
       flash('Événement planifié.')
+      setSelectedDate(saved.date || form.date)
       setOpen(false)
-      setForm({
-        title: '',
-        description: '',
-        date: '',
-        time: '09:00',
-        participantIds: [],
-        visibility: 'Partagée',
-        shares: [],
-      })
+      setForm(blankForm(saved.date || form.date))
     } catch (err) {
       flash(err.message, 'err')
     }
   }
 
+  const renderEventChip = (ev) => (
+    <span
+      key={ev.id}
+      className="block truncate rounded bg-sage-700/90 px-1 py-0.5 text-[10px] leading-tight text-white"
+      title={`${ev.time || ''} ${ev.title}`}
+    >
+      {ev.time ? `${ev.time} · ` : ''}
+      {ev.title}
+    </span>
+  )
+
+  const dayButton = (iso, dayNum, inMonth) => {
+    const list = byDate[iso] || []
+    const isToday = iso === todayIso
+    const isSelected = iso === selectedDate
+    return (
+      <button
+        key={iso}
+        type="button"
+        onClick={() => pickDay(iso)}
+        className={`flex min-h-[4.25rem] flex-col items-stretch gap-0.5 rounded-none p-1 text-left transition sm:min-h-[6.5rem] sm:p-1.5 ${
+          inMonth ? 'bg-white' : 'bg-sage-50/80 text-sage-400'
+        } ${isSelected ? 'ring-2 ring-inset ring-sage-600' : ''} ${
+          isToday && !isSelected ? 'bg-sage-100' : ''
+        } hover:bg-sage-50`}
+      >
+        <span
+          className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${
+            isToday ? 'bg-sage-700 text-white' : 'text-sage-800'
+          }`}
+        >
+          {dayNum}
+        </span>
+        <div className="hidden min-h-0 flex-1 space-y-0.5 overflow-hidden sm:block">
+          {list.slice(0, 3).map(renderEventChip)}
+          {list.length > 3 && (
+            <span className="text-[10px] font-medium text-sage-600">+{list.length - 3}</span>
+          )}
+        </div>
+        {list.length > 0 && (
+          <span className="mt-auto flex gap-0.5 sm:hidden">
+            {list.slice(0, 3).map((ev) => (
+              <span key={ev.id} className="h-1.5 w-1.5 rounded-full bg-sage-700" />
+            ))}
+          </span>
+        )}
+      </button>
+    )
+  }
+
   return (
     <div className="space-y-4 animate-fade-up">
-      {canWriteRole(user) && (
-        <button type="button" className={btnPrimary} onClick={() => setOpen(true)}>
-          <Plus size={16} /> Nouvel événement
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className={btnGhost + ' !min-h-11 !min-w-11 !px-2'}
+            aria-label={mode === 'week' ? 'Semaine précédente' : 'Mois précédent'}
+            onClick={() => {
+              if (mode === 'week') {
+                const d = parseIsoDate(weekIso[0])
+                if (d) {
+                  d.setDate(d.getDate() - 7)
+                  pickDay(toIsoDate(d))
+                }
+              } else {
+                setCursor(addMonths(cursor.year, cursor.month, -1))
+              }
+            }}
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <h2 className="min-w-[10rem] text-center font-display text-xl capitalize text-sage-900 sm:text-2xl">
+            {mode === 'week'
+              ? `Semaine du ${formatDayLong(weekIso[0])}`
+              : formatMonthTitle(cursor.year, cursor.month)}
+          </h2>
+          <button
+            type="button"
+            className={btnGhost + ' !min-h-11 !min-w-11 !px-2'}
+            aria-label={mode === 'week' ? 'Semaine suivante' : 'Mois suivant'}
+            onClick={() => {
+              if (mode === 'week') {
+                const d = parseIsoDate(weekIso[0])
+                if (d) {
+                  d.setDate(d.getDate() + 7)
+                  pickDay(toIsoDate(d))
+                }
+              } else {
+                setCursor(addMonths(cursor.year, cursor.month, 1))
+              }
+            }}
+          >
+            <ChevronRight size={18} />
+          </button>
+          <button
+            type="button"
+            className={btnGhost}
+            onClick={() => {
+              const t = new Date()
+              setCursor({ year: t.getFullYear(), month: t.getMonth() })
+              setSelectedDate(todayIso)
+            }}
+          >
+            Aujourd’hui
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <div className="inline-flex rounded-xl border border-sage-300 bg-white p-0.5">
+            {[
+              ['month', 'Mois'],
+              ['week', 'Semaine'],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={`min-h-10 rounded-lg px-3 text-sm font-medium ${
+                  mode === id ? 'bg-sage-700 text-white' : 'text-sage-700 hover:bg-sage-100'
+                }`}
+                onClick={() => setMode(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {canWriteRole(user) && (
+            <button type="button" className={btnPrimary} onClick={() => openCreate(selectedDate)}>
+              <Plus size={16} /> Nouvel événement
+            </button>
+          )}
+        </div>
+      </div>
+
+      {mode === 'month' ? (
+        <div className="overflow-x-auto rounded-2xl border border-sage-200 bg-sage-200/80 shadow-sm">
+          <div className="grid min-w-[36rem] grid-cols-7 gap-px sm:min-w-0">
+            {WEEKDAYS_FR.map((d) => (
+              <div
+                key={d}
+                className="border-b border-sage-200 bg-sage-100 px-1 py-2 text-center text-[11px] font-semibold uppercase tracking-wide text-sage-600 sm:text-xs"
+              >
+                {d}
+              </div>
+            ))}
+            {cells.map((cell) => dayButton(cell.iso, cell.day, cell.inMonth))}
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-sage-200 bg-sage-200/80 sm:grid-cols-7">
+          {weekIso.map((iso, i) => {
+            const d = parseIsoDate(iso)
+            const list = byDate[iso] || []
+            const isSelected = iso === selectedDate
+            const isToday = iso === todayIso
+            return (
+              <button
+                key={iso}
+                type="button"
+                onClick={() => pickDay(iso)}
+                className={`min-h-[8rem] bg-white p-2 text-left ${isSelected ? 'ring-2 ring-inset ring-sage-600' : ''} ${
+                  isToday ? 'bg-sage-50' : ''
+                }`}
+              >
+                <p className="text-[11px] font-semibold uppercase text-sage-500">{WEEKDAYS_FR[i]}</p>
+                <p
+                  className={`mb-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold ${
+                    isToday ? 'bg-sage-700 text-white' : 'text-sage-900'
+                  }`}
+                >
+                  {d?.getDate()}
+                </p>
+                <div className="space-y-0.5">
+                  {list.length === 0 ? (
+                    <p className="text-[11px] text-sage-400">—</p>
+                  ) : (
+                    list.map(renderEventChip)
+                  )}
+                </div>
+              </button>
+            )
+          })}
+        </div>
       )}
+
+      <div className="rounded-2xl border border-sage-200 bg-white/80 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h3 className="font-display text-lg capitalize text-sage-900">{formatDayLong(selectedDate)}</h3>
+            <p className="text-xs text-sage-500">
+              {dayEvents.length
+                ? `${dayEvents.length} rendez-vous`
+                : 'Aucun rendez-vous ce jour'}
+            </p>
+          </div>
+          {canWriteRole(user) && (
+            <button type="button" className={btnPrimary} onClick={() => openCreate(selectedDate)}>
+              <Plus size={16} /> Créer ce jour
+            </button>
+          )}
+        </div>
+        {dayEvents.length > 0 && (
+          <ul className="mt-3 space-y-2">
+            {dayEvents.map((ev) => (
+              <li
+                key={ev.id}
+                className="flex flex-wrap items-start justify-between gap-2 rounded-xl border border-sage-200 bg-sage-50 px-3 py-2"
+              >
+                <div>
+                  <p className="font-medium text-sage-900">
+                    {ev.time ? `${ev.time} · ` : ''}
+                    {ev.title}
+                  </p>
+                  {ev.description ? <p className="text-sm text-sage-700">{ev.description}</p> : null}
+                </div>
+                {canDeleteEntity(user, ev) && (
+                  <button
+                    type="button"
+                    className={btnGhost + ' !text-danger'}
+                    onClick={async () => {
+                      if (confirm('Supprimer cet événement ?')) {
+                        await deleteEvent(ev.id, user)
+                        flash('Événement supprimé.')
+                      }
+                    }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       {sorted.length === 0 ? (
         <EmptyState
           title="Calendrier vide"
-          hint="Planifiez un rendez-vous et notifiez les participants."
+          hint="Cliquez un jour pour lister ou créer un rendez-vous."
           action={
             canWriteRole(user) ? (
-              <button type="button" className={btnPrimary + ' mt-4'} onClick={() => setOpen(true)}>
+              <button type="button" className={btnPrimary + ' mt-4'} onClick={() => openCreate(todayIso)}>
                 <Plus size={16} /> Planifier
               </button>
             ) : null
@@ -5693,7 +5988,7 @@ function CalendarView({ user, events, users, flash }) {
               key={ev.id}
               className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-sage-200 bg-white/80 p-4"
             >
-              <div>
+              <button type="button" className="min-w-0 flex-1 text-left" onClick={() => pickDay(toIsoDate(ev.date))}>
                 <p className="font-display text-lg text-sage-900">{ev.title}</p>
                 <p className="text-sm text-sage-600">
                   {ev.date} · {ev.time}
@@ -5705,7 +6000,7 @@ function CalendarView({ user, events, users, flash }) {
                     .map((id) => users.find((u) => u.id === id)?.fullName || id)
                     .join(', ') || '—'}
                 </p>
-              </div>
+              </button>
               {canDeleteEntity(user, ev) && (
                 <button
                   type="button"
@@ -6108,6 +6403,7 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
   const [fullName, setFullName] = useState(user.fullName)
   const [code, setCode] = useState('')
   const [diag, setDiag] = useState(null)
+  const [soundOn, setSoundOn] = useState(readSoundPref)
   const sessions = listSessionsForUser(user.id)
 
   useEffect(() => {
@@ -6247,6 +6543,30 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
             </li>
           ))}
         </ul>
+      </section>
+
+      <section className="rounded-2xl border border-sage-200 bg-white/80 p-5">
+        <h2 className="flex items-center gap-2 font-display text-lg text-sage-900">
+          <Volume2 size={18} /> Notifications sonores
+        </h2>
+        <p className="mt-2 text-sm text-sage-700">
+          Un bref signal est joué quand une nouvelle notification arrive pour votre compte. Coupé sur
+          cet appareil uniquement.
+        </p>
+        <label className="mt-3 flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium text-sage-800">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-sage-700"
+            checked={soundOn}
+            onChange={(e) => {
+              const on = e.target.checked
+              setSoundOn(on)
+              writeSoundPref(on)
+              flash(on ? 'Son des notifications activé.' : 'Son des notifications coupé.')
+            }}
+          />
+          Jouer un son (activé par défaut)
+        </label>
       </section>
 
       <AiSettingsBlock user={user} allowExternal={allowExternal} onChange={onAllowExternal} />

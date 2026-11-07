@@ -61,7 +61,7 @@ export const MODULE_GUIDES = {
     bullets: [
       'Une note racine peut porter des sous-notes (note parente).',
       'Visibilité Privée, Partagée ou Publique, avec droits Lecture / Édition.',
-      'Importez un fichier texte ou tableur : la note reste privée jusqu’à ce que vous partagiez.',
+      'Importez un fichier : titre + contenu extraits, ou « Note (texte brut) » pour tout coller.',
     ],
   },
   ideas: {
@@ -129,11 +129,11 @@ export const MODULE_GUIDES = {
   },
   calendar: {
     title: 'Calendrier',
-    lead: 'Posez une date, une heure et des participants : chacun reçoit une notification.',
+    lead: 'Grille mensuelle (ou semaine) : les rendez-vous s’affichent sur leur date.',
     bullets: [
+      'Cliquez un jour pour lister les événements et en créer un.',
       'Les événements partagés apparaissent chez les invités.',
       'Reliez un rendez-vous à un projet depuis la fiche projet.',
-      'Aucune donnée d’exemple n’est préchargée.',
     ],
   },
   team: {
@@ -149,9 +149,9 @@ export const MODULE_GUIDES = {
     title: 'Notifications',
     lead: 'Partages, invitations, codes de vérification et actions en retard.',
     bullets: [
+      'Un son discret signale une nouvelle non-lue ; coupez-le dans Paramètres.',
       'Le code e-mail à 6 chiffres arrive aussi ici si Firebase est muet.',
       'Marquez comme lu, ou tout lire d’un coup.',
-      'Rien n’est envoyé hors de Nazix hormis les e-mails Auth Firebase.',
     ],
   },
   search: {

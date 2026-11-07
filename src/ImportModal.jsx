@@ -15,7 +15,10 @@ import { MAX_FILE_BYTES, maxFileSizeLabel, formatFileSize } from './lib/files'
 import {
   IMPORT_DESTINATIONS,
   IMPORT_EXTS,
+  MAX_IMPORT_CHARS,
   parseImportFile,
+  previewBodyForDestination,
+  splitTitleAndBody,
   guessBudgetColumns,
   guessRiskColumns,
   mapBudgetRows,
@@ -57,7 +60,7 @@ export default function ImportModal({
   const [destination, setDestination] = useState(defaultDestination)
   const [projectId, setProjectId] = useState(defaultProjectId)
   const [title, setTitle] = useState('')
-  const [paste, setPaste] = useState('')
+  const [body, setBody] = useState('')
   const [projectMode, setProjectMode] = useState('create')
   const [budgetId, setBudgetId] = useState('')
   const [budgetName, setBudgetName] = useState('')
@@ -81,7 +84,7 @@ export default function ImportModal({
     setDestination(defaultDestination)
     setProjectId(defaultProjectId)
     setTitle('')
-    setPaste('')
+    setBody('')
     setProjectMode('create')
     setBudgetId('')
     setBudgetName('')
@@ -101,9 +104,14 @@ export default function ImportModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultDestination, defaultProjectId])
 
-  const text = (parsed?.text || paste || '').trim()
   const headers = parsed?.headers || []
   const needsProject = destination === 'budget' || destination === 'risks'
+  const showsBody =
+    destination === 'notes' ||
+    destination === 'note_raw' ||
+    destination === 'projects' ||
+    destination === 'files'
+  const extractedText = parsed?.fullText || parsed?.text || ''
   const projectBudgets = useMemo(
     () => budgets.filter((b) => !projectId || b.projectId === projectId),
     [budgets, projectId],
@@ -119,7 +127,7 @@ export default function ImportModal({
       setFile(native)
       setParsed(next)
       setTitle(next.title || '')
-      setPaste('')
+      setBody(previewBodyForDestination(next, destination))
       if (next.kind === 'table') {
         const bCols = guessBudgetColumns(next.headers)
         const rCols = guessRiskColumns(next.headers)
@@ -180,17 +188,23 @@ export default function ImportModal({
     setError('')
     try {
       const visibility = 'Privée'
-      const body = text
       const name = title.trim() || parsed.title
+      const content = (body.trim() || extractedText).slice(0, MAX_IMPORT_CHARS)
+      if (showsBody && !content && extractedText) {
+        throw new Error('Le contenu extrait n’a pas pu être recopié.')
+      }
 
       if (destination === 'files') {
-        await keepOriginalFile({ projectId, description: name })
+        await keepOriginalFile({
+          projectId,
+          description: content || name,
+        })
         flash('Fichier importé (visibilité privée).')
-      } else if (destination === 'notes') {
+      } else if (destination === 'notes' || destination === 'note_raw') {
         const note = await saveNote(
           {
             title: name,
-            content: body,
+            content,
             category: 'Général',
             tags: [],
             visibility,
@@ -212,7 +226,11 @@ export default function ImportModal({
         } catch (err) {
           console.warn('Fichier original non lié:', err.message)
         }
-        flash('Note créée (privée) et fichier original conservé.')
+        flash(
+          destination === 'note_raw'
+            ? 'Note brute créée (privée) avec le texte intégral.'
+            : 'Note créée (privée) et fichier original conservé.',
+        )
       } else if (destination === 'projects') {
         if (projectMode === 'update' && projectId) {
           const existing = projects.find((p) => p.id === projectId)
@@ -220,7 +238,7 @@ export default function ImportModal({
             {
               ...existing,
               id: projectId,
-              description: body || existing?.description || '',
+              description: content || existing?.description || '',
               title: existing?.title || name,
             },
             user,
@@ -230,7 +248,7 @@ export default function ImportModal({
           await saveProject(
             {
               title: name,
-              description: body,
+              description: content,
               status: 'À préparer',
               progress: 0,
               leadId: user.id,
@@ -369,21 +387,6 @@ export default function ImportModal({
                   {parsed.extractable ? 'texte extrait' : 'fichier conservé tel quel'}
                 </p>
               </div>
-              {!parsed.extractable && (
-                <Field label="Coller le texte (optionnel, pdf/docx)">
-                  <textarea
-                    className={inputClass + ' min-h-28'}
-                    value={paste}
-                    onChange={(e) => setPaste(e.target.value)}
-                    placeholder={parsed.pasteHint}
-                  />
-                </Field>
-              )}
-              {parsed.kind === 'text' && (
-                <pre className="max-h-40 overflow-auto rounded-xl border border-sage-200 bg-white p-3 text-xs text-sage-700 xx-scroll whitespace-pre-wrap">
-                  {parsed.text || '—'}
-                </pre>
-              )}
               {parsed.kind === 'table' && (
                 <div className="max-h-40 overflow-auto rounded-xl border border-sage-200 bg-white xx-scroll">
                   <table className="min-w-full text-left text-xs">
@@ -415,7 +418,11 @@ export default function ImportModal({
                 <select
                   className={inputClass}
                   value={destination}
-                  onChange={(e) => setDestination(e.target.value)}
+                  onChange={(e) => {
+                    const nextDest = e.target.value
+                    setDestination(nextDest)
+                    if (parsed) setBody(previewBodyForDestination(parsed, nextDest))
+                  }}
                 >
                   {IMPORT_DESTINATIONS.map((d) => (
                     <option key={d.id} value={d.id}>
@@ -424,10 +431,53 @@ export default function ImportModal({
                   ))}
                 </select>
               </Field>
+              {destination === 'note_raw' && (
+                <p className="text-xs text-sage-600">
+                  Tout le fichier est collé dans le contenu de la note, sans découpage titre / corps.
+                </p>
+              )}
               <Field label="Titre">
                 <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} />
               </Field>
+              {showsBody && (
+                <Field
+                  label={
+                    destination === 'note_raw'
+                      ? 'Contenu (texte brut — fichier entier)'
+                      : destination === 'projects'
+                        ? 'Description'
+                        : destination === 'files'
+                          ? 'Description du fichier'
+                          : 'Description / contenu'
+                  }
+                >
+                  <textarea
+                    className={inputClass + ' min-h-40 font-mono text-xs sm:text-sm'}
+                    value={body}
+                    onChange={(e) => {
+                      const next = e.target.value
+                      setBody(next)
+                      if (!parsed?.extractable && destination !== 'note_raw') {
+                        const split = splitTitleAndBody(next, parsed?.name)
+                        if (!title || title === parsed?.title) setTitle(split.title)
+                      }
+                    }}
+                    placeholder={
+                      parsed.extractable
+                        ? 'Texte extrait — modifiable avant confirmation'
+                        : parsed.pasteHint || 'Collez ici le texte du fichier'
+                    }
+                  />
+                  <span className="mt-1 block text-[11px] text-sage-500">
+                    {body.length.toLocaleString('fr-FR')} caractère
+                    {body.length > 1 ? 's' : ''}
+                    {extractedText && !body.trim() ? ' · le texte extrait sera utilisé si le champ reste vide' : ''}
+                    {body.length >= MAX_IMPORT_CHARS ? ` · limité à ${MAX_IMPORT_CHARS.toLocaleString('fr-FR')} caractères` : ''}
+                  </span>
+                </Field>
+              )}
               {(destination === 'notes' ||
+                destination === 'note_raw' ||
                 destination === 'files' ||
                 destination === 'budget' ||
                 destination === 'risks' ||
