@@ -129,6 +129,7 @@ assert(openAiUnavailable('clé absente') === 'OpenAI indisponible: clé absente'
 assert(aiEndpoint('/api/ai') === '/api/ai', 'relative /api/ai without VITE_AI_URL')
 assert(aiEndpoint('/api/ai/stream') === '/api/ai/stream', 'relative stream')
 assert(aiEndpoint('/api/ai-search') === '/api/ai-search', 'relative search')
+assert(aiEndpoint('/api/ai/image') === '/api/ai/image', 'relative image')
 
 assert(isLocalAiHost('localhost', '3847', false) === true, 'localhost is local')
 assert(isLocalAiHost('127.0.0.1', '3847', false) === true, 'loopback is local')

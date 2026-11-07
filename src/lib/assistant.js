@@ -99,6 +99,7 @@ export const FAB_VIEWS = [
   'budget',
   'risks',
   'canvas',
+  'create',
 ]
 
 export function readLocalFlag(key, fallback = false) {
@@ -763,7 +764,7 @@ function normalizeAiResponse(data, rawText = '') {
   }
 }
 
-export async function askExternal({ messages, context, web, signal }) {
+export async function askExternal({ messages, context, web, signal, language }) {
   const res = await fetch(aiEndpoint('/api/ai'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -771,6 +772,7 @@ export async function askExternal({ messages, context, web, signal }) {
       messages: slimMessages(messages),
       context,
       web: web || undefined,
+      language: language === 'en' ? 'en' : 'fr',
     }),
     signal,
   })
@@ -797,7 +799,7 @@ function parseSseBuffer(buffer, onEvent) {
   return rest
 }
 
-export async function askExternalStream({ messages, context, web, signal, onDelta }) {
+export async function askExternalStream({ messages, context, web, signal, onDelta, language }) {
   const res = await fetch(aiEndpoint('/api/ai/stream'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
@@ -805,6 +807,7 @@ export async function askExternalStream({ messages, context, web, signal, onDelt
       messages: slimMessages(messages),
       context,
       web: web || undefined,
+      language: language === 'en' ? 'en' : 'fr',
     }),
     signal,
   })
@@ -897,6 +900,44 @@ export async function searchWeb(query, loc) {
   const error = new Error(typeof lastError === 'string' ? lastError : 'search failed')
   error.offline = typeof navigator !== 'undefined' && navigator.onLine === false
   throw error
+}
+
+export async function generateImage({ prompt, signal, onProgress } = {}) {
+  onProgress?.(12)
+  const res = await fetch(aiEndpoint('/api/ai/image'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: String(prompt || '').trim() }),
+    signal,
+  })
+  onProgress?.(70)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || data.ok === false) throw new Error(data.error || `HTTP ${res.status}`)
+  onProgress?.(90)
+  return data
+}
+
+export function fileFromImagePayload(data, name = 'nazix-image.png') {
+  const mime = String(data?.mime || 'image/png')
+  if (data?.b64) {
+    const bin = atob(data.b64)
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
+    return new File([bytes], name, { type: mime })
+  }
+  throw new Error('Image vide.')
+}
+
+export async function fileFromImageResult(data, name = 'nazix-image.png') {
+  try {
+    return fileFromImagePayload(data, name)
+  } catch {
+    if (!data?.url || !/^https?:/i.test(data.url)) throw new Error('Image vide.')
+    const res = await fetch(data.url)
+    if (!res.ok) throw new Error('Image vide.')
+    const blob = await res.blob()
+    return new File([blob], name, { type: blob.type || data.mime || 'image/png' })
+  }
 }
 
 export function formatWebBlock(search) {

@@ -82,15 +82,38 @@ export function monthCells(year, month) {
   return cells
 }
 
-export function formatMonthTitle(year, month) {
-  return `${MONTHS_FR[month] || ''} ${year}`.trim()
+export const MONTHS_EN = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+]
+
+export const WEEKDAYS_EN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+export function formatMonthTitle(year, month, lang = 'fr') {
+  const months = String(lang).startsWith('en') ? MONTHS_EN : MONTHS_FR
+  return `${months[month] || ''} ${year}`.trim()
 }
 
-export function formatDayLong(iso) {
+export function formatDayLong(iso, lang = 'fr') {
   const d = parseIsoDate(iso)
   if (!d) return iso || ''
-  const weekday = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'][d.getDay()]
-  return `${weekday} ${d.getDate()} ${MONTHS_FR[d.getMonth()]} ${d.getFullYear()}`
+  const weekdays =
+    String(lang).startsWith('en')
+      ? ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+      : ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi']
+  const months = String(lang).startsWith('en') ? MONTHS_EN : MONTHS_FR
+  const weekday = weekdays[d.getDay()]
+  return `${weekday} ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`
 }
 
 export function eventDateKey(event) {

@@ -36,6 +36,30 @@ export const FIRST_LOGIN_STEPS = [
   },
 ]
 
+/** Une icône Lucide est déjà dans la nav. Ici : sous-titre 1 ligne + un emoji discret pour l’intro. */
+export const MODULE_CHROME = {
+  dashboard: { emoji: '🌿', subtitle: 'Ce que vous pouvez déjà lire, en un coup d’œil.' },
+  projects: { emoji: '🗂️', subtitle: 'Un livrable, un responsable, une visibilité claire.' },
+  notes: { emoji: '📝', subtitle: 'Une capture rapide, privée par défaut.' },
+  ideas: { emoji: '💡', subtitle: 'La boîte à idées, sans pression.' },
+  files: { emoji: '📎', subtitle: 'Vos documents, avec un cadenas visible.' },
+  budget: { emoji: '💶', subtitle: 'Prévision et réel — jamais de nom de personne.' },
+  risks: { emoji: '⚠️', subtitle: 'Nommer un risque, puis le traiter.' },
+  chat: { emoji: '💬', subtitle: 'Général pour tout le monde, groupes pour un cercle.' },
+  games: { emoji: '🎮', subtitle: 'Une pause, hors du travail.' },
+  assistant: { emoji: '✨', subtitle: 'Des réponses, jamais d’action sans confirmer.' },
+  calendar: { emoji: '📅', subtitle: 'Les rendez-vous sur leur jour.' },
+  team: { emoji: '👥', subtitle: 'Qui est là, et avec quel rôle.' },
+  notifications: { emoji: '🔔', subtitle: 'Partages et invitations, sans bruit inutile.' },
+  search: { emoji: '🔎', subtitle: 'Cherchez dans ce que vous avez le droit de lire.' },
+  export: { emoji: '📤', subtitle: 'Un extrait de ce que vous voyez déjà.' },
+  canvas: { emoji: '🗺️', subtitle: 'Une carte, sans remplacer les modules.' },
+  settings: { emoji: '⚙️', subtitle: 'Profil et sessions — aucun secret à l’écran.' },
+  guide: { emoji: '📘', subtitle: 'Le mode d’emploi, en quelques phrases.' },
+  feedback: { emoji: '🌱', subtitle: 'Une idée d’amélioration, envoyée à l’admin.' },
+  create: { emoji: '🎨', subtitle: 'Image ou flyer, clé restée côté serveur.' },
+}
+
 export const MODULE_GUIDES = {
   dashboard: {
     title: 'Tableau de bord',
@@ -182,6 +206,24 @@ export const MODULE_GUIDES = {
       'Ouvrez un module depuis une carte pour éditer vraiment l’élément.',
     ],
   },
+  feedback: {
+    title: 'Feedback',
+    lead: 'Proposez une amélioration ou une nouvelle fonction. L’admin est notifié ; un Lecteur peut envoyer.',
+    bullets: [
+      'Titre, message, module optionnel.',
+      '« Aider-moi à formuler » clarifie le texte via l’IA, puis vous confirmez.',
+      'Seul un administrateur peut supprimer un retour.',
+    ],
+  },
+  create: {
+    title: 'Création',
+    lead: 'Générez une image (serveur) ou un flyer PDF (sans API). Aucune clé dans le navigateur.',
+    bullets: [
+      'La génération d’image est asynchrone, avec une barre de progression.',
+      'Le rôle Lecteur ne génère pas.',
+      'Vous pouvez enregistrer l’image dans Fichiers.',
+    ],
+  },
   settings: {
     title: 'Paramètres',
     lead: 'Profil, vérification d’e-mail, sessions, diagnostic Firebase et kit d’export.',
@@ -213,6 +255,8 @@ export const GUIDE_INDEX = [
   'chat',
   'games',
   'assistant',
+  'create',
+  'feedback',
 ]
 
 export function readGuideDone() {

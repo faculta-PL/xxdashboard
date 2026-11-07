@@ -15,7 +15,9 @@ import {
   Rows3,
   Check,
   Square,
+  Mic,
 } from 'lucide-react'
+import { useI18n } from './i18n'
 import {
   FAB_VIEWS,
   localAnswer,
@@ -63,40 +65,40 @@ function nowIso() {
 }
 
 export function AssistantFab({ view, open, onOpen }) {
+  const { t } = useI18n()
   if (open || !FAB_VIEWS.includes(view)) return null
   return (
     <button
       type="button"
       onClick={onOpen}
       className="fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-[max(1rem,env(safe-area-inset-right))] z-20 inline-flex min-h-12 items-center gap-2 rounded-full bg-sage-700 px-4 py-3 text-sm font-semibold text-sage-50 shadow-lg hover:bg-sage-800"
-      aria-label="Ouvrir l’assistant IA"
+      aria-label={t('ai.openFab')}
     >
       <Sparkles size={18} />
-      <span className="hidden sm:inline">Assistant IA</span>
+      <span className="hidden sm:inline">{t('ai.title')}</span>
     </button>
   )
 }
 
 function OpenAiBanner({ openaiOk, openaiError }) {
+  const { t } = useI18n()
   if (openaiOk) {
     return (
       <div className="rounded-xl border border-sage-300 bg-sage-100/80 px-3 py-2 text-xs text-sage-800">
-        <p className="font-semibold">Réponses via OpenAI. N’envoyez que le contexte de vos contenus autorisés.</p>
+        <p className="font-semibold">{t('ai.bannerOk')}</p>
       </div>
     )
   }
   return (
     <div className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-sage-800">
-      <p className="font-semibold">{openAiUnavailable(openaiError || 'OPENAI_API_KEY manquante')}</p>
-      <p className="mt-0.5 text-sage-600">
-        Définissez <code className="rounded bg-white/70 px-1">OPENAI_API_KEY</code> sur le serveur. Repli extractif local
-        uniquement en cas d’indisponibilité — ce n’est pas le mode produit.
-      </p>
+      <p className="font-semibold">{openAiUnavailable(openaiError || t('errors.openaiMissing'))}</p>
+      <p className="mt-0.5 text-sage-600">{t('ai.bannerHint')}</p>
     </div>
   )
 }
 
 function Bubble({ msg, onCopy }) {
+  const { t } = useI18n()
   const isAi = msg.role !== 'user'
   const shown = isAi ? displayAiContent(msg.content) : msg.content
   return (
@@ -110,7 +112,7 @@ function Bubble({ msg, onCopy }) {
       >
         <div className="mb-1 flex items-center justify-between gap-2">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-sage-500">
-            {isAi ? 'Nazix IA' : 'Vous'}
+            {isAi ? t('ai.nazix') : t('ai.you')}
             {msg.origin === 'web' ? ' · web' : ''}
           </span>
           {isAi && (
@@ -118,7 +120,7 @@ function Bubble({ msg, onCopy }) {
               type="button"
               className="rounded p-1 text-sage-500 hover:bg-sage-200 hover:text-sage-800"
               onClick={() => onCopy(shown)}
-              aria-label="Copier la réponse"
+              aria-label={t('ai.copy')}
             >
               <Copy size={12} />
             </button>
@@ -127,7 +129,7 @@ function Bubble({ msg, onCopy }) {
         {shown}
         {msg.streaming && <span className="ml-0.5 inline-block animate-pulse text-sage-500">▍</span>}
         {msg.fallback && (
-          <p className="mt-2 text-[11px] font-medium text-warn">Repli extractif local — ce n’est pas le mode prévu.</p>
+          <p className="mt-2 text-[11px] font-medium text-warn">{t('ai.fallback')}</p>
         )}
         {msg.sources?.length > 0 && (
           <p className="mt-2 text-[11px] text-sage-600">
@@ -363,7 +365,10 @@ function useAiChat({
   setAllowExternal,
   webSearch,
   setWebSearch,
+  pendingPrompt = '',
+  onPendingConsumed,
 }) {
+  const { lang } = useI18n()
   const [threadId, setThreadId] = useState(null)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -506,6 +511,7 @@ function useAiChat({
             web: webPayload,
             signal: ctrl.signal,
             onDelta,
+            language: lang,
           })
           if (ext.ok && (ext.content || ext.text)) {
             answerText = ext.content || ext.text
@@ -529,6 +535,7 @@ function useAiChat({
                 context,
                 web: webPayload,
                 signal: ctrl.signal,
+                language: lang,
               })
               if (ext.ok && (ext.content || ext.text)) {
                 answerText = ext.content || ext.text
@@ -594,6 +601,17 @@ function useAiChat({
       abortRef.current = null
     }
   }
+
+  const consumedPrompt = useRef('')
+  useEffect(() => {
+    const text = String(pendingPrompt || '').trim()
+    if (!text || consumedPrompt.current === text || busy) return
+    consumedPrompt.current = text
+    onPendingConsumed?.()
+    runTurn(text)
+    // Voice already confirmed send-to-AI; do not auto-create notes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPrompt])
 
   const send = async (e) => {
     e?.preventDefault?.()
@@ -763,7 +781,9 @@ function ChatPane({
   budgets,
   notes,
   compact,
+  onDictate,
 }) {
+  const { t } = useI18n()
   const canWrite = canWriteRole(user)
   const lastAi = [...chat.messages].reverse().find((m) => m.role === 'assistant')
   const pendingAlreadySaved = chat.pendingUser && chat.messages.some((m) => m.at === chat.pendingUser.at)
@@ -774,8 +794,7 @@ function ChatPane({
         <p className="text-[11px] font-medium text-sage-600">{context.contextLabel}</p>
         {chat.messages.length === 0 && !chat.pendingUser && (
           <p className="text-sm text-sage-600">
-            Posez une question sur vos notes, le budget, les risques ou le web. Entrée envoie, Maj+Entrée passe à la ligne.
-            Les créations (notes, messages) demandent toujours confirmation.
+            {t('ai.emptyHint')}
           </p>
         )}
         {chat.messages.map((m, i) => (
@@ -799,7 +818,7 @@ function ChatPane({
           <Bubble
             msg={{
               role: 'assistant',
-              content: chat.streamText || (chat.openaiOk ? 'Réflexion…' : 'Repli local…'),
+              content: chat.streamText || (chat.openaiOk ? t('ai.thinking') : t('ai.localThinking')),
               streaming: true,
             }}
             onCopy={chat.copy}
@@ -815,14 +834,14 @@ function ChatPane({
         )}
         {lastAi && !chat.busy && (
           <div className="flex flex-wrap gap-1">
-            <button type="button" className={btnGhost + ' !min-h-8 !px-2 !py-1 !text-xs'} onClick={() => chat.followUp('short', 'Plus court')}>
-              <AlignLeft size={12} /> Plus court
+            <button type="button" className={btnGhost + ' !min-h-8 !px-2 !py-1 !text-xs'} onClick={() => chat.followUp('short', t('ai.shorter'))}>
+              <AlignLeft size={12} /> {t('ai.shorter')}
             </button>
-            <button type="button" className={btnGhost + ' !min-h-8 !px-2 !py-1 !text-xs'} onClick={() => chat.followUp('detailed', 'Plus détaillé')}>
-              <Rows3 size={12} /> Plus détaillé
+            <button type="button" className={btnGhost + ' !min-h-8 !px-2 !py-1 !text-xs'} onClick={() => chat.followUp('detailed', t('ai.detailed'))}>
+              <Rows3 size={12} /> {t('ai.detailed')}
             </button>
-            <button type="button" className={btnGhost + ' !min-h-8 !px-2 !py-1 !text-xs'} onClick={() => chat.followUp('list', 'Liste')}>
-              <List size={12} /> Liste
+            <button type="button" className={btnGhost + ' !min-h-8 !px-2 !py-1 !text-xs'} onClick={() => chat.followUp('list', t('ai.list'))}>
+              <List size={12} /> {t('ai.list')}
             </button>
           </div>
         )}
@@ -837,25 +856,30 @@ function ChatPane({
               checked={chat.webSearch}
               onChange={(e) => chat.persistWeb(e.target.checked)}
             />
-            <Globe size={12} /> Recherche web
+            <Globe size={12} />             {t('ai.webSearch')}
           </label>
         </div>
         <div className="flex gap-2">
+          {onDictate && (
+            <button type="button" className={btnGhost + ' !px-3'} onClick={onDictate} aria-label={t('voice.dictate')}>
+              <Mic size={16} />
+            </button>
+          )}
           <textarea
             className={inputClass + ' min-h-11 max-h-32 resize-none'}
             rows={1}
-            placeholder={compact ? 'Votre question…' : 'Résume mes notes, risques en retard, budget restant…'}
+            placeholder={compact ? t('ai.placeholderShort') : t('ai.placeholder')}
             value={chat.draft}
             onChange={(e) => chat.setDraft(e.target.value)}
             onKeyDown={chat.onComposerKey}
             disabled={false}
           />
           {chat.busy ? (
-            <button type="button" className={btnPrimary + ' !px-3'} onClick={chat.stop} aria-label="Arrêter">
+            <button type="button" className={btnPrimary + ' !px-3'} onClick={chat.stop} aria-label={t('ai.stop')}>
               <Square size={14} />
             </button>
           ) : (
-            <button type="submit" className={btnPrimary + ' !px-3'} disabled={!chat.draft.trim()} aria-label="Envoyer">
+            <button type="submit" className={btnPrimary + ' !px-3'} disabled={!chat.draft.trim()} aria-label={t('ai.send')}>
               <Send size={16} />
             </button>
           )}
@@ -897,7 +921,11 @@ export function AssistantPanel({
   setAllowExternal,
   webSearch,
   setWebSearch,
+  pendingPrompt,
+  onPendingConsumed,
+  onDictate,
 }) {
+  const { t } = useI18n()
   const chat = useAiChat({
     user,
     threads,
@@ -909,6 +937,8 @@ export function AssistantPanel({
     setAllowExternal,
     webSearch,
     setWebSearch,
+    pendingPrompt,
+    onPendingConsumed,
   })
 
   if (!open) return null
@@ -918,7 +948,7 @@ export function AssistantPanel({
         type="button"
         onClick={() => onCollapse(false)}
         className="fixed top-1/2 right-0 z-20 flex h-24 w-10 -translate-y-1/2 items-center justify-center rounded-l-xl bg-sage-700 text-sage-50 shadow"
-        aria-label="Déplier l’assistant"
+        aria-label={t('ai.expand')}
       >
         <Sparkles size={16} />
       </button>
@@ -929,14 +959,14 @@ export function AssistantPanel({
     <aside className="fixed inset-0 z-30 flex flex-col bg-cream-green shadow-xl lg:inset-y-0 lg:left-auto lg:right-0 lg:w-[360px] lg:border-l lg:border-sage-200">
       <header className="flex items-center gap-2 border-b border-sage-200 px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
         <Sparkles size={16} className="text-sage-700" />
-        <h2 className="min-w-0 flex-1 truncate font-display text-base text-sage-900">Assistant IA</h2>
-        <button type="button" className="rounded-lg p-2 text-sage-600 hover:bg-sage-200" onClick={() => chat.startNew()} aria-label="Nouvelle conversation">
+        <h2 className="min-w-0 flex-1 truncate font-display text-base text-sage-900">{t('ai.title')}</h2>
+        <button type="button" className="rounded-lg p-2 text-sage-600 hover:bg-sage-200" onClick={() => chat.startNew()} aria-label={t('ai.newThread')}>
           <Plus size={16} />
         </button>
-        <button type="button" className="hidden rounded-lg p-2 text-sage-600 hover:bg-sage-200 lg:inline-flex" onClick={() => onCollapse(true)} aria-label="Replier">
+        <button type="button" className="hidden rounded-lg p-2 text-sage-600 hover:bg-sage-200 lg:inline-flex" onClick={() => onCollapse(true)} aria-label={t('ai.collapse')}>
           <Minus size={16} />
         </button>
-        <button type="button" className="rounded-lg p-2 text-sage-600 hover:bg-sage-200" onClick={onClose} aria-label="Fermer">
+        <button type="button" className="rounded-lg p-2 text-sage-600 hover:bg-sage-200" onClick={onClose} aria-label={t('ai.close')}>
           <X size={16} />
         </button>
       </header>
@@ -949,6 +979,7 @@ export function AssistantPanel({
         budgets={budgets}
         notes={notes}
         compact
+        onDictate={onDictate}
       />
     </aside>
   )
@@ -968,7 +999,11 @@ export function AssistantView({
   setAllowExternal,
   webSearch,
   setWebSearch,
+  pendingPrompt,
+  onPendingConsumed,
+  onDictate,
 }) {
+  const { t } = useI18n()
   const chat = useAiChat({
     user,
     threads,
@@ -980,6 +1015,8 @@ export function AssistantView({
     setAllowExternal,
     webSearch,
     setWebSearch,
+    pendingPrompt,
+    onPendingConsumed,
   })
   const [mobileThread, setMobileThread] = useState(false)
 
@@ -987,7 +1024,7 @@ export function AssistantView({
     <div className="flex min-h-[calc(100dvh-8rem)] flex-col gap-3 lg:flex-row">
       <aside className={`${mobileThread ? 'hidden lg:flex' : 'flex'} w-full flex-col rounded-2xl border border-sage-200 bg-white/80 lg:w-72`}>
         <div className="flex items-center justify-between gap-2 border-b border-sage-200 px-3 py-2">
-          <p className="font-display text-sage-900">Conversations</p>
+          <p className="font-display text-sage-900">{t('ai.conversations')}</p>
           <button
             type="button"
             className={btnGhost + ' !min-h-9 !px-2'}
@@ -996,11 +1033,11 @@ export function AssistantView({
               setMobileThread(true)
             }}
           >
-            <Plus size={14} /> Nouveau
+            <Plus size={14} /> {t('ai.new')}
           </button>
         </div>
         <ul className="flex-1 overflow-y-auto xx-scroll p-2">
-          {threads.length === 0 && <li className="px-2 py-6 text-center text-sm text-sage-500">Aucune conversation.</li>}
+          {threads.length === 0 && <li className="px-2 py-6 text-center text-sm text-sage-500">{t('ai.none')}</li>}
           {threads.map((t) => (
             <li key={t.id}>
               <div
@@ -1047,6 +1084,7 @@ export function AssistantView({
           projects={projects}
           budgets={budgets}
           notes={notes}
+          onDictate={onDictate}
         />
       </section>
     </div>
@@ -1054,20 +1092,16 @@ export function AssistantView({
 }
 
 export function AiSettingsBlock({ user: _user, allowExternal: _allowExternal, onChange: _onChange }) {
+  const { t } = useI18n()
   return (
     <section className="rounded-2xl border border-sage-200 bg-white/80 p-5">
       <h2 className="flex items-center gap-2 font-display text-lg text-sage-900">
-        <Sparkles size={18} /> Assistant IA
+        <Sparkles size={18} /> {t('ai.title')}
       </h2>
-      <p className="mt-2 text-sm text-sage-800">
-        Réponses via OpenAI. N’envoyez que le contexte de vos contenus autorisés.
-      </p>
-      <p className="mt-2 text-sm text-sage-600">
-        La clé OpenAI reste côté serveur — jamais dans le navigateur. Sans clé, le chat affiche
-        « OpenAI indisponible » et bascule sur un repli extractif local.
-      </p>
+      <p className="mt-2 text-sm text-sage-800">{t('ai.bannerOk')}</p>
+      <p className="mt-2 text-sm text-sage-600">{t('ai.settingsHint')}</p>
       <p className="mt-2 flex items-center gap-1 text-xs text-sage-500">
-        <Shield size={12} /> Pas de mémoire croisée. Aucune note ni message n’est créé sans confirmation.
+        <Shield size={12} /> {t('ai.noMemory')}
       </p>
     </section>
   )

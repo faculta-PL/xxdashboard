@@ -163,8 +163,8 @@ Sans clé LLM, le repli local (`src/lib/assistant.js`) résume les notes, liste 
 ## Navigation groupée
 
 - **Espace de travail** : Tableau de bord, Projets, Notes, Kanban, Calendrier, Fichiers, Budget, Risques, Espace visuel
-- **Collaboration** : Équipe, Chat, Notifications
-- **Outils** : Recherche, Exports, Assistant IA
+- **Collaboration** : Équipe, Chat, Notifications, **Feedback**
+- **Outils** : Guide, Recherche, Exports, Assistant IA, **Création**
 - **Détente** : Jeux
 - Rail repliable (icônes) sur bureau ; tiroir mobile inchangé.
 
@@ -178,4 +178,61 @@ Vue `games` : coque arcade crème / sauge, bouton « Retour au travail », sans 
 
 ## Règles Firestore à recoller
 
-Collections `xx_links`, `xx_canvas_layout`, `xx_ai_threads` (propriétaire), `xx_settings`, `xx_dashboard_prefs` (propriétaire), `xx_game_profiles` (lecture connectée, écriture du sien), `xx_game_scores` (lecture connectée, create si `userId == auth.uid` et `score` number, **pas d’update**). **Recoller `firestore.rules` dans Firebase Console → Firestore → Règles** après déploiement.
+Collections `xx_links`, `xx_canvas_layout`, `xx_ai_threads` (propriétaire), `xx_settings`, `xx_dashboard_prefs` (propriétaire), `xx_game_profiles` (lecture connectée, écriture du sien), `xx_game_scores` (lecture connectée, create si `userId == auth.uid` et `score` number, **pas d’update**), **`xx_feedback`** (create/read du sien, admin tout, suppression admin). **Recoller `firestore.rules` dans Firebase Console → Firestore → Règles** après déploiement.
+
+---
+
+## Langue FR | EN (verrouillé)
+
+- Bouton **FR | EN** visible sur la landing **et** une fois connecté (en-tête).
+- Persisté dans `localStorage` (`nazix_lang`). Valeur `fr` ou `en`.
+- `t(key)` via `src/i18n.js` (dictionnaires `fr` / `en`).
+- Couverture minimale : chrome (nav, landing CTA, auth, boutons communs), notes, calendrier, Assistant IA, voix, outils Création, toasts de ces flux, chat chrome.
+- Le reste peut rester en FR : le bouton change quand même le chrome.
+- Le **system prompt** de l’IA suit la langue (`language: "fr"|"en"` dans `POST /api/ai` et `/api/ai/stream`). Jamais de clé dans le client.
+
+## Médias des notes (verrouillé)
+
+Notes / chat / fichiers restent. Une note peut joindre une **image** ou un **PDF** :
+
+1. via l’import fichiers existant, lien `fileId` (`xx_links` type `file`) ;
+2. ou une **URL d’image** dans le contenu (ou champ `imageUrl`) — affichage `<img>` uniquement si l’URL est `http(s)` sûre, **sans** `innerHTML`.
+
+## Outils → Création (verrouillé)
+
+Vue navigation **Création** (`create`) dans le groupe Outils.
+
+- **Générer une image** : `POST /api/ai/image` `{ prompt }` côté serveur (`OPENAI_API_KEY`, modèles `gpt-image-1` puis repli `dall-e-3`). Réponse `url` ou `b64`. Aucune clé dans le navigateur. Si possible, enregistrement dans Fichiers (Storage Firebase ou IndexedDB). États vide / chargement (progression) / erreur. Génération **asynchrone** (l’UI n’est pas bloquée).
+- **Flyer PDF** : titre + texte → téléchargement `jspdf` (client, sans API).
+- **Lecteur** : ne génère pas (`canWriteRole`).
+
+## Voix — Web Speech API (verrouillé)
+
+Bouton micro : barre Notes, panneau Assistant IA, raccourci Tableau de bord, bouton global **Dicter** dans l’en-tête.
+
+Flux obligatoire :
+
+1. Écouter (ne bloque pas l’UI)
+2. Afficher le transcript (éditable)
+3. Choisir la destination : **Note**, **Rendez-vous**, **Budget** (ligne), **Idée**, ou **envoyer à l’IA**
+4. **Confirmer**
+5. Créer dans le bon module (RBAC identique aux créations manuelles)
+6. Partage optionnel (choisir des utilisateurs) **après** confirmation de création
+
+**Jamais** de création sans confirmation. Le texte vocal **n’est envoyé à OpenAI** que si la destination est l’IA **et** que l’utilisateur confirme. Repli si `speechRecognition` / `webkitSpeechRecognition` absent (Chrome) : saisie manuelle + message d’aide.
+
+## Feedback (verrouillé)
+
+Navigation **Feedback** (Collaboration) : tout compte, y compris Lecteur, envoie une idée d’amélioration (`title`, `body`, `module` optionnel). « Aider-moi à formuler » appelle `/api/ai` pour clarifier le texte, puis confirmation avant d’appliquer et avant d’envoyer. Collection `xx_feedback` `{userId, title, body, module, createdAt, status: nouveau}`. L’admin voit la liste dans la même vue et peut supprimer ; notification admin à chaque nouveau retour. Règles : create/read du sien, admin tout. En-têtes de modules : une icône Lucide + un sous-titre d’une ligne, un emoji discret dans l’intro (pas sur les boutons). Badges **Privé / Partagé / Équipe** plus lisibles (cadenas) sur notes, fichiers et projets. Aucun secret dans l’UI.
+
+## Sécurité (verrouillé)
+
+- Aucun secret client. Interdit : `VITE_OPENAI_*`, `innerHTML` pour le contenu IA/notes, `eval`.
+- JSON d’actions IA toujours retiré de l’affichage (`ai-actions.mjs`).
+- RBAC à l’écriture (`store.js`) : Lecteur ne crée pas, sauf Feedback.
+- Règles Firestore `xx_*` (isolation propriétaire / partages / équipe / admin). `storage.rules` inchangées.
+
+## Temps réel et rapidité (verrouillé)
+
+- Écoute `onSnapshot` conservée. Le badge notifications se met à jour dès le snapshot (compteur `unread` dérivé du store). Son de notif déjà en place.
+- La dictée ne bloque pas le thread UI. La génération d’image est asynchrone avec barre de progression.

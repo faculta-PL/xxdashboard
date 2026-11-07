@@ -23,8 +23,11 @@ import {
   PanelLeftOpen,
   ChevronDown,
   BookOpen,
+  Wand2,
+  MessageSquarePlus,
 } from 'lucide-react'
 import { getBackendMode } from '../lib/store'
+import { useI18n } from '../i18n'
 
 export const NAV_GROUPS = [
   {
@@ -49,6 +52,7 @@ export const NAV_GROUPS = [
       { id: 'team', label: 'Équipe', icon: Users },
       { id: 'chat', label: 'Chat', icon: MessageCircle },
       { id: 'notifications', label: 'Notifications', icon: Bell },
+      { id: 'feedback', label: 'Feedback', icon: MessageSquarePlus },
     ],
   },
   {
@@ -59,6 +63,7 @@ export const NAV_GROUPS = [
       { id: 'search', label: 'Recherche', icon: Search },
       { id: 'export', label: 'Exports', icon: Download },
       { id: 'assistant', label: 'Assistant IA', icon: Sparkles },
+      { id: 'create', label: 'Création', icon: Wand2 },
     ],
   },
   {
@@ -85,6 +90,10 @@ function readGroups() {
   }
 }
 
+function navLabel(t, item) {
+  return t(`nav.${item.id}`) || item.label
+}
+
 export function Sidebar({
   user,
   view,
@@ -96,6 +105,7 @@ export function Sidebar({
   collapsed,
   onCollapsed,
 }) {
+  const { t } = useI18n()
   const [closedGroups, setClosedGroups] = useState(readGroups)
 
   useEffect(() => {
@@ -127,14 +137,14 @@ export function Sidebar({
           <div className={`min-w-0 ${collapsed ? 'lg:hidden' : ''}`}>
             <p className="font-display text-2xl leading-none">Nazix</p>
             <p className="mt-1 truncate text-xs text-sage-300">
-              {getBackendMode() === 'firebase' ? 'Firebase' : 'Mode local'} · {user.role}
+              {getBackendMode() === 'firebase' ? t('nav.firebase') : t('nav.localMode')} · {user.role}
             </p>
           </div>
           <button
             type="button"
             className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg hover:bg-sage-700 lg:hidden"
             onClick={onCloseMobile}
-            aria-label="Fermer le menu"
+            aria-label={t('nav.closeMenu')}
           >
             <X size={20} />
           </button>
@@ -142,9 +152,9 @@ export function Sidebar({
             type="button"
             className="hidden min-h-11 min-w-11 items-center justify-center rounded-lg hover:bg-sage-700 lg:inline-flex"
             onClick={toggleRail}
-            aria-label={collapsed ? 'Déplier la navigation' : 'Replier la navigation'}
+            aria-label={collapsed ? t('nav.expand') : t('nav.collapse')}
             aria-pressed={collapsed}
-            title={collapsed ? 'Déplier' : 'Replier'}
+            title={collapsed ? t('nav.expand') : t('nav.collapse')}
           >
             {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
           </button>
@@ -163,7 +173,7 @@ export function Sidebar({
                   onClick={() => toggleGroup(group.id)}
                   aria-expanded={!closed}
                 >
-                  <span className="min-w-0 flex-1 truncate text-left">{group.label}</span>
+                  <span className="min-w-0 flex-1 truncate text-left">{t(`nav.group${group.id === 'workspace' ? 'Workspace' : group.id === 'collab' ? 'Collab' : group.id === 'tools' ? 'Tools' : 'Fun'}`)}</span>
                   <ChevronDown size={14} className={`shrink-0 transition ${closed ? '-rotate-90' : ''}`} />
                 </button>
                 {collapsed && <div className="hidden h-px bg-sage-600/80 lg:block" aria-hidden />}
@@ -172,19 +182,20 @@ export function Sidebar({
                     {group.items.map((item) => {
                       const Icon = item.icon
                       const active = view === item.id
+                      const label = navLabel(t, item)
                       return (
                         <button
                           key={item.id}
                           type="button"
                           onClick={() => onView(item.id)}
-                          title={item.label}
+                          title={label}
                           aria-current={active ? 'page' : undefined}
                           aria-label={
                             item.id === 'notifications' && unread > 0
-                              ? `${item.label} (${unread} non lues)`
+                              ? `${label} (${t('nav.unread', { n: unread })})`
                               : item.id === 'chat' && chatUnread > 0
-                                ? `${item.label} (${chatUnread} non lus)`
-                                : item.label
+                                ? `${label} (${t('nav.chatUnread', { n: chatUnread })})`
+                                : label
                           }
                           className={`relative flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
                             collapsed ? 'lg:justify-center lg:px-0' : ''
@@ -192,7 +203,7 @@ export function Sidebar({
                         >
                           <Icon size={18} className="shrink-0" />
                           <span className={`min-w-0 flex-1 truncate ${collapsed ? 'lg:hidden' : ''}`}>
-                            {item.label}
+                            {label}
                           </span>
                           {item.id === 'notifications' && unread > 0 && (
                             <span
@@ -226,29 +237,29 @@ export function Sidebar({
           <button
             type="button"
             onClick={() => onView('settings')}
-            title="Paramètres"
-            aria-label="Paramètres"
+            title={t('nav.settings')}
+            aria-label={t('nav.settings')}
             aria-current={view === 'settings' ? 'page' : undefined}
             className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
               collapsed ? 'lg:justify-center lg:px-0' : ''
             } ${view === 'settings' ? 'bg-sage-600 text-white' : 'text-sage-100 hover:bg-sage-700'}`}
           >
             <Settings size={18} className="shrink-0" />
-            <span className={`min-w-0 flex-1 truncate ${collapsed ? 'lg:hidden' : ''}`}>Paramètres</span>
+            <span className={`min-w-0 flex-1 truncate ${collapsed ? 'lg:hidden' : ''}`}>{t('nav.settings')}</span>
           </button>
           <p className={`mt-2 truncate px-2 text-sm font-medium ${collapsed ? 'lg:hidden' : ''}`}>{user.fullName}</p>
           <p className={`truncate px-2 text-xs text-sage-300 ${collapsed ? 'lg:hidden' : ''}`}>{user.email}</p>
           <button
             type="button"
             onClick={onLogout}
-            aria-label="Déconnexion"
-            title="Déconnexion"
+            aria-label={t('nav.logout')}
+            title={t('nav.logout')}
             className={`mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-sage-600 bg-sage-700 px-3 py-2 text-sm font-medium text-sage-50 hover:bg-sage-600 ${
               collapsed ? 'lg:px-0' : ''
             }`}
           >
             <LogOut size={16} />
-            <span className={collapsed ? 'lg:hidden' : ''}>Déconnexion</span>
+            <span className={collapsed ? 'lg:hidden' : ''}>{t('nav.logout')}</span>
           </button>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { FIRST_LOGIN_STEPS, GUIDE_INDEX, MODULE_GUIDES, writeGuideDone } from './guideContent'
+import { FIRST_LOGIN_STEPS, GUIDE_INDEX, MODULE_CHROME, MODULE_GUIDES, writeGuideDone } from './guideContent'
 import { DemoGrid } from './DemoClips'
 
 export function GuideView({ onGoView, onReplayTour }) {
@@ -54,7 +54,14 @@ export function GuideView({ onGoView, onReplayTour }) {
                   Ouvrir
                 </button>
               </div>
-              <p className="mt-1 text-sm text-sage-700">{mod.lead}</p>
+              <p className="mt-1 text-sm text-sage-700">
+                {MODULE_CHROME[id]?.emoji ? (
+                  <span className="mr-1" aria-hidden="true">
+                    {MODULE_CHROME[id].emoji}
+                  </span>
+                ) : null}
+                {mod.lead}
+              </p>
               <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-sage-700">
                 {mod.bullets.map((b) => (
                   <li key={b}>{b}</li>

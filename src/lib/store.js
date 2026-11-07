@@ -64,10 +64,18 @@ import {
 } from './files'
 import { VERIFY_EMAIL, RESET_EMAIL, firebaseUnavailableLine } from './emailCopy'
 
+function viteEnv(key) {
+  try {
+    return import.meta.env?.[key]
+  } catch {
+    return undefined
+  }
+}
+
 function adminsFromEnv() {
   const pairs = [
-    [import.meta.env.VITE_ADMIN_EMAIL, import.meta.env.VITE_ADMIN_PASSWORD],
-    [import.meta.env.VITE_ADMIN_EMAIL_2, import.meta.env.VITE_ADMIN_PASSWORD_2],
+    [viteEnv('VITE_ADMIN_EMAIL'), viteEnv('VITE_ADMIN_PASSWORD')],
+    [viteEnv('VITE_ADMIN_EMAIL_2'), viteEnv('VITE_ADMIN_PASSWORD_2')],
   ]
   const out = []
   for (const [emailRaw, passwordRaw] of pairs) {
@@ -148,6 +156,7 @@ const COLLECTIONS = [
   'xx_dashboard_prefs',
   'xx_game_profiles',
   'xx_game_scores',
+  'xx_feedback',
 ]
 
 function emptyDb() {
@@ -413,7 +422,7 @@ async function remapUserReferences(fromId, toId) {
       await persistDoc('xx_messages', row.id, { ...row, authorId: toId })
     }
   }
-  for (const col of ['xx_sessions', 'xx_notifications', 'xx_reset_tokens', 'xx_ai_threads', 'xx_settings', 'xx_dashboard_prefs', 'xx_game_profiles']) {
+  for (const col of ['xx_sessions', 'xx_notifications', 'xx_reset_tokens', 'xx_ai_threads', 'xx_settings', 'xx_dashboard_prefs', 'xx_game_profiles', 'xx_feedback']) {
     for (const row of Object.values(memory[col] || {})) {
       if (row.userId === fromId) {
         await persistDoc(col, row.id, { ...row, userId: toId, ownerId: row.ownerId === fromId ? toId : row.ownerId })
@@ -3270,5 +3279,51 @@ export async function createGameScore({ gameId, score, displayName }, user) {
   }
   await persistCreateOnly('xx_game_scores', id, row)
   return row
+}
+
+/** Lecteur autorisé. Seul un admin peut supprimer. */
+export async function saveFeedback(data, user) {
+  if (!user) throw new Error('Permission refusée.')
+  const title = String(data.title || '').trim()
+  const body = String(data.body || '').trim()
+  if (!title) throw new Error('Titre requis.')
+  if (!body) throw new Error('Message requis.')
+  const now = new Date().toISOString()
+  const id = uid('fbk')
+  const module = String(data.module || '').trim() || null
+  const row = {
+    id,
+    userId: user.id,
+    ownerId: user.id,
+    title: title.slice(0, 200),
+    body: body.slice(0, 8000),
+    module,
+    status: 'nouveau',
+    createdAt: now,
+    authorName: user.fullName || '',
+    authorEmail: user.email || '',
+  }
+  if (!memory.xx_feedback) memory.xx_feedback = {}
+  await persistDoc('xx_feedback', id, row)
+  const adminIds = Object.values(memory.xx_users || {})
+    .filter((u) => isAdmin(u))
+    .map((u) => u.id)
+    .filter((adminId) => adminId && adminId !== user.id)
+  if (adminIds.length) {
+    await notifyUsers(adminIds, {
+      type: 'feedback',
+      title: 'Nouveau retour',
+      body: `${user.fullName || user.email} : ${row.title}`,
+      meta: { feedbackId: row.id },
+    })
+  }
+  return row
+}
+
+export async function deleteFeedback(id, user) {
+  if (!isAdmin(user)) throw new Error('Seuls les administrateurs peuvent supprimer un retour.')
+  const existing = memory.xx_feedback?.[id]
+  if (!existing) return
+  await removeDoc('xx_feedback', id)
 }
 

@@ -358,6 +358,16 @@ service cloud.firestore {
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
+    // Retours d’amélioration : création / lecture du sien ; admin tout ; suppression admin.
+    match /xx_feedback/{id} {
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid;
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
     // Scores arcade : création de son propre score, pas de mise à jour (append-only).
     match /xx_game_scores/{id} {
       allow read: if isSignedIn();

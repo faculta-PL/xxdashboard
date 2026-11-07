@@ -23,6 +23,10 @@
       "destination": "/api/ai?__nazix=/api/ai/stream"
     },
     {
+      "source": "/api/ai/image",
+      "destination": "/api/ai?__nazix=/api/ai/image"
+    },
+    {
       "source": "/api/ai-search",
       "destination": "/api/ai?__nazix=/api/ai-search"
     },

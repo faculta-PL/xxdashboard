@@ -1,5 +1,6 @@
 /** Petits composants réutilisables — palette sauge / crème. */
 import { createPortal } from 'react-dom'
+import { Globe, Lock, Share2, Users } from 'lucide-react'
 
 export const inputClass =
   'w-full min-h-11 rounded-xl border border-sage-300 bg-white px-3 py-2.5 text-sage-900 outline-none ring-sage-400 placeholder:text-sage-400 focus:ring-2'
@@ -78,11 +79,55 @@ export function ProgressBar({ value = 0, label, className = '' }) {
   )
 }
 
-export function EmptyState({ title, hint, action }) {
+const VIS_META = {
+  Privée: {
+    label: 'Privé',
+    Icon: Lock,
+    className: 'bg-sage-200 text-sage-900',
+    hint: 'Visible par vous et les personnes choisies',
+  },
+  Partagée: {
+    label: 'Partagé',
+    Icon: Share2,
+    className: 'bg-sage-100 text-sage-800',
+    hint: 'Visible par les personnes avec qui c’est partagé',
+  },
+  Équipe: {
+    label: 'Équipe',
+    Icon: Users,
+    className: 'bg-ok/15 text-ok',
+    hint: 'Visible par tout compte connecté',
+  },
+  Publique: {
+    label: 'Publique',
+    Icon: Globe,
+    className: 'bg-sage-100 text-sage-700',
+    hint: 'Visible par tous les comptes de l’espace',
+  },
+}
+
+export function VisibilityBadge({ value, className = '' }) {
+  const key = VIS_META[value] ? value : 'Privée'
+  const meta = VIS_META[key]
+  const Icon = meta.Icon
   return (
-    <div className="rounded-2xl border border-dashed border-sage-300 bg-white/50 px-6 py-14 text-center animate-fade-up">
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.className} ${className}`}
+      title={meta.hint}
+      aria-label={`${meta.label}. ${meta.hint}`}
+    >
+      <Icon size={12} className="shrink-0" aria-hidden="true" />
+      {meta.label}
+    </span>
+  )
+}
+
+export function EmptyState({ title, hint, action, icon: Icon }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-sage-300 bg-cream-green/60 px-6 py-14 text-center animate-fade-up">
+      {Icon ? <Icon size={28} className="mx-auto mb-3 text-sage-500" aria-hidden="true" /> : null}
       <p className="font-display text-xl text-sage-800">{title}</p>
-      <p className="mt-2 text-sm text-sage-600">{hint}</p>
+      <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-sage-600">{hint}</p>
       {action}
     </div>
   )
@@ -108,7 +153,7 @@ export function ConfirmDialog({
           <h3 className="font-display text-xl text-sage-900">{title}</h3>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
-          {body && <p className="text-sm text-sage-700">{body}</p>}
+          {body && <p className="whitespace-pre-wrap text-sm leading-relaxed text-sage-700">{body}</p>}
         </div>
         <div className="sticky bottom-0 flex shrink-0 flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-5 py-3 sm:flex-row sm:justify-end pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button type="button" className={btnGhost} onClick={onClose} disabled={busy}>

@@ -49,19 +49,25 @@ import {
   Link2,
   Sparkles,
   Gamepad2,
+  Mic,
 } from 'lucide-react'
 import ImportModal from './ImportModal'
 import CanvasView from './CanvasView'
 import { AssistantFab, AssistantPanel, AssistantView, AiSettingsBlock } from './Assistant'
-import { EmptyState, PriorityBadge } from './components/ui'
+import { EmptyState, PriorityBadge, VisibilityBadge } from './components/ui'
 import { Sidebar, NAV_FLAT, readNavCollapsed } from './components/Sidebar'
 import DashboardView from './components/DashboardView'
+import FeedbackView from './FeedbackView'
+import CreateToolsView from './CreateToolsView'
+import VoiceModal from './VoiceModal'
+import { NoteRichContent, NoteLinkedFiles } from './NoteMedia'
+import { LangToggle, useI18n, calendarLabels, landingPlanPoints } from './i18n'
 import { GuideView } from './onboarding/GuideView'
 import { GuideOverlay } from './onboarding/GuideOverlay'
 import { ModuleIntro, HelpHeaderButton } from './onboarding/ModuleIntro'
 import { DemoGrid } from './onboarding/DemoClips'
 import { EmailNoticeModal } from './onboarding/EmailNotice'
-import { readGuideDone } from './onboarding/guideContent'
+import { MODULE_CHROME, readGuideDone } from './onboarding/guideContent'
 import {
   verifyUserMessage,
   resetUserMessage,
@@ -131,6 +137,8 @@ import {
   saveRiskAction,
   deleteRiskAction,
   syncNoteLinks,
+  saveFeedback,
+  deleteFeedback,
 } from './lib/store'
 import { firebaseConfigured, missingFirebaseVars, getFirebaseStatus } from './lib/firebase'
 import {
@@ -193,7 +201,6 @@ import {
   buildPdfTables,
 } from './lib/export'
 import {
-  WEEKDAYS_FR,
   addMonths,
   formatDayLong,
   formatMonthTitle,
@@ -290,11 +297,14 @@ function Modal({
   asForm = false,
   onSubmit,
   footer,
-  submitLabel = 'Enregistrer',
-  cancelLabel = 'Annuler',
+  submitLabel,
+  cancelLabel,
   busy = false,
   danger = false,
 }) {
+  const { t } = useI18n()
+  const saveLabel = submitLabel || t('common.save')
+  const cancelText = cancelLabel || t('common.cancel')
   const bodyRef = useRef(null)
 
   useEffect(() => {
@@ -325,14 +335,14 @@ function Modal({
     footerNode = (
       <>
         <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={onClose} disabled={busy}>
-          {cancelLabel}
+          {cancelText}
         </button>
         <button
           type="submit"
           className={`${btnPrimary} w-full sm:w-auto${danger ? ' !bg-danger hover:!bg-danger/90' : ''}`}
           disabled={busy}
         >
-          {busy ? '…' : submitLabel}
+          {busy ? '…' : saveLabel}
         </button>
       </>
     )
@@ -485,6 +495,7 @@ function FileShareBlock({ users, user, shares, teamWide, onShares, onTeamWide })
 }
 
 export default function App() {
+  const { t } = useI18n()
   const [booting, setBooting] = useState(true)
   const [db, setDb] = useState(null)
   const [session, setSession] = useState(null)
@@ -520,6 +531,9 @@ export default function App() {
   const [guideOpen, setGuideOpen] = useState(false)
   const [introForce, setIntroForce] = useState(null)
   const [emailNotice, setEmailNotice] = useState(null)
+  const [voiceOpen, setVoiceOpen] = useState(false)
+  const [voiceBusy, setVoiceBusy] = useState(false)
+  const [pendingAiPrompt, setPendingAiPrompt] = useState('')
 
   const openImport = (defaults = {}) => {
     setImportDefaults({
@@ -532,7 +546,7 @@ export default function App() {
 
   const flash = (message, type = 'ok') => {
     const kind = type === 'error' ? 'err' : type || 'ok'
-    const fallback = kind === 'ok' ? String(message || '').trim() || 'OK' : 'Une erreur est survenue.'
+    const fallback = kind === 'ok' ? String(message || '').trim() || 'OK' : t('errors.generic')
     const text = toUserMessage(message, fallback)
     setToast({ message: text, type: kind })
     if (toastTimer.current) clearTimeout(toastTimer.current)
@@ -698,6 +712,13 @@ export default function App() {
     [db, user],
   )
   const unread = notifications.filter((n) => !n.read).length
+  const feedbackItems = useMemo(
+    () =>
+      db && user
+        ? Object.values(db.xx_feedback || {}).filter((f) => isAdmin(user) || f.userId === user.id)
+        : [],
+    [db, user],
+  )
   const unreadReadyRef = useRef(false)
   const unreadPrevRef = useRef(0)
   const unreadArmedAtRef = useRef(0)
@@ -811,6 +832,91 @@ export default function App() {
       return !seen || m.createdAt > seen
     }).length
   }, [chatMessages, chatReadMap, user])
+
+  const handleVoiceConfirm = async ({ dest, text, title, budgetId, shareIds }) => {
+    setVoiceBusy(true)
+    try {
+      const shares = (shareIds || []).map((userId) => ({
+        userId,
+        permission: dest === 'event' ? 'Lecture seule' : 'Lecture',
+      }))
+      const visibility = shares.length ? 'Partagée' : 'Privée'
+      if (dest === 'ai') {
+        setPendingAiPrompt(text)
+        setAiOpen(true)
+        setAiCollapsed(false)
+        setVoiceOpen(false)
+        flash(t('voice.sentAi'))
+        return
+      }
+      if (!canWriteRole(user)) {
+        flash(t('common.permissionDenied'), 'err')
+        return
+      }
+      let created = null
+      if (dest === 'note') {
+        created = await saveNote({ title, content: text, category: 'Général', visibility, shares }, user)
+        flash(t('voice.createdNote'))
+      } else if (dest === 'event') {
+        created = await saveEvent(
+          {
+            title,
+            description: text,
+            date: toIsoDate(new Date()),
+            time: '09:00',
+            visibility,
+            participantIds: shareIds || [],
+            shares,
+          },
+          user,
+        )
+        flash(t('voice.createdEvent'))
+      } else if (dest === 'idea') {
+        created = await saveIdea(
+          {
+            title,
+            description: text,
+            status: 'Nouvelle',
+            visibility: shares.length ? 'Partagée' : 'Publique',
+            shares,
+            votes: [],
+            history: [{ type: 'create', userId: user.id, label: 'voice', at: new Date().toISOString() }],
+          },
+          user,
+        )
+        flash(t('voice.createdIdea'))
+      } else if (dest === 'budget') {
+        created = await saveBudgetLine(
+          {
+            budgetId,
+            kind: 'planned',
+            name: title,
+            notes: text,
+            amount: 0,
+            category: BUDGET_CATEGORIES[0],
+          },
+          user,
+        )
+        flash(t('voice.createdBudget'))
+      }
+      if (shareIds?.length && created) {
+        await notifyUsers(
+          shareIds.filter((id) => id !== user.id),
+          {
+            type: 'voice_share',
+            title: t('common.share'),
+            body: `${user.fullName}: ${title}`,
+            meta: { dest, id: created.id },
+          },
+        )
+      }
+      setVoiceOpen(false)
+    } catch (err) {
+      flash(err.message, 'err')
+    } finally {
+      setVoiceBusy(false)
+    }
+  }
 
   const markChatGroupRead = (groupId) => {
     if (!groupId) return
@@ -1061,10 +1167,29 @@ export default function App() {
             <Menu size={20} />
           </button>
           <div className="min-w-0 flex-1">
-            <h1 className="truncate font-display text-xl text-sage-900 md:text-2xl">
-              {NAV_FLAT.find((n) => n.id === view)?.label}
+            <h1 className="flex items-center gap-2 truncate font-display text-xl text-sage-900 md:text-2xl">
+              {NAV_FLAT.find((n) => n.id === view)?.icon
+                ? (() => {
+                    const Icon = NAV_FLAT.find((n) => n.id === view).icon
+                    return <Icon size={22} className="shrink-0 text-sage-700" aria-hidden="true" />
+                  })()
+                : null}
+              <span className="truncate">{t(`nav.${view}`) || NAV_FLAT.find((n) => n.id === view)?.label}</span>
             </h1>
+            {MODULE_CHROME[view]?.subtitle ? (
+              <p className="mt-0.5 truncate text-xs text-sage-600">{MODULE_CHROME[view].subtitle}</p>
+            ) : null}
           </div>
+          <button
+            type="button"
+            className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-sage-300 bg-white/80 px-3 text-sm font-semibold text-sage-800 hover:bg-sage-100"
+            onClick={() => setVoiceOpen(true)}
+            aria-label={t('voice.dictate')}
+          >
+            <Mic size={16} aria-hidden="true" />
+            <span className="hidden sm:inline">{t('voice.dictate')}</span>
+          </button>
+          <LangToggle />
           <HelpHeaderButton
             onClick={() => {
               if (view === 'guide') {
@@ -1073,11 +1198,11 @@ export default function App() {
               }
               setIntroForce(view)
             }}
-            label={`Aide — ${NAV_FLAT.find((n) => n.id === view)?.label || 'module'}`}
+            label={t('nav.help', { label: t(`nav.${view}`) || 'module' })}
           />
           {!user.emailVerified && (
             <span className="hidden rounded-full bg-warn/15 px-3 py-1 text-xs font-semibold text-warn md:inline">
-              E-mail non vérifié
+              {t('nav.emailUnverified')}
             </span>
           )}
         </header>
@@ -1118,6 +1243,20 @@ export default function App() {
               setAllowExternal={setAllowExternal}
               webSearch={webSearch}
               setWebSearch={setWebSearch}
+              pendingPrompt={pendingAiPrompt}
+              onPendingConsumed={() => setPendingAiPrompt('')}
+              onDictate={() => setVoiceOpen(true)}
+            />
+          )}
+          {view === 'create' && <CreateToolsView user={user} flash={flash} />}
+          {view === 'feedback' && (
+            <FeedbackView
+              user={user}
+              users={users}
+              items={feedbackItems}
+              flash={flash}
+              onSubmit={(data) => saveFeedback(data, user)}
+              onDelete={(id) => deleteFeedback(id, user)}
             />
           )}
           {view === 'dashboard' && (
@@ -1138,6 +1277,7 @@ export default function App() {
               storedPrefs={dashboardPrefs}
               onQuick={(v) => setView(v)}
               onImport={() => openImport({ destination: 'notes' })}
+              onDictate={() => setVoiceOpen(true)}
             />
           )}
           {view === 'canvas' && (
@@ -1175,6 +1315,7 @@ export default function App() {
               onToggleNote={(id) =>
                 setSelectedNoteIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
               }
+              onDictate={() => setVoiceOpen(true)}
             />
           )}
           {view === 'ideas' && (
@@ -1302,9 +1443,21 @@ export default function App() {
             setAllowExternal={setAllowExternal}
             webSearch={webSearch}
             setWebSearch={setWebSearch}
+            pendingPrompt={pendingAiPrompt}
+            onPendingConsumed={() => setPendingAiPrompt('')}
+            onDictate={() => setVoiceOpen(true)}
           />
         </>
       )}
+      <VoiceModal
+        open={voiceOpen}
+        onClose={() => setVoiceOpen(false)}
+        user={user}
+        users={users}
+        budgets={budgets}
+        busy={voiceBusy}
+        onConfirm={handleVoiceConfirm}
+      />
       {toast && <Toast toast={toast} />}
       <EmailNoticeModal notice={emailNotice} onClose={() => setEmailNotice(null)} />
       <GuideOverlay
@@ -1417,10 +1570,35 @@ function LandingPage({
   authFieldErrors,
   emailNotice = null,
 }) {
+  const { t, lang } = useI18n()
   const [authOpen, setAuthOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [ctaEmail, setCtaEmail] = useState('')
   const [faqOpen, setFaqOpen] = useState(0)
+  const landingModules = [
+    { id: 'notes', title: t('landing.modNotes'), hint: t('landing.modNotesHint'), icon: StickyNote },
+    { id: 'kanban', title: t('landing.modKanban'), hint: t('landing.modKanbanHint'), icon: Columns3 },
+    { id: 'projets', title: t('landing.modProjects'), hint: t('landing.modProjectsHint'), icon: FolderKanban },
+    { id: 'calendrier', title: t('landing.modCalendar'), hint: t('landing.modCalendarHint'), icon: CalendarDays },
+    { id: 'fichiers', title: t('landing.modFiles'), hint: t('landing.modFilesHint'), icon: FolderOpen },
+    { id: 'canvas', title: t('landing.modCanvas'), hint: t('landing.modCanvasHint'), icon: BoxSelect },
+    { id: 'assistant', title: t('landing.modAssistant'), hint: t('landing.modAssistantHint'), icon: Sparkles },
+    { id: 'equipe', title: t('landing.modTeam'), hint: t('landing.modTeamHint'), icon: Users },
+    { id: 'chat', title: t('landing.modChat'), hint: t('landing.modChatHint'), icon: MessageCircle },
+    { id: 'export', title: t('landing.modExport'), hint: t('landing.modExportHint'), icon: Download },
+    { id: 'jeux', title: t('landing.modGames'), hint: t('landing.modGamesHint'), icon: Gamepad2 },
+  ]
+  const landingPlans = [
+    { name: t('landing.planFree'), price: t('landing.planFreePrice'), tag: t('landing.planFreeTag'), points: landingPlanPoints(lang, 'free'), cta: t('landing.planFreeCta') },
+    { name: t('landing.planTeam'), price: t('landing.planTeamPrice'), tag: t('landing.planTeamTag'), featured: true, points: landingPlanPoints(lang, 'team'), cta: t('landing.planTeamCta') },
+    { name: t('landing.planOrga'), price: t('landing.planOrgaPrice'), tag: t('landing.planOrgaTag'), points: landingPlanPoints(lang, 'orga'), cta: t('landing.planOrgaCta') },
+  ]
+  const landingFaq = [
+    { q: t('landing.faqFirebaseQ'), a: t('landing.faqFirebaseA') },
+    { q: t('landing.faqLangQ'), a: t('landing.faqLangA') },
+    { q: t('landing.faqRolesQ'), a: t('landing.faqRolesA') },
+    { q: t('landing.faqFilesQ'), a: t('landing.faqFilesA') },
+  ]
 
   const openAuth = (mode, email) => {
     setAuthMode(mode)
@@ -1443,32 +1621,33 @@ function LandingPage({
           <p className="font-display text-[1.65rem] leading-none tracking-tight text-sage-900">Nazix</p>
           <nav className="hidden items-center gap-8 text-[15px] font-medium text-sage-800 lg:flex">
             <button type="button" className="hover:text-sage-950" onClick={() => goSection('demo')}>
-              Démo
+              {t('landing.demo')}
             </button>
             <button type="button" className="hover:text-sage-950" onClick={() => goSection('fonctionnalites')}>
-              Fonctionnalités
+              {t('landing.features')}
             </button>
             <button type="button" className="hover:text-sage-950" onClick={() => goSection('tarifs')}>
-              Tarifs
+              {t('landing.pricing')}
             </button>
             <button type="button" className="hover:text-sage-950" onClick={() => goSection('ressources')}>
-              Ressources
+              {t('landing.resources')}
             </button>
           </nav>
           <div className="flex items-center justify-end gap-2 sm:gap-3">
+            <LangToggle />
             <button
               type="button"
               className="hidden min-h-11 px-2 text-[15px] font-medium text-sage-800 hover:text-sage-950 sm:inline"
               onClick={() => openAuth('login')}
             >
-              Se connecter
+              {t('landing.login')}
             </button>
             <button
               type="button"
               className="inline-flex min-h-10 items-center rounded-full bg-sage-800 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-sage-900 sm:min-h-11 sm:px-5"
               onClick={() => openAuth('register')}
             >
-              Essai gratuit
+              {t('landing.freeTrial')}
             </button>
             <button
               type="button"
@@ -1484,10 +1663,10 @@ function LandingPage({
           <div className="border-t border-sage-200/70 bg-[#f5f6f1] px-4 py-3 lg:hidden">
             <div className="flex flex-col gap-1">
               {[
-                ['demo', 'Démo'],
-                ['fonctionnalites', 'Fonctionnalités'],
-                ['tarifs', 'Tarifs'],
-                ['ressources', 'Ressources'],
+                ['demo', t('landing.demo')],
+                ['fonctionnalites', t('landing.features')],
+                ['tarifs', t('landing.pricing')],
+                ['ressources', t('landing.resources')],
               ].map(([id, label]) => (
                 <button
                   key={id}
@@ -1503,7 +1682,7 @@ function LandingPage({
                 className="min-h-11 rounded-xl px-3 text-left font-medium text-sage-800 hover:bg-sage-100 sm:hidden"
                 onClick={() => openAuth('login')}
               >
-                Se connecter
+                {t('landing.login')}
               </button>
             </div>
           </div>
@@ -1513,12 +1692,11 @@ function LandingPage({
       <section className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-6 pt-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-8 lg:pb-4 lg:pt-12">
         <div className="max-w-xl animate-fade-up">
           <h1 className="font-display text-[2.35rem] font-medium leading-[1.12] tracking-tight text-sage-900 sm:text-5xl lg:text-[3.35rem]">
-            Centralisez vos notes, idées, projets et équipe en un seul endroit.{' '}
+            {t('landing.heroTitle')}{' '}
             <span className="align-middle font-display text-[0.55em] font-medium text-sage-700">Nazix</span>
           </h1>
           <p className="mt-5 max-w-md text-[1.05rem] leading-relaxed text-sage-700">
-            Un espace sobre et collaboratif pour noter vos idées, gérer vos projets et échanger avec
-            votre équipe sans friction.
+            {t('landing.heroHint')}
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <button
@@ -1526,14 +1704,14 @@ function LandingPage({
               className="inline-flex min-h-12 w-full items-center justify-center rounded-full bg-sage-800 px-6 text-[15px] font-semibold text-white shadow-sm transition hover:bg-sage-900 sm:w-auto"
               onClick={() => openAuth('register')}
             >
-              Commencer gratuitement
+              {t('landing.startFree')}
             </button>
             <button
               type="button"
               className="inline-flex min-h-12 w-full items-center justify-center rounded-full border border-sage-300 bg-transparent px-6 text-[15px] font-semibold text-sage-800 transition hover:bg-white/70 sm:w-auto"
               onClick={() => goSection('demo')}
             >
-              Voir la démo
+              {t('landing.seeDemo')}
             </button>
           </div>
         </div>
@@ -1544,21 +1722,9 @@ function LandingPage({
 
       <section className="mx-auto grid max-w-6xl gap-8 px-4 py-10 sm:px-6 md:grid-cols-3 md:gap-6 lg:py-12">
         {[
-          {
-            icon: StickyNote,
-            title: 'Notes & Idées',
-            hint: 'Prenez des notes rapides, organisez vos pensées.',
-          },
-          {
-            icon: Columns3,
-            title: 'Tableau Kanban',
-            hint: 'Suivez l’avancement de vos projets en équipe.',
-          },
-          {
-            icon: MessageCircle,
-            title: 'Chat Intégré',
-            hint: 'Communiquez et décidez ensemble en temps réel.',
-          },
+          { icon: StickyNote, title: t('landing.featNotes'), hint: t('landing.featNotesHint') },
+          { icon: Columns3, title: t('landing.featKanban'), hint: t('landing.featKanbanHint') },
+          { icon: MessageCircle, title: t('landing.featChat'), hint: t('landing.featChatHint') },
         ].map((item, i) => {
           const Icon = item.icon
           return (
@@ -1578,7 +1744,7 @@ function LandingPage({
       <section className="bg-[#e7ece3]">
         <div className="mx-auto flex max-w-6xl flex-col items-stretch gap-4 px-4 py-6 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:px-6 sm:py-7">
           <p className="text-center font-display text-xl text-sage-900 sm:text-left sm:text-[1.35rem]">
-            Prêt à transformer votre façon de travailler ?
+            {t('landing.ctaReady')}
           </p>
           <form
             className="flex w-full min-w-0 flex-col gap-2 sm:max-w-md sm:flex-row sm:items-center"
@@ -1590,7 +1756,7 @@ function LandingPage({
             <input
               type="email"
               className="min-h-12 w-full rounded-full border border-sage-300/80 bg-white px-5 text-sm text-sage-900 outline-none ring-sage-400 placeholder:text-sage-400 focus:ring-2"
-              placeholder="Inscription par e-mail"
+              placeholder={t('landing.ctaPlaceholder')}
               value={ctaEmail}
               onChange={(e) => setCtaEmail(e.target.value)}
               autoComplete="email"
@@ -1600,7 +1766,7 @@ function LandingPage({
               type="submit"
               className="inline-flex min-h-12 shrink-0 items-center justify-center rounded-full bg-sage-800 px-6 text-sm font-semibold text-white hover:bg-sage-900"
             >
-              S'inscrire
+              {t('landing.ctaSignup')}
             </button>
           </form>
         </div>
@@ -1608,12 +1774,9 @@ function LandingPage({
 
       <section id="demo" className="scroll-mt-24 mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-20">
         <div className="max-w-2xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sage-500">Démo</p>
-          <h2 className="mt-2 font-display text-3xl text-sage-900 md:text-4xl">Nazix en dix secondes.</h2>
-          <p className="mt-3 text-sage-600">
-            Clips bouclés (notes, kanban, projets, chat). Ce sont des animations, pas des films — le
-            vrai travail se fait après connexion.
-          </p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sage-500">{t('landing.demoKicker')}</p>
+          <h2 className="mt-2 font-display text-3xl text-sage-900 md:text-4xl">{t('landing.demoTitle')}</h2>
+          <p className="mt-3 text-sage-600">{t('landing.demoHint')}</p>
         </div>
         <div className="mt-8">
           <DemoGrid />
@@ -1622,16 +1785,14 @@ function LandingPage({
 
       <section id="fonctionnalites" className="scroll-mt-24 mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-20">
         <div className="max-w-2xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sage-500">Fonctionnalités</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sage-500">{t('landing.featuresKicker')}</p>
           <h2 className="mt-2 font-display text-3xl text-sage-900 md:text-4xl">
-            Tout ce qu’il faut, au même endroit.
+            {t('landing.featuresTitle')}
           </h2>
-          <p className="mt-3 text-sage-600">
-            Modules réellement présents dans l’app — pas une liste marketing inventée.
-          </p>
+          <p className="mt-3 text-sage-600">{t('landing.featuresHint')}</p>
         </div>
         <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {LANDING_MODULES.map((mod) => {
+          {landingModules.map((mod) => {
             const Icon = mod.icon
             return (
               <article
@@ -1652,15 +1813,12 @@ function LandingPage({
       <section id="tarifs" className="scroll-mt-24 bg-[#eef2ea] py-16 lg:py-20">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="max-w-2xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sage-500">Tarifs</p>
-            <h2 className="mt-2 font-display text-3xl text-sage-900 md:text-4xl">Simple, sans paiement fictif.</h2>
-            <p className="mt-3 text-sage-600">
-              Nazix n’intègre pas de caisse. Gratuit en local. Équipe et Orga s’ouvrent par inscription,
-              avec Firebase pour la collaboration.
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sage-500">{t('landing.pricingKicker')}</p>
+            <h2 className="mt-2 font-display text-3xl text-sage-900 md:text-4xl">{t('landing.pricingTitle')}</h2>
+            <p className="mt-3 text-sage-600">{t('landing.pricingHint')}</p>
           </div>
           <div className="mt-10 grid gap-4 lg:grid-cols-3">
-            {LANDING_PLANS.map((plan) => (
+            {landingPlans.map((plan) => (
               <article
                 key={plan.name}
                 className={`flex flex-col rounded-3xl border p-6 ${
@@ -1703,11 +1861,11 @@ function LandingPage({
 
       <section id="ressources" className="scroll-mt-24 mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-20">
         <div className="max-w-2xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sage-500">Ressources</p>
-          <h2 className="mt-2 font-display text-3xl text-sage-900 md:text-4xl">Questions fréquentes</h2>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sage-500">{t('landing.faqKicker')}</p>
+          <h2 className="mt-2 font-display text-3xl text-sage-900 md:text-4xl">{t('landing.faqTitle')}</h2>
         </div>
         <div className="mt-8 divide-y divide-sage-200 overflow-hidden rounded-2xl border border-sage-200 bg-white/70">
-          {LANDING_FAQ.map((item, i) => {
+          {landingFaq.map((item, i) => {
             const open = faqOpen === i
             return (
               <div key={item.q}>
@@ -1735,47 +1893,47 @@ function LandingPage({
           <div>
             <p className="font-display text-2xl text-sage-900">Nazix</p>
             <p className="mt-2 max-w-xs text-sm leading-relaxed text-sage-600">
-              Notes, idées, projets, fichiers, équipe et chat — un espace sobre pour travailler ensemble.
+              {t('landing.footerTagline')}
             </p>
           </div>
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">Produit</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">{t('landing.footerProduct')}</p>
             <ul className="mt-3 space-y-2 text-sm text-sage-700">
               <li>
                 <button type="button" className="hover:text-sage-900" onClick={() => goSection('fonctionnalites')}>
-                  Fonctionnalités
+                  {t('landing.features')}
                 </button>
               </li>
               <li>
                 <button type="button" className="hover:text-sage-900" onClick={() => goSection('tarifs')}>
-                  Tarifs
+                  {t('landing.pricing')}
                 </button>
               </li>
               <li>
                 <button type="button" className="hover:text-sage-900" onClick={() => goSection('ressources')}>
-                  Ressources
+                  {t('landing.resources')}
                 </button>
               </li>
             </ul>
           </div>
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">Compte</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">{t('landing.footerAccount')}</p>
             <ul className="mt-3 space-y-2 text-sm text-sage-700">
               <li>
                 <button type="button" className="hover:text-sage-900" onClick={() => openAuth('login')}>
-                  Se connecter
+                  {t('landing.login')}
                 </button>
               </li>
               <li>
                 <button type="button" className="hover:text-sage-900" onClick={() => openAuth('register')}>
-                  Essai gratuit
+                  {t('landing.freeTrial')}
                 </button>
               </li>
             </ul>
           </div>
         </div>
         <div className="border-t border-sage-200/80 px-4 py-4 text-center text-xs text-sage-500 sm:px-6">
-          Nazix · 2026 · Interface en français
+          {t('landing.footerCopy')}
         </div>
       </footer>
 
@@ -1908,6 +2066,7 @@ function AuthModal({
   authFieldErrors = {},
   emailNotice = null,
 }) {
+  const { t } = useI18n()
   useEffect(() => {
     if (!open) return undefined
     const onKey = (e) => {
@@ -1922,12 +2081,12 @@ function AuthModal({
   const isResetish = authMode === 'forgot' || authMode === 'reset'
   const title =
     authMode === 'register'
-      ? 'Créer un compte'
+      ? t('auth.registerTitle')
       : authMode === 'forgot'
-        ? 'Mot de passe oublié'
+        ? t('auth.forgotTitle')
         : authMode === 'reset'
-          ? 'Nouveau mot de passe'
-          : 'Connexion'
+          ? t('auth.resetTitle')
+          : t('auth.loginTitle')
 
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-end sm:items-stretch">
@@ -1940,7 +2099,7 @@ function AuthModal({
           <div>
             <p className="font-display text-2xl text-sage-900">{title}</p>
             <p className="mt-0.5 text-sm text-sage-600">
-              {authMode === 'register' ? 'Quelques champs, puis l’espace de travail.' : 'E-mail et mot de passe.'}
+              {authMode === 'register' ? t('auth.registerHint') : t('auth.loginHint')}
             </p>
           </div>
           <button
@@ -1962,7 +2121,7 @@ function AuthModal({
                   authMode === 'login' ? 'bg-sage-800 text-white' : 'text-sage-700'
                 }`}
               >
-                Connexion
+                {t('auth.login')}
               </button>
               <button
                 type="button"
@@ -1971,13 +2130,13 @@ function AuthModal({
                   authMode === 'register' ? 'bg-sage-800 text-white' : 'text-sage-700'
                 }`}
               >
-                Inscription
+                {t('auth.register')}
               </button>
             </div>
           )}
           <form onSubmit={handleAuth} noValidate>
             {authMode === 'register' && (
-              <Field label="Nom" error={authFieldErrors.fullName}>
+              <Field label={t('auth.name')} error={authFieldErrors.fullName}>
                 <input
                   className={inputClass}
                   value={authForm.fullName}
@@ -1987,7 +2146,7 @@ function AuthModal({
               </Field>
             )}
             {(authMode === 'login' || authMode === 'register' || authMode === 'forgot') && (
-              <Field label="E-mail" error={authFieldErrors.email}>
+              <Field label={t('auth.email')} error={authFieldErrors.email}>
                 <input
                   type="email"
                   className={inputClass}
@@ -1998,7 +2157,7 @@ function AuthModal({
               </Field>
             )}
             {(authMode === 'login' || authMode === 'register') && (
-              <Field label="Mot de passe" error={authFieldErrors.password}>
+              <Field label={t('auth.password')} error={authFieldErrors.password}>
                 <div className="relative">
                   <input
                     type={showPass ? 'text' : 'password'}
@@ -2070,19 +2229,19 @@ function AuthModal({
             <button type="submit" className="mt-1 inline-flex min-h-12 w-full items-center justify-center rounded-full bg-sage-800 px-4 text-sm font-semibold text-white hover:bg-sage-900 disabled:opacity-50" disabled={authBusy}>
               {authBusy
                 ? authMode === 'login'
-                  ? 'Connexion…'
+                  ? t('auth.busyLogin')
                   : authMode === 'register'
-                    ? 'Création…'
+                    ? t('auth.busyRegister')
                     : authMode === 'forgot'
-                      ? 'Envoi…'
-                      : 'Réinitialisation…'
+                      ? t('auth.busyForgot')
+                      : t('auth.busyReset')
                 : authMode === 'login'
-                  ? 'Se connecter'
+                  ? t('auth.submitLogin')
                   : authMode === 'register'
-                    ? 'Créer mon compte'
+                    ? t('auth.submitRegister')
                     : authMode === 'forgot'
-                      ? 'Envoyer le lien'
-                      : 'Réinitialiser'}
+                      ? t('auth.submitForgot')
+                      : t('auth.submitReset')}
             </button>
             {authError ? (
               <p className="mt-3 text-center text-sm font-medium text-red-700" role="alert">
@@ -2095,7 +2254,7 @@ function AuthModal({
                 className="mt-3 w-full text-center text-sm text-sage-600 hover:text-sage-900"
                 onClick={() => setAuthMode('forgot')}
               >
-                Mot de passe oublié ?
+                {t('auth.forgotLink')}
               </button>
             )}
             {isResetish && (
@@ -2104,7 +2263,7 @@ function AuthModal({
                 className="mt-3 w-full text-center text-sm text-sage-600 hover:text-sage-900"
                 onClick={() => setAuthMode('login')}
               >
-                Retour à la connexion
+                {t('auth.backToLogin')}
               </button>
             )}
           </form>
@@ -3563,13 +3722,17 @@ function NotesView({
   onImport,
   selectedNoteIds = [],
   onToggleNote,
+  onDictate,
 }) {
+  const { t } = useI18n()
+  const attachRef = useRef(null)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [viewing, setViewing] = useState(null)
   const [confirmId, setConfirmId] = useState(null)
   const [filterCat, setFilterCat] = useState('Tous')
   const [form, setForm] = useState(emptyNote())
+  const [attachBusy, setAttachBusy] = useState(false)
 
   function emptyNote() {
     return {
@@ -3585,6 +3748,7 @@ function NotesView({
       linkRiskIds: [],
       linkExpenseIds: [],
       linkIdeaIds: [],
+      imageUrl: '',
     }
   }
 
@@ -3632,6 +3796,7 @@ function NotesView({
       linkRiskIds: related.filter((r) => r.type === 'risk').map((r) => r.id),
       linkExpenseIds: related.filter((r) => r.type === 'budget_line').map((r) => r.id),
       linkIdeaIds: related.filter((r) => r.type === 'idea').map((r) => r.id),
+      imageUrl: n.imageUrl || '',
     })
     setOpen(true)
   }
@@ -3660,6 +3825,7 @@ function NotesView({
         shares: form.visibility === 'Privée' ? [] : form.shares,
         projectId: form.projectId || null,
         parentId: form.parentId || null,
+        imageUrl: String(form.imageUrl || '').trim(),
       }
       const saved = await saveNote(payload, user)
       const targets = [
@@ -3680,7 +3846,7 @@ function NotesView({
           meta: { noteId: saved.id },
         })
       }
-      flash(editing ? 'Note mise à jour.' : 'Note créée.')
+      flash(editing ? t('notes.updated') : t('notes.created'))
       setOpen(false)
     } catch (err) {
       flash(err.message, 'err')
@@ -3695,7 +3861,7 @@ function NotesView({
     }
     await deleteNote(id, user)
     setConfirmId(null)
-    flash('Note supprimée.')
+    flash(t('notes.deleted'))
   }
 
   const renderNoteCard = (n, depth = 0) => {
@@ -3714,41 +3880,46 @@ function NotesView({
                     checked={selectedNoteIds.includes(n.id)}
                     onChange={() => onToggleNote(n.id)}
                   />
-                  Contexte IA
+                  {t('notes.contextAi')}
                 </label>
               )}
               <h3 className="font-display text-lg text-sage-900">{n.title}</h3>
-              <p className="text-xs text-sage-500">
-                {n.category} · {n.visibility}
-                {n.parentId ? ` · sous-note de ${notesById[n.parentId]?.title || '…'}` : ''}
+              <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-sage-500">
+                <span>{n.category}</span>
+                <VisibilityBadge value={n.visibility} />
+                {n.parentId ? <span>sous-note de {notesById[n.parentId]?.title || '…'}</span> : null}
               </p>
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               {canReadEntity(user, n) && (
-                <CardActionButton icon={Eye} label="Voir" title="Voir la note" onClick={() => openView(n)} />
+                <CardActionButton icon={Eye} label={t('common.view')} title={t('notes.viewNote')} onClick={() => openView(n)} />
               )}
               {canEditEntity(user, n) && (
-                <CardActionButton icon={Pencil} label="Modifier" title="Modifier la note" onClick={() => openEdit(n)} />
+                <CardActionButton icon={Pencil} label={t('common.edit')} title={t('notes.editNote')} onClick={() => openEdit(n)} />
               )}
               {canDeleteEntity(user, n) && (
                 <CardActionButton
                   icon={Trash2}
-                  label="Supprimer"
-                  title="Supprimer la note"
+                  label={t('common.delete')}
+                  title={t('notes.deleteNote')}
                   danger
                   onClick={() => setConfirmId(n.id)}
                 />
               )}
             </div>
           </div>
-          <p className="mt-3 line-clamp-4 whitespace-pre-wrap text-sm text-sage-700">
-            {n.content || '—'}
-          </p>
+          <div className="mt-3 line-clamp-6">
+            <NoteRichContent content={n.content} imageUrl={n.imageUrl} className="text-sage-700" />
+          </div>
+          <NoteLinkedFiles
+            files={files}
+            ids={related.filter((r) => r.type === 'file').map((r) => r.id)}
+          />
           {(n.tags || []).length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1">
-              {n.tags.map((t) => (
-                <span key={t} className="rounded-md bg-sage-100 px-2 py-0.5 text-xs text-sage-700">
-                  #{t}
+              {n.tags.map((tag) => (
+                <span key={tag} className="rounded-md bg-sage-100 px-2 py-0.5 text-xs text-sage-700">
+                  #{tag}
                 </span>
               ))}
             </div>
@@ -3785,11 +3956,16 @@ function NotesView({
         {canWriteRole(user) && (
           <>
             <button type="button" className={btnPrimary} onClick={openCreate}>
-              <Plus size={16} /> Nouvelle note
+              <Plus size={16} /> {t('notes.new')}
             </button>
             <button type="button" className={btnGhost} onClick={onImport}>
-              <Upload size={16} /> Importer
+              <Upload size={16} /> {t('common.import')}
             </button>
+            {onDictate && (
+              <button type="button" className={btnGhost} onClick={onDictate}>
+                <Mic size={16} /> {t('voice.dictate')}
+              </button>
+            )}
           </>
         )}
         <select
@@ -3806,12 +3982,12 @@ function NotesView({
 
       {filtered.length === 0 ? (
         <EmptyState
-          title="Aucune note"
-          hint="Créez votre première note pour démarrer."
+          title={t('notes.none')}
+          hint={t('notes.noneHint')}
           action={
             canWriteRole(user) ? (
               <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
-                <Plus size={16} /> Créer une note
+                <Plus size={16} /> {t('notes.create')}
               </button>
             ) : null
           }
@@ -3824,7 +4000,7 @@ function NotesView({
 
       <Modal
         open={open}
-        title={editing ? 'Modifier la note' : 'Nouvelle note'}
+        title={editing ? t('notes.editTitle') : t('notes.new')}
         onClose={() => setOpen(false)}
         wide
         asForm
@@ -3839,13 +4015,57 @@ function NotesView({
               required
             />
           </Field>
-          <Field label="Contenu">
+          <Field label={t('notes.content')}>
             <textarea
               className={inputClass + ' min-h-28'}
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
             />
           </Field>
+          <Field label={t('notes.imageUrl')}>
+            <input
+              className={inputClass}
+              value={form.imageUrl || ''}
+              onChange={(e) => setForm({ ...form, imageUrl: e.target.value })}
+              placeholder="https://"
+            />
+            <p className="mt-1 text-[11px] text-sage-500">{t('notes.imageUrlHint')}</p>
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <input
+              ref={attachRef}
+              type="file"
+              accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,image/*,application/pdf"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (!file || !canWriteRole(user)) return
+                setAttachBusy(true)
+                try {
+                  const task = startFileUpload({ file, description: form.title || 'note' }, user)
+                  const saved = await task.done
+                  setForm((f) => ({
+                    ...f,
+                    linkFileIds: f.linkFileIds.includes(saved.id) ? f.linkFileIds : [...f.linkFileIds, saved.id],
+                  }))
+                  flash(t('notes.attached'))
+                } catch (err) {
+                  flash(err.message, 'err')
+                } finally {
+                  setAttachBusy(false)
+                }
+              }}
+            />
+            <button
+              type="button"
+              className={btnGhost}
+              disabled={attachBusy}
+              onClick={() => attachRef.current?.click()}
+            >
+              <Upload size={16} /> {attachBusy ? t('common.loading') : t('notes.attach')}
+            </button>
+          </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <Field label="Catégorie">
               <select
@@ -3858,7 +4078,7 @@ function NotesView({
                 ))}
               </select>
             </Field>
-            <Field label="Visibilité">
+            <Field label={t('notes.visibility')}>
               <select
                 className={inputClass}
                 value={form.visibility}
@@ -3870,14 +4090,14 @@ function NotesView({
               </select>
             </Field>
           </div>
-          <Field label="Étiquettes (séparées par des virgules)">
+          <Field label={t('notes.tags')}>
             <input
               className={inputClass}
               value={form.tags}
               onChange={(e) => setForm({ ...form, tags: e.target.value })}
             />
           </Field>
-          <Field label="Projet lié (optionnel)">
+          <Field label={t('notes.project')}>
             <select
               className={inputClass}
               value={form.projectId}
@@ -3891,13 +4111,13 @@ function NotesView({
               ))}
             </select>
           </Field>
-          <Field label="Note parente (sous-note)">
+          <Field label={t('notes.parent')}>
             <select
               className={inputClass}
               value={form.parentId}
               onChange={(e) => setForm({ ...form, parentId: e.target.value })}
             >
-              <option value="">Aucune (note racine)</option>
+              <option value="">{t('notes.parentNone')}</option>
               {parentOptions.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.title}
@@ -3907,11 +4127,11 @@ function NotesView({
           </Field>
           <div className="rounded-xl border border-sage-200 bg-white p-3">
             <p className="mb-2 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-sage-500">
-              <Link2 size={12} /> Liens
+              <Link2 size={12} /> {t('notes.links')}
             </p>
-            <Field label="Fichiers">
+            <Field label={t('notes.files')}>
               <div className="flex max-h-28 flex-wrap gap-1 overflow-auto xx-scroll">
-                {files.length === 0 && <span className="text-xs text-sage-500">Aucun fichier visible.</span>}
+                {files.length === 0 && <span className="text-xs text-sage-500">{t('notes.noFiles')}</span>}
                 {files.map((f) => (
                   <button
                     key={f.id}
@@ -4017,12 +4237,19 @@ function NotesView({
       >
         {viewing && (
           <div className="space-y-3">
-            <p className="text-sm text-sage-600">
-              Catégorie : {viewing.category || 'Général'} · Visibilité : {viewing.visibility || 'Privée'}
-              {viewing.parentId ? ` · sous-note de ${notesById[viewing.parentId]?.title || '…'}` : ''}
+            <p className="flex flex-wrap items-center gap-2 text-sm text-sage-600">
+              <span>Catégorie : {viewing.category || 'Général'}</span>
+              <VisibilityBadge value={viewing.visibility || 'Privée'} />
+              {viewing.parentId ? <span>sous-note de {notesById[viewing.parentId]?.title || '…'}</span> : null}
             </p>
-            {viewingAuthor ? <p className="text-sm text-sage-600">Auteur : {viewingAuthor}</p> : null}
-            <p className="whitespace-pre-wrap text-sm text-sage-800">{viewing.content || '—'}</p>
+            {viewingAuthor ? <p className="text-sm text-sage-600">{t('notes.author', { name: viewingAuthor })}</p> : null}
+            <NoteRichContent content={viewing.content} imageUrl={viewing.imageUrl} />
+            <NoteLinkedFiles
+              files={files}
+              ids={noteLinksOf(viewing.id)
+                .filter((r) => r.type === 'file')
+                .map((r) => r.id)}
+            />
             {(viewing.tags || []).length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {viewing.tags.map((t) => (
@@ -4038,25 +4265,25 @@ function NotesView({
 
       <Modal
         open={Boolean(confirmId)}
-        title="Confirmer la suppression"
+        title={t('notes.confirmDelete')}
         onClose={() => setConfirmId(null)}
         footer={
           <>
             <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirmId(null)}>
-              Annuler
+              {t('common.cancel')}
             </button>
             <button
               type="button"
               className={btnPrimary + ' w-full sm:w-auto !bg-danger'}
               onClick={() => remove(confirmId)}
             >
-              Supprimer
+              {t('common.delete')}
             </button>
           </>
         }
       >
         <p className="text-sm text-sage-700">
-          Cette action est définitive. Les sous-notes seront rattachées au parent supérieur.
+          {t('notes.confirmDeleteHint')}
         </p>
       </Modal>
     </div>
@@ -4491,10 +4718,13 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
               <Icon size={18} className="shrink-0 text-sage-600" />
               <h3 className="min-w-0 truncate font-display text-lg text-sage-900">{item.name}</h3>
             </div>
-            <p className="mt-1 text-xs text-sage-500">
-              {kind === 'folder'
-                ? `${item.visibility}`
-                : `${(item.ext || '').toUpperCase()} · ${formatFileSize(item.size)} · ${item.visibility}`}
+            <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-sage-500">
+              {kind !== 'folder' ? (
+                <span>
+                  {(item.ext || '').toUpperCase()} · {formatFileSize(item.size)}
+                </span>
+              ) : null}
+              <VisibilityBadge value={item.visibility} />
             </p>
             {item.description ? (
               <p className="mt-2 line-clamp-2 text-sm text-sage-700">{item.description}</p>
@@ -4524,10 +4754,16 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
           <Icon size={18} className="shrink-0 text-sage-600" />
           <div className="min-w-0">
             <p className="truncate font-medium text-sage-900">{item.name}</p>
-            <p className="text-xs text-sage-500">
-              {kind === 'folder'
-                ? `${item.visibility} · ${nameOf(item.ownerId)}`
-                : `${(item.ext || '').toUpperCase()} · ${formatFileSize(item.size)} · ${nameOf(item.uploadedBy || item.ownerId)}`}
+            <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-sage-500">
+              {kind === 'folder' ? (
+                <span>{nameOf(item.ownerId)}</span>
+              ) : (
+                <span>
+                  {(item.ext || '').toUpperCase()} · {formatFileSize(item.size)} ·{' '}
+                  {nameOf(item.uploadedBy || item.ownerId)}
+                </span>
+              )}
+              <VisibilityBadge value={item.visibility} />
             </p>
           </div>
         </button>
@@ -4643,11 +4879,11 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
 
       {emptyRoot ? (
         <EmptyState
-          title="Aucun fichier"
+          title="Rien dans Fichiers pour l’instant"
           hint={
             canWriteRole(user)
               ? `Importez un document (max ${maxFileSizeLabel()}). Types : ${ALLOWED_FILE_EXTS.join(', ')}.`
-              : 'Les fichiers partagés avec vous apparaîtront ici.'
+              : 'Les fichiers partagés avec vous apparaîtront ici, clairement marqués Privé, Partagé ou Équipe.'
           }
           action={
             canWriteRole(user) && canAddHere ? (
@@ -5087,8 +5323,8 @@ function IdeasView({ user, ideas, users, flash }) {
 
       {ideas.length === 0 ? (
         <EmptyState
-          title="Boîte à idées vide"
-          hint="Ajoutez une idée puis faites glisser son statut sur le Kanban."
+          title="La boîte à idées est prête"
+          hint="Déposez la première idée, puis glissez-la d’une colonne à l’autre."
           action={
             canWriteRole(user) ? (
               <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
@@ -5274,9 +5510,10 @@ function IdeasView({ user, ideas, users, flash }) {
       >
         {detail && (
           <div className="space-y-4">
-            <p className="text-sm text-sage-600">
-              Statut : {detail.status} · Visibilité : {detail.visibility || 'Publique'} · Votes :{' '}
-              {(detail.votes || []).length}
+            <p className="flex flex-wrap items-center gap-2 text-sm text-sage-600">
+              <span>Statut : {detail.status}</span>
+              <VisibilityBadge value={detail.visibility || 'Publique'} />
+              <span>Votes : {(detail.votes || []).length}</span>
             </p>
             {entityAuthorName(users, detail, user.id) ? (
               <p className="text-sm text-sage-600">
@@ -5522,7 +5759,7 @@ function ProjectsView({
       {projects.length === 0 ? (
         <EmptyState
           title="Aucun projet"
-          hint="Définissez un projet avec responsable, membres et progression."
+          hint="Un titre suffit pour commencer. Chaque projet affiche s’il est privé, partagé ou équipe."
           action={
             canWriteRole(user) ? (
               <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
@@ -5543,8 +5780,10 @@ function ProjectsView({
                 <div className="flex flex-col gap-3">
                   <div className="min-w-0">
                     <h3 className="font-display text-xl text-sage-900">{p.title}</h3>
-                    <p className="text-xs text-sage-500">
-                      {p.status} · Responsable : {lead?.fullName || '—'}
+                    <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-sage-500">
+                      <span>{p.status}</span>
+                      <VisibilityBadge value={p.visibility || 'Partagée'} />
+                      <span>Responsable : {lead?.fullName || '—'}</span>
                     </p>
                   </div>
                   <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -5753,8 +5992,9 @@ function ProjectsView({
       <Modal open={Boolean(detail)} title={detail?.title || ''} onClose={() => setDetail(null)} wide>
         {detail && (
           <div className="space-y-3">
-            <p className="text-sm text-sage-600">
-              Statut : {detail.status} · Visibilité : {detail.visibility || 'Partagée'}
+            <p className="flex flex-wrap items-center gap-2 text-sm text-sage-600">
+              <span>Statut : {detail.status}</span>
+              <VisibilityBadge value={detail.visibility || 'Partagée'} />
             </p>
             {entityAuthorName(users, detail, user.id) ? (
               <p className="text-sm text-sage-600">Auteur : {entityAuthorName(users, detail, user.id)}</p>
@@ -5777,6 +6017,8 @@ function ProjectsView({
 }
 
 function CalendarView({ user, events, users, flash }) {
+  const { t, lang } = useI18n()
+  const cal = calendarLabels(lang)
   const [todayIso] = useState(() => toIsoDate(new Date()))
   const [cursor, setCursor] = useState(() => {
     const t = new Date()
@@ -5857,7 +6099,7 @@ function CalendarView({ user, events, users, flash }) {
           meta: { eventId: saved.id },
         },
       )
-      flash('Événement planifié.')
+      flash(t('calendar.planned'))
       setSelectedDate(saved.date || form.date)
       setOpen(false)
       setForm(blankForm(saved.date || form.date))
@@ -5923,7 +6165,7 @@ function CalendarView({ user, events, users, flash }) {
           <button
             type="button"
             className={btnGhost + ' !min-h-11 !min-w-11 !px-2'}
-            aria-label={mode === 'week' ? 'Semaine précédente' : 'Mois précédent'}
+            aria-label={mode === 'week' ? t('calendar.prevWeek') : t('calendar.prevMonth')}
             onClick={() => {
               if (mode === 'week') {
                 const d = parseIsoDate(weekIso[0])
@@ -5940,13 +6182,13 @@ function CalendarView({ user, events, users, flash }) {
           </button>
           <h2 className="min-w-[10rem] text-center font-display text-xl capitalize text-sage-900 sm:text-2xl">
             {mode === 'week'
-              ? `Semaine du ${formatDayLong(weekIso[0])}`
-              : formatMonthTitle(cursor.year, cursor.month)}
+              ? t('calendar.weekOf', { date: formatDayLong(weekIso[0], lang) })
+              : formatMonthTitle(cursor.year, cursor.month, lang)}
           </h2>
           <button
             type="button"
             className={btnGhost + ' !min-h-11 !min-w-11 !px-2'}
-            aria-label={mode === 'week' ? 'Semaine suivante' : 'Mois suivant'}
+            aria-label={mode === 'week' ? t('calendar.nextWeek') : t('calendar.nextMonth')}
             onClick={() => {
               if (mode === 'week') {
                 const d = parseIsoDate(weekIso[0])
@@ -5970,14 +6212,14 @@ function CalendarView({ user, events, users, flash }) {
               setSelectedDate(todayIso)
             }}
           >
-            Aujourd’hui
+            {t('calendar.today')}
           </button>
         </div>
         <div className="flex flex-wrap gap-2">
           <div className="inline-flex rounded-xl border border-sage-300 bg-white p-0.5">
             {[
-              ['month', 'Mois'],
-              ['week', 'Semaine'],
+              ['month', t('calendar.month')],
+              ['week', t('calendar.week')],
             ].map(([id, label]) => (
               <button
                 key={id}
@@ -5993,7 +6235,7 @@ function CalendarView({ user, events, users, flash }) {
           </div>
           {canWriteRole(user) && (
             <button type="button" className={btnPrimary} onClick={() => openCreate(selectedDate)}>
-              <Plus size={16} /> Nouvel événement
+              <Plus size={16} /> {t('calendar.newEvent')}
             </button>
           )}
         </div>
@@ -6002,7 +6244,7 @@ function CalendarView({ user, events, users, flash }) {
       {mode === 'month' ? (
         <div className="overflow-x-auto rounded-2xl border border-sage-200 bg-sage-200/80 shadow-sm">
           <div className="grid min-w-[36rem] grid-cols-7 gap-px sm:min-w-0">
-            {WEEKDAYS_FR.map((d) => (
+            {cal.weekdays.map((d) => (
               <div
                 key={d}
                 className="border-b border-sage-200 bg-sage-100 px-1 py-2 text-center text-[11px] font-semibold uppercase tracking-wide text-sage-600 sm:text-xs"
@@ -6029,7 +6271,7 @@ function CalendarView({ user, events, users, flash }) {
                   isToday ? 'bg-sage-50' : ''
                 }`}
               >
-                <p className="text-[11px] font-semibold uppercase text-sage-500">{WEEKDAYS_FR[i]}</p>
+                <p className="text-[11px] font-semibold uppercase text-sage-500">{cal.weekdays[i]}</p>
                 <p
                   className={`mb-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold ${
                     isToday ? 'bg-sage-700 text-white' : 'text-sage-900'
@@ -6056,13 +6298,13 @@ function CalendarView({ user, events, users, flash }) {
             <h3 className="font-display text-lg capitalize text-sage-900">{formatDayLong(selectedDate)}</h3>
             <p className="text-xs text-sage-500">
               {dayEvents.length
-                ? `${dayEvents.length} rendez-vous`
-                : 'Aucun rendez-vous ce jour'}
+                ? t('calendar.countDay', { n: dayEvents.length })
+                : t('calendar.noneDay')}
             </p>
           </div>
           {canWriteRole(user) && (
             <button type="button" className={btnPrimary} onClick={() => openCreate(selectedDate)}>
-              <Plus size={16} /> Créer ce jour
+              <Plus size={16} /> {t('calendar.createToday')}
             </button>
           )}
         </div>
@@ -6087,7 +6329,7 @@ function CalendarView({ user, events, users, flash }) {
                     onClick={async () => {
                       if (confirm('Supprimer cet événement ?')) {
                         await deleteEvent(ev.id, user)
-                        flash('Événement supprimé.')
+                        flash(t('calendar.deleted'))
                       }
                     }}
                   >
@@ -6102,12 +6344,12 @@ function CalendarView({ user, events, users, flash }) {
 
       {sorted.length === 0 ? (
         <EmptyState
-          title="Calendrier vide"
-          hint="Cliquez un jour pour lister ou créer un rendez-vous."
+          title={t('calendar.empty')}
+          hint={t('calendar.emptyHint')}
           action={
             canWriteRole(user) ? (
               <button type="button" className={btnPrimary + ' mt-4'} onClick={() => openCreate(todayIso)}>
-                <Plus size={16} /> Planifier
+                <Plus size={16} /> {t('calendar.schedule')}
               </button>
             ) : null
           }
@@ -6139,7 +6381,7 @@ function CalendarView({ user, events, users, flash }) {
                   onClick={async () => {
                     if (confirm('Supprimer cet événement ?')) {
                       await deleteEvent(ev.id, user)
-                      flash('Événement supprimé.')
+                      flash(t('calendar.deleted'))
                     }
                   }}
                 >
@@ -6151,7 +6393,7 @@ function CalendarView({ user, events, users, flash }) {
         </ul>
       )}
 
-      <Modal open={open} title="Nouvel événement" onClose={() => setOpen(false)} asForm onSubmit={submit} submitLabel="Planifier">
+      <Modal open={open} title={t('calendar.newEvent')} onClose={() => setOpen(false)} asForm onSubmit={submit} submitLabel={t('calendar.schedule')}>
         <div>
           <Field label="Titre">
             <input
@@ -6494,7 +6736,7 @@ function NotificationsView({ notifications, flash, user }) {
         </button>
       </div>
       {notifications.length === 0 ? (
-        <EmptyState title="Aucune notification" hint="Les invitations et partages apparaîtront ici." />
+        <EmptyState title="Tout est calme" hint="Les invitations, partages et retours arriveront ici." />
       ) : (
         <ul className="space-y-2">
           {notifications.map((n) => (
@@ -6869,7 +7111,7 @@ function TeamView({ users, presentIds }) {
   )
 
   if (sorted.length === 0) {
-    return <EmptyState title="Personne pour l’instant" hint="Les comptes inscrits apparaîtront ici." />
+    return <EmptyState title="L’équipe se construit ici" hint="Les comptes inscrits apparaîtront au fil de l’eau." />
   }
 
   return (
@@ -6909,6 +7151,7 @@ function TeamView({ users, presentIds }) {
 }
 
 function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }) {
+  const { t } = useI18n()
   const [selectedId, setSelectedId] = useState(null)
   const [draft, setDraft] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
@@ -7060,7 +7303,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
       <section className={`${showThread ? 'flex' : 'hidden lg:flex'} min-h-[calc(100dvh-8rem)] min-w-0 flex-1 flex-col lg:min-h-0`}>
         {!selected ? (
           <div className="flex flex-1 items-center justify-center p-6">
-            <EmptyState title="Choisissez un groupe" hint="Ouvrez Général ou créez un groupe." />
+            <EmptyState title="Choisissez un groupe" hint="Ouvrez Général pour dire bonjour, ou créez un cercle plus petit." />
           </div>
         ) : (
           <>
@@ -7125,10 +7368,10 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
                 className={inputClass + ' min-w-0'}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder="Écrire un message…"
+                placeholder={t('chat.placeholder')}
                 maxLength={4000}
               />
-              <button type="submit" className={btnPrimary + ' min-w-11 shrink-0 !px-4'} disabled={busy || !draft.trim()} aria-label="Envoyer">
+              <button type="submit" className={btnPrimary + ' min-w-11 shrink-0 !px-4'} disabled={busy || !draft.trim()} aria-label={t('chat.send')}>
                 <Send size={16} />
               </button>
             </form>

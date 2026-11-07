@@ -13,7 +13,9 @@ import {
   Wallet,
   Upload,
   RotateCcw,
+  Mic,
 } from 'lucide-react'
+import { useI18n } from '../i18n'
 import { isDateOverdue, isOpenRisk } from '../lib/rbac'
 import { getBackendMode, saveDashboardPrefs } from '../lib/store'
 import {
@@ -22,6 +24,7 @@ import {
   PriorityBadge,
   ProgressBar,
   StatusBadge,
+  VisibilityBadge,
   btnGhost,
   btnPrimary,
   clipText,
@@ -139,7 +142,9 @@ export default function DashboardView({
   storedPrefs,
   onQuick,
   onImport,
+  onDictate,
 }) {
+  const { t } = useI18n()
   const [prefs, setPrefs] = useState(() =>
     normalizePrefs(storedPrefs || (user ? readLocalPrefs(user.id) : null)),
   )
@@ -281,8 +286,17 @@ export default function DashboardView({
             onClick={onImport}
             className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-sage-100 px-3 py-2 text-sm font-semibold text-sage-900 hover:bg-sage-200"
           >
-            <Upload size={16} /> Import
+            <Upload size={16} /> {t('common.import')}
           </button>
+          {onDictate && (
+            <button
+              type="button"
+              onClick={onDictate}
+              className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-sage-100 px-3 py-2 text-sm font-semibold text-sage-900 hover:bg-sage-200"
+            >
+              <Mic size={16} /> {t('dash.dictate')}
+            </button>
+          )}
         </div>
       </WidgetCard>
     ),
@@ -318,7 +332,7 @@ export default function DashboardView({
           </label>
         )}
         {recentProjects.length === 0 ? (
-          <p className="text-sm text-sage-500">Aucun projet lisible.</p>
+          <p className="text-sm text-sage-500">Pas encore de projet visible de votre côté.</p>
         ) : (
           <ul className="space-y-3">
             {recentProjects.slice(0, 5).map((p) => (
@@ -328,7 +342,10 @@ export default function DashboardView({
                     {p.title}
                     {p.id === prefs.favoriteProjectId ? ' · favori' : ''}
                   </span>
-                  <StatusBadge value={p.status} />
+                  <span className="flex shrink-0 items-center gap-1">
+                    <VisibilityBadge value={p.visibility || 'Partagée'} />
+                    <StatusBadge value={p.status} />
+                  </span>
                 </div>
                 <ProgressBar value={p.progress || 0} />
               </li>
@@ -410,12 +427,15 @@ export default function DashboardView({
         }
       >
         {recentNotes.length === 0 ? (
-          <p className="text-sm text-sage-500">Aucune note lisible.</p>
+          <p className="text-sm text-sage-500">Pas encore de note de votre côté.</p>
         ) : (
           <ul className="space-y-2">
             {recentNotes.map((n) => (
               <li key={n.id} className="text-sm">
-                <p className="truncate font-medium text-sage-900">{n.title || 'Sans titre'}</p>
+                <p className="flex items-center gap-1.5 truncate font-medium text-sage-900">
+                  <span className="min-w-0 truncate">{n.title || 'Sans titre'}</span>
+                  <VisibilityBadge value={n.visibility || 'Privée'} />
+                </p>
                 <p className="text-xs text-sage-500">{clipText(n.body || n.content || '', 90)}</p>
               </li>
             ))}
@@ -438,13 +458,16 @@ export default function DashboardView({
         }
       >
         {recentFiles.length === 0 ? (
-          <p className="text-sm text-sage-500">Aucun fichier lisible.</p>
+          <p className="text-sm text-sage-500">Pas encore de fichier visible.</p>
         ) : (
           <ul className="space-y-2 text-sm">
             {recentFiles.map((f) => (
               <li key={f.id} className="flex items-center justify-between gap-2">
                 <span className="min-w-0 truncate font-medium text-sage-900">{f.name}</span>
-                <StatusBadge value={(f.ext || '').toUpperCase() || 'FICHIER'} />
+                <span className="flex shrink-0 items-center gap-1">
+                  <VisibilityBadge value={f.visibility} />
+                  <StatusBadge value={(f.ext || '').toUpperCase() || 'FICHIER'} />
+                </span>
               </li>
             ))}
           </ul>

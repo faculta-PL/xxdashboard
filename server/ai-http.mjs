@@ -1,4 +1,4 @@
-/** Handlers Node (req/res) for POST /api/ai, /api/ai/stream and /api/ai-search.
+/** Handlers Node (req/res) for POST /api/ai, /api/ai/stream, /api/ai/image and /api/ai-search.
  * Shared by Vite middleware, Firebase Cloud Functions and Vercel serverless.
  * Keys stay on the server (OPENAI_API_KEY | ANTHROPIC_API_KEY | GROK_API_KEY).
  * Never expose secrets to the client. Never prefix VITE_. */
@@ -127,7 +127,7 @@ function stripTrailing(path) {
   return String(path || '/').replace(/\/+$/, '') || '/'
 }
 
-const AI_PATHS = new Set(['/api/ai', '/api/ai/stream', '/api/ai-search', '/search'])
+const AI_PATHS = new Set(['/api/ai', '/api/ai/stream', '/api/ai/image', '/api/ai-search', '/search'])
 
 export function isAiPath(path) {
   return AI_PATHS.has(stripTrailing(path))
@@ -178,6 +178,8 @@ export function requestPath(req) {
   consider(headers['x-matched-path'])
 
   const aiCandidates = [...new Set(candidates.filter(isAiPath))]
+  const image = aiCandidates.find((p) => p === '/api/ai/image')
+  if (image) return image
   const stream = aiCandidates.find((p) => p === '/api/ai/stream')
   if (stream) return stream
   const search = aiCandidates.find((p) => p === '/api/ai-search')
@@ -214,7 +216,7 @@ function statusPayload(env) {
   return { mode: provider.name, ok: true, hasKey: true, provider: provider.name }
 }
 
-const SYSTEM_PROMPT = `Tu es Nazix, l’assistant conversationnel de l’espace de travail collaboratif Nazix.
+const SYSTEM_PROMPT_FR = `Tu es Nazix, l’assistant conversationnel de l’espace de travail collaboratif Nazix.
 Réponds en français, clairement, de façon utile et naturelle — comme un assistant ChatGPT, mais ancré dans Nazix.
 Utilise uniquement le contexte fourni (notes, idées, projets, budget, risques, fichiers, calendrier auxquels l’utilisateur a accès).
 Cite les titres entre « ». N’invente jamais de données privées absentes du contexte.
@@ -224,6 +226,29 @@ Ne propose jamais de supprimer, de partager, ni de modifier les droits d’accè
 Tu ne crées rien tout seul : si une création est utile (note, sous-note, idée, risque, ligne budgétaire, brouillon de message), décris-la en une ou deux phrases en français. L’interface affichera un bouton de confirmation. N’exécute jamais l’action.
 
 INTERDICTION ABSOLUE : n’inclus JAMAIS de JSON, de bloc \`\`\`json, de {"kind":...}, de function-call, ni d’appel d’outil dans ta réponse. Pas de payload, pas de code. Uniquement du texte français visible par l’utilisateur.`
+
+const SYSTEM_PROMPT_EN = `You are Nazix, the conversational assistant of the Nazix collaborative workspace.
+Reply in English, clearly, usefully and naturally — like ChatGPT, but grounded in Nazix.
+Use only the provided context (notes, ideas, projects, budget, risks, files, calendar the user can already read).
+Quote titles in « ». Never invent private data missing from the context.
+If you lack information: say so clearly (“I could not find that”) rather than guessing.
+Distinguish Nazix facts from web results (label them Web).
+Never propose deleting, sharing, or changing access rights.
+You never create anything by yourself: if a creation would help (note, sub-note, idea, risk, budget line, message draft), describe it in one or two English sentences. The UI will show a confirmation button. Never execute the action.
+
+ABSOLUTE BAN: never include JSON, a \`\`\`json block, {"kind":...}, a function-call, or a tool call in your reply. No payload, no code. Visible English text only.`
+
+export function resolveAiLang(body) {
+  const raw = String(body?.language || body?.lang || '').toLowerCase()
+  return raw.startsWith('en') ? 'en' : 'fr'
+}
+
+export function systemPromptFor(lang) {
+  return resolveAiLang({ language: lang }) === 'en' ? SYSTEM_PROMPT_EN : SYSTEM_PROMPT_FR
+}
+
+const IMAGE_TIMEOUT_MS = 55000
+const IMAGE_PROMPT_MAX = 4000
 
 function toChatMessages(body) {
   const incoming = Array.isArray(body.messages) ? body.messages : []
@@ -288,11 +313,11 @@ async function fetchWithTimeout(url, options, ms, req) {
   }
 }
 
-function openaiMessages(messages) {
-  return [{ role: 'system', content: SYSTEM_PROMPT }, ...messages]
+function openaiMessages(messages, lang = 'fr') {
+  return [{ role: 'system', content: systemPromptFor(lang) }, ...messages]
 }
 
-async function callOpenAI(key, messages, req) {
+async function callOpenAI(key, messages, req, lang = 'fr') {
   const res = await fetchWithTimeout(
     'https://api.openai.com/v1/chat/completions',
     {
@@ -305,7 +330,7 @@ async function callOpenAI(key, messages, req) {
         model: 'gpt-4o-mini',
         temperature: 0.4,
         max_tokens: 1400,
-        messages: openaiMessages(messages),
+        messages: openaiMessages(messages, lang),
       }),
     },
     LLM_TIMEOUT_MS,
@@ -321,7 +346,7 @@ async function callOpenAI(key, messages, req) {
   return String(text)
 }
 
-async function callAnthropic(key, messages, req) {
+async function callAnthropic(key, messages, req, lang = 'fr') {
   const res = await fetchWithTimeout(
     'https://api.anthropic.com/v1/messages',
     {
@@ -334,7 +359,7 @@ async function callAnthropic(key, messages, req) {
       body: JSON.stringify({
         model: 'claude-3-5-haiku-latest',
         max_tokens: 1400,
-        system: SYSTEM_PROMPT,
+        system: systemPromptFor(lang),
         messages,
       }),
     },
@@ -354,7 +379,7 @@ async function callAnthropic(key, messages, req) {
   return text
 }
 
-async function callGrok(key, messages, req) {
+async function callGrok(key, messages, req, lang = 'fr') {
   const res = await fetchWithTimeout(
     'https://api.x.ai/v1/chat/completions',
     {
@@ -367,7 +392,7 @@ async function callGrok(key, messages, req) {
         model: 'grok-2-latest',
         temperature: 0.4,
         max_tokens: 1400,
-        messages: openaiMessages(messages),
+        messages: openaiMessages(messages, lang),
       }),
     },
     LLM_TIMEOUT_MS,
@@ -383,10 +408,10 @@ async function callGrok(key, messages, req) {
   return String(text)
 }
 
-async function callLlm(provider, messages, req) {
-  if (provider.name === 'openai') return callOpenAI(provider.key, messages, req)
-  if (provider.name === 'anthropic') return callAnthropic(provider.key, messages, req)
-  return callGrok(provider.key, messages, req)
+async function callLlm(provider, messages, req, lang = 'fr') {
+  if (provider.name === 'openai') return callOpenAI(provider.key, messages, req, lang)
+  if (provider.name === 'anthropic') return callAnthropic(provider.key, messages, req, lang)
+  return callGrok(provider.key, messages, req, lang)
 }
 
 function startSse(res) {
@@ -402,7 +427,7 @@ function sseWrite(res, obj) {
   res.write(`data: ${JSON.stringify(obj)}\n\n`)
 }
 
-async function streamOpenAI(key, messages, req, res) {
+async function streamOpenAI(key, messages, req, res, lang = 'fr') {
   const openaiRes = await fetchWithTimeout(
     'https://api.openai.com/v1/chat/completions',
     {
@@ -417,7 +442,7 @@ async function streamOpenAI(key, messages, req, res) {
         temperature: 0.4,
         max_tokens: 1400,
         stream: true,
-        messages: openaiMessages(messages),
+        messages: openaiMessages(messages, lang),
       }),
     },
     LLM_TIMEOUT_MS,
@@ -504,8 +529,9 @@ async function handleAi(req, res, env) {
     return
   }
   const body = await readBody(req)
+  const lang = resolveAiLang(body)
   const messages = toChatMessages(body)
-  const raw = await callLlm(provider, messages, req)
+  const raw = await callLlm(provider, messages, req, lang)
   const { content, actions } = splitDisplayAndActions(raw)
   json(res, 200, {
     ok: true,
@@ -537,14 +563,15 @@ async function handleAiStream(req, res, env) {
     return
   }
   const body = await readBody(req)
+  const lang = resolveAiLang(body)
   const messages = toChatMessages(body)
   startSse(res)
   try {
     if (provider.name === 'openai') {
-      await streamOpenAI(provider.key, messages, req, res)
+      await streamOpenAI(provider.key, messages, req, res, lang)
       return
     }
-    const raw = await callLlm(provider, messages, req)
+    const raw = await callLlm(provider, messages, req, lang)
     const { content, actions } = splitDisplayAndActions(raw)
     if (content) sseWrite(res, { delta: content })
     sseWrite(res, {
@@ -808,16 +835,111 @@ async function handleSearch(req, res) {
   })
 }
 
+async function tryImageModel(key, prompt, model, req) {
+  const payload = {
+    model,
+    prompt,
+    n: 1,
+    size: '1024x1024',
+  }
+  if (model === 'dall-e-3') payload.response_format = 'b64_json'
+  const resImg = await fetchWithTimeout(
+    'https://api.openai.com/v1/images/generations',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+    IMAGE_TIMEOUT_MS,
+    req,
+  )
+  const data = await resImg.json().catch(() => ({}))
+  if (!resImg.ok) {
+    throw Object.assign(new Error(sanitizeLlmError(`OpenAI images ${resImg.status}`, JSON.stringify(data).slice(0, 160))), {
+      status: resImg.status,
+    })
+  }
+  return data
+}
+
+async function handleImage(req, res, env) {
+  if (req.method === 'GET') {
+    json(res, 200, { ...statusPayload(env), image: Boolean(env.OPENAI_API_KEY) })
+    return
+  }
+  if (req.method !== 'POST') {
+    json(res, 405, { ok: false, error: 'Méthode non autorisée.' })
+    return
+  }
+  const key = env.OPENAI_API_KEY
+  if (!key) {
+    json(res, 200, { ok: false, hasKey: false, error: 'OPENAI_API_KEY manquante' })
+    return
+  }
+  const body = await readBody(req)
+  const prompt = String(body.prompt || body.text || '').trim()
+  if (!prompt) {
+    json(res, 400, { ok: false, error: 'Prompt requis.' })
+    return
+  }
+  if (prompt.length > IMAGE_PROMPT_MAX) {
+    json(res, 400, { ok: false, error: 'Prompt trop long.' })
+    return
+  }
+  let data
+  let modelUsed = 'gpt-image-1'
+  try {
+    data = await tryImageModel(key, prompt, 'gpt-image-1', req)
+  } catch {
+    modelUsed = 'dall-e-3'
+    data = await tryImageModel(key, prompt, 'dall-e-3', req)
+  }
+  const item = data?.data?.[0] || {}
+  let b64 = item.b64_json || ''
+  let url = item.url || ''
+  let mime = 'image/png'
+  if (!b64 && url) {
+    try {
+      const imgRes = await fetchWithTimeout(url, {}, IMAGE_TIMEOUT_MS, req)
+      if (imgRes.ok) {
+        const buf = Buffer.from(await imgRes.arrayBuffer())
+        const ct = String(imgRes.headers.get('content-type') || 'image/png').split(';')[0]
+        mime = ct || 'image/png'
+        b64 = buf.toString('base64')
+        url = ''
+      }
+    } catch {
+      /* keep remote url */
+    }
+  }
+  if (!b64 && !url) {
+    json(res, 502, { ok: false, error: 'Image vide.' })
+    return
+  }
+  json(res, 200, {
+    ok: true,
+    model: modelUsed,
+    mime,
+    b64: b64 || undefined,
+    url: url || undefined,
+  })
+}
+
 /** Returns a Promise if the path is an AI route, otherwise null (caller should next()). */
 export function dispatchAiRequest(req, res, env = process.env, pathOverride) {
   const path = pathOverride ? normalizeApiPath(pathOverride) : requestPath(req)
   if (!isAiPath(path)) return null
   const run =
-    path === '/api/ai/stream'
-      ? handleAiStream(req, res, env)
-      : path === '/api/ai'
-        ? handleAi(req, res, env)
-        : handleSearch(req, res)
+    path === '/api/ai/image'
+      ? handleImage(req, res, env)
+      : path === '/api/ai/stream'
+        ? handleAiStream(req, res, env)
+        : path === '/api/ai'
+          ? handleAi(req, res, env)
+          : handleSearch(req, res)
   return Promise.resolve(run).catch((err) => {
     const status = err.status || 500
     const aborted = err?.name === 'AbortError'

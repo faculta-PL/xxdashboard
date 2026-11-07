@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ChevronDown, HelpCircle } from 'lucide-react'
-import { MODULE_GUIDES, readIntroCollapsed, writeIntroCollapsed } from './guideContent'
+import { MODULE_CHROME, MODULE_GUIDES, readIntroCollapsed, writeIntroCollapsed } from './guideContent'
 
 export function ModuleIntro({ view, onOpenGuide, forceOpen, onToggle }) {
   const data = MODULE_GUIDES[view]
@@ -30,7 +30,14 @@ export function ModuleIntro({ view, onOpenGuide, forceOpen, onToggle }) {
       </button>
       {!collapsed && (
         <div className="mt-2 pl-7">
-          <p className="text-sm leading-relaxed text-sage-700">{data.lead}</p>
+          <p className="text-sm leading-relaxed text-sage-700">
+            {MODULE_CHROME[view]?.emoji ? (
+              <span className="mr-1" aria-hidden="true">
+                {MODULE_CHROME[view].emoji}
+              </span>
+            ) : null}
+            {data.lead}
+          </p>
           <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-sage-700">
             {data.bullets.map((b) => (
               <li key={b}>{b}</li>

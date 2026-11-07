@@ -6,12 +6,20 @@ export const ROLES = {
 }
 
 /** Built-in admin accounts — keep in sync with firestore.rules / storage.rules. */
+function viteEnv(key) {
+  try {
+    return import.meta.env?.[key]
+  } catch {
+    return undefined
+  }
+}
+
 function adminEmailsFromEnv() {
-  const extras = String(import.meta.env.VITE_ADMIN_EMAILS || '')
+  const extras = String(viteEnv('VITE_ADMIN_EMAILS') || '')
     .split(/[,;]/)
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean)
-  const singles = [import.meta.env.VITE_ADMIN_EMAIL, import.meta.env.VITE_ADMIN_EMAIL_2]
+  const singles = [viteEnv('VITE_ADMIN_EMAIL'), viteEnv('VITE_ADMIN_EMAIL_2')]
     .map((s) => String(s || '').trim().toLowerCase())
     .filter(Boolean)
   return [...new Set(['admin@example.com', ...extras, ...singles])]
