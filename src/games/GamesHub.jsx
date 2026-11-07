@@ -4,6 +4,7 @@ import { getBackendMode, saveGameProfile, createGameScore } from '../lib/store'
 import { btnGhost, btnPrimary, EmptyState, inputClass, MemberAvatar } from '../components/ui'
 import { GAME_META } from './GameShell'
 import { KINGX, ZIANOTIX } from './chars'
+import { useI18n } from '../i18n'
 
 const KingXCueillette = lazy(() => import('./KingXCueillette.jsx'))
 const ZianotixVol = lazy(() => import('./ZianotixVol.jsx'))
@@ -12,6 +13,7 @@ const RelaisDuo = lazy(() => import('./RelaisDuo.jsx'))
 const GAMES = [GAME_META['kingx-cueillette'], GAME_META['zianotix-vol'], GAME_META['relais-duo']]
 
 export default function GamesHub({ user, profiles = [], scores = [], flash, onBack }) {
+  const { t } = useI18n()
   const [gameId, setGameId] = useState(null)
   const [tab, setTab] = useState('global')
   const [name, setName] = useState(() => profiles.find((p) => p.userId === user.id)?.displayName || '')
@@ -26,9 +28,9 @@ export default function GamesHub({ user, profiles = [], scores = [], flash, onBa
     try {
       const saved = await saveGameProfile(name, user)
       setName(saved.displayName)
-      flash('Pseudo de jeu enregistré.')
+      flash(t('gamesUi.saved'))
     } catch (err) {
-      flash(err.message || 'Pseudo refusé', 'err')
+      flash(err.message || t('gamesUi.refused'), 'err')
     } finally {
       setBusy(false)
     }
@@ -36,11 +38,11 @@ export default function GamesHub({ user, profiles = [], scores = [], flash, onBa
 
   const onSaveScore = async (id, score) => {
     if (!mine?.displayName) {
-      flash('Choisissez un pseudo de jeu avant d’enregistrer un score.', 'err')
+      flash(t('gamesUi.needNick'), 'err')
       throw new Error('Pseudo requis')
     }
     await createGameScore({ gameId: id, score, displayName: mine.displayName }, user)
-    flash('Score enregistré.')
+    flash(t('gamesUi.scoreSaved'))
   }
 
   const sorted = useMemo(
@@ -73,13 +75,13 @@ export default function GamesHub({ user, profiles = [], scores = [], flash, onBa
     <div className="flex min-h-[100dvh] flex-col bg-cream-green text-ink">
       <header className="border-b border-sage-200 bg-gradient-to-r from-sage-100 via-cream-green to-sage-200 px-4 py-4 pt-[max(1rem,env(safe-area-inset-top))]">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-3">
-          <button type="button" className={btnGhost} onClick={onBack} aria-label="Retour au travail">
-            <ArrowLeft size={16} /> Retour au travail
+          <button type="button" className={btnGhost} onClick={onBack} aria-label={t('gamesUi.back')}>
+            <ArrowLeft size={16} /> {t('gamesUi.back')}
           </button>
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sage-600">Arcade Nazix</p>
-            <h1 className="font-display text-3xl text-sage-900">Jeux</h1>
-            <p className="text-sm text-sage-700">KingX et Zianotix — hors espace de travail, sans notes ni chat.</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sage-600">{t('gamesUi.arcade')}</p>
+            <h1 className="font-display text-3xl text-sage-900">{t('gamesUi.title')}</h1>
+            <p className="text-sm text-sage-700">{t('gamesUi.hint')}</p>
           </div>
           <Gamepad2 className="text-sage-700" size={36} aria-hidden />
         </div>
@@ -87,13 +89,13 @@ export default function GamesHub({ user, profiles = [], scores = [], flash, onBa
 
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 p-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
         <section className="rounded-2xl border border-sage-200 bg-white/80 p-4 animate-fade-up">
-          <h2 className="font-display text-lg text-sage-900">Votre pseudo</h2>
+          <h2 className="font-display text-lg text-sage-900">{t('gamesUi.nick')}</h2>
           <p className="mt-1 text-xs text-sage-600">
-            Unique parmi les joueurs. Les noms {KINGX} et {ZIANOTIX} sont réservés aux personnages.
+            {t('gamesUi.nickHint', { a: KINGX, b: ZIANOTIX })}
           </p>
           <form className="mt-3 flex flex-col gap-2 sm:flex-row" onSubmit={saveProfile}>
             <label className="sr-only" htmlFor="game-display-name">
-              Pseudo de jeu
+              {t('gamesUi.nickLabel')}
             </label>
             <input
               id="game-display-name"
@@ -101,17 +103,17 @@ export default function GamesHub({ user, profiles = [], scores = [], flash, onBa
               maxLength={32}
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Votre nom dans l’arcade"
+              placeholder={t('gamesUi.nickPlaceholder')}
               required
             />
             <button type="submit" className={btnPrimary} disabled={busy}>
-              Enregistrer
+              {t('common.save')}
             </button>
           </form>
           {displayName && (
             <p className="mt-2 flex items-center gap-2 text-sm text-sage-700">
               <MemberAvatar name={displayName} />
-              Connecté en tant que {displayName}
+              {t('gamesUi.playingAs', { name: displayName })}
             </p>
           )}
         </section>

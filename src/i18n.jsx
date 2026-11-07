@@ -12,6 +12,9 @@ export {
   calendarLabels,
   dateLocale,
   dictKeyList,
+  valueLabel,
+  formatDateTime,
+  formatDate,
 } from './lib/i18nCore.js'
 import { LANGS, readLang, writeLang, translate } from './lib/i18nCore.js'
 

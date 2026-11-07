@@ -15,7 +15,7 @@ import {
   RotateCcw,
   Mic,
 } from 'lucide-react'
-import { useI18n } from '../i18n'
+import { useI18n, dateLocale } from '../i18n'
 import { isDateOverdue, isOpenRisk } from '../lib/rbac'
 import { getBackendMode, saveDashboardPrefs } from '../lib/store'
 import {
@@ -163,7 +163,7 @@ export default function DashboardView({
   onImport,
   onDictate,
 }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [prefs, setPrefs] = useState(() =>
     normalizePrefs(storedPrefs || (user ? readLocalPrefs(user.id) : null)),
   )
@@ -515,7 +515,7 @@ export default function DashboardView({
             {budgetRows.map((b) => (
               <li key={b.id}>
                 <p className="text-sm font-medium text-sage-900">{b.name}</p>
-                <p className="font-display text-xl text-sage-900">{formatMoney(b.remaining, b.currency)}</p>
+                <p className="font-display text-xl text-sage-900">{formatMoney(b.remaining, b.currency, dateLocale(lang))}</p>
                 <ProgressBar value={b.pct} label={t('dash.consumed')} />
               </li>
             ))}

@@ -180,16 +180,17 @@ function ActionButtons({ actions, canWrite, onPick }) {
 }
 
 function ConfirmAction({ action, users, projects, budgets, notes, user, onClose, onApply, busy }) {
+  const { t } = useI18n()
   const [draft, setDraft] = useState(() => ({ ...(action?.draft || {}) }))
   if (!action) return null
   const canWrite = canWriteRole(user)
   const writeBlocked = !canWrite && action.kind !== 'draft_message'
   return (
     <div className="fixed inset-0 z-[60] flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-3">
-      <button type="button" className="absolute inset-0" aria-label="Fermer" onClick={onClose} />
+      <button type="button" className="absolute inset-0" aria-label={t('common.close')} onClick={onClose} />
       <div className="relative z-10 w-full max-w-md rounded-t-2xl bg-sage-50 p-4 shadow-xl sm:rounded-2xl">
-        <h3 className="font-display text-lg text-sage-900">Confirmer — {action.label}</h3>
-        <p className="mt-1 text-xs text-sage-600">Aucune action n’est exécutée sans votre confirmation.</p>
+        <h3 className="font-display text-lg text-sage-900">{t('common.confirm')} — {action.label}</h3>
+        <p className="mt-1 text-xs text-sage-600">{t('ai.noMemory')}</p>
         {writeBlocked && (
           <p className="mt-2 rounded-lg bg-warn/10 px-2 py-1 text-xs text-warn">Rôle Lecteur : création interdite.</p>
         )}
@@ -828,7 +829,7 @@ function ChatPane({
           <div className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
             {chat.error}
             <button type="button" className="ml-2 underline" onClick={() => chat.setError('')}>
-              Fermer
+              {t('common.close')}
             </button>
           </div>
         )}

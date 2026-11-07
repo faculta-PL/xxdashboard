@@ -60,8 +60,8 @@ import DashboardView from './components/DashboardView'
 import FeedbackView from './FeedbackView'
 import CreateToolsView from './CreateToolsView'
 import VoiceModal from './VoiceModal'
-import { NoteRichContent, NoteLinkedFiles } from './NoteMedia'
-import { LangToggle, useI18n, calendarLabels, dateLocale, landingPlanPoints } from './i18n'
+import { DocumentBody, NoteCardExcerpt, NoteLinkedFiles } from './NoteMedia'
+import { LangToggle, useI18n, calendarLabels, dateLocale, landingPlanPoints, valueLabel } from './i18n'
 import { GuideView } from './onboarding/GuideView'
 import { GuideOverlay } from './onboarding/GuideOverlay'
 import { ModuleIntro, HelpHeaderButton } from './onboarding/ModuleIntro'
@@ -282,10 +282,10 @@ function CardActionButton({ icon: Icon, label, onClick, danger = false, title })
   )
 }
 
-function entityAuthorName(users, entity, selfId) {
+function entityAuthorName(users, entity, selfId, fallback = '') {
   if (!entity?.ownerId || entity.ownerId === selfId) return null
   const u = users.find((x) => x.id === entity.ownerId)
-  return u?.fullName || entity.ownerEmail || 'Auteur'
+  return u?.fullName || entity.ownerEmail || fallback
 }
 
 function Modal({
@@ -356,7 +356,7 @@ function Modal({
       aria-modal="true"
       aria-labelledby="nazix-modal-title"
     >
-      <button type="button" className="absolute inset-0 cursor-default" aria-label="Fermer" onClick={onClose} />
+      <button type="button" className="absolute inset-0 cursor-default" aria-label={t('common.close')} onClick={onClose} />
       <Tag
         className={`relative z-10 flex max-h-[90vh] w-full max-w-full flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-2xl animate-fade-up sm:rounded-2xl ${
           wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'
@@ -379,7 +379,7 @@ function Modal({
             type="button"
             onClick={onClose}
             className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg p-2 text-sage-600 hover:bg-sage-200"
-            aria-label="Fermer"
+            aria-label={t('common.close')}
           >
             <X size={18} />
           </button>
@@ -399,11 +399,12 @@ function Modal({
 }
 
 function ModalActions({ children, onCancel }) {
+  const { t } = useI18n()
   return (
     <div className="sticky bottom-0 z-10 -mx-4 mt-4 flex flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-4 py-3 sm:-mx-5 sm:flex-row sm:justify-end sm:px-5 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       {onCancel ? (
         <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={onCancel}>
-          Annuler
+          {t('common.cancel')}
         </button>
       ) : null}
       {children}
@@ -426,16 +427,17 @@ function Field({ label, error, children }) {
 }
 
 function ShareEditor({ users, shares, onChange, excludeId, permissions }) {
+  const { t, lang } = useI18n()
   const options = users.filter((u) => u.id !== excludeId)
   const perms = permissions || [
-    ['Lecture seule', 'Lecture seule'],
-    ['Édition', 'Édition'],
+    ['Lecture seule', t('shareUi.readOnly')],
+    ['Édition', t('shareUi.edit')],
   ]
   return (
     <div className="space-y-2 rounded-xl border border-sage-200 bg-white p-3">
-      <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">Partage</p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">{t('shareUi.title')}</p>
       {options.length === 0 && (
-        <p className="text-sm text-sage-500">Aucun autre collaborateur pour le moment.</p>
+        <p className="text-sm text-sage-500">{t('shareUi.noCollaborators')}</p>
       )}
       {options.map((u) => {
         const share = shares.find((s) => s.userId === u.id)
@@ -452,10 +454,10 @@ function ShareEditor({ users, shares, onChange, excludeId, permissions }) {
                 onChange(next)
               }}
             >
-              <option value="">Aucun</option>
+              <option value="">{t('shareUi.none')}</option>
               {perms.map(([value, label]) => (
                 <option key={value} value={value}>
-                  {label}
+                  {value === label ? valueLabel(lang, value, label) : label}
                 </option>
               ))}
             </select>
@@ -467,6 +469,7 @@ function ShareEditor({ users, shares, onChange, excludeId, permissions }) {
 }
 
 function FileShareBlock({ users, user, shares, teamWide, onShares, onTeamWide }) {
+  const { t } = useI18n()
   return (
     <div className="space-y-3">
       <label className="flex items-start gap-2 rounded-xl border border-sage-200 bg-white p-3 text-sm">
@@ -477,9 +480,9 @@ function FileShareBlock({ users, user, shares, teamWide, onShares, onTeamWide })
           onChange={(e) => onTeamWide(e.target.checked)}
         />
         <span>
-          <span className="font-medium text-sage-800">Toute l’équipe</span>
+          <span className="font-medium text-sage-800">{t('shareUi.allTeam')}</span>
           <span className="mt-0.5 block text-xs text-sage-500">
-            Tous les comptes connectés peuvent lire (visibilité Équipe).
+            {t('shareUi.allTeamHint')}
           </span>
         </span>
       </label>
@@ -1068,7 +1071,7 @@ export default function App() {
       <div className="flex min-h-[100dvh] items-center justify-center">
         <div className="text-center animate-fade-up">
           <p className="font-display text-3xl text-sage-800">Nazix</p>
-          <p className="mt-2 animate-soft-pulse text-sm text-sage-600">Chargement…</p>
+          <p className="mt-2 animate-soft-pulse text-sm text-sage-600">{t('common.loading')}</p>
         </div>
       </div>
     )
@@ -1196,7 +1199,7 @@ export default function App() {
                 setGuideOpen(true)
                 return
               }
-              setIntroForce(view)
+              setIntroForce((cur) => (cur === view ? null : view))
             }}
             label={t('nav.help', { label: t(`nav.${view}`) || 'module' })}
           />
@@ -1216,7 +1219,6 @@ export default function App() {
               view={view}
               forceOpen={introForce === view}
               onOpenGuide={() => setView('guide')}
-              onToggle={() => setIntroForce(null)}
             />
           )}
           {view === 'guide' && (
@@ -1283,6 +1285,7 @@ export default function App() {
           {view === 'canvas' && (
             <CanvasView
               user={user}
+              users={users}
               projects={projects}
               notes={notes}
               ideas={ideas}
@@ -2266,10 +2269,11 @@ function budgetSummary(budget, lines) {
 }
 
 function LocalBanner() {
+  const { t } = useI18n()
   if (getBackendMode() !== 'local') return null
   return (
     <div className="rounded-xl border border-warn/30 bg-warn/10 px-4 py-3 text-sm text-sage-800">
-      Mode local — données non synchronisées entre appareils
+      {t('common.localBanner')}
     </div>
   )
 }
@@ -2282,6 +2286,8 @@ function dueTone(dateStr, done) {
 }
 
 function BudgetView({ user, budgets, lines, projects, projectsById, users, flash, onImport, onFocusBudget }) {
+  const { t, lang } = useI18n()
+  const moneyLocale = dateLocale(lang)
   const [selectedId, setSelectedId] = useState(budgets[0]?.id || '')
   const [tab, setTab] = useState('planned')
   const [open, setOpen] = useState(false)
@@ -2473,13 +2479,13 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
 
   const cards = selected
     ? [
-        { label: 'Total prévu', value: formatMoney(summary.plannedTotal, selected.currency) },
-        { label: 'Somme prévisionnelle', value: formatMoney(summary.estimated, selected.currency) },
-        { label: 'Somme réelle', value: formatMoney(summary.actual, selected.currency) },
-        { label: 'Payé', value: formatMoney(summary.paid, selected.currency) },
-        { label: 'Restant', value: formatMoney(summary.remaining, selected.currency) },
-        { label: 'Écart prévision / réel', value: formatMoney(summary.variance, selected.currency) },
-        { label: '% consommé', value: `${Math.round(summary.usedPct)} %` },
+        { label: t('budgetUi.totalPlanned'), value: formatMoney(summary.plannedTotal, selected.currency, moneyLocale) },
+        { label: t('budgetUi.estimated'), value: formatMoney(summary.estimated, selected.currency, moneyLocale) },
+        { label: t('budgetUi.actualSum'), value: formatMoney(summary.actual, selected.currency, moneyLocale) },
+        { label: t('budgetUi.paid'), value: formatMoney(summary.paid, selected.currency, moneyLocale) },
+        { label: t('budgetUi.remaining'), value: formatMoney(summary.remaining, selected.currency, moneyLocale) },
+        { label: t('budgetUi.variance'), value: formatMoney(summary.variance, selected.currency, moneyLocale) },
+        { label: t('budgetUi.consumedPct'), value: `${Math.round(summary.usedPct)} %` },
       ]
     : []
 
@@ -2488,8 +2494,8 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
       <div className="space-y-4 animate-fade-up">
         <LocalBanner />
         <EmptyState
-          title="Aucun projet"
-          hint="Rattachez un budget à un projet. Créez d’abord un projet dans l’onglet Projets."
+          title={t('projectsUi.empty')}
+          hint={t('budgetUi.needProject')}
         />
       </div>
     )
@@ -2517,16 +2523,16 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
         {canWriteRole(user) && (
           <>
             <button type="button" className={btnPrimary} onClick={openCreate}>
-              <Plus size={16} /> Nouveau budget
+              <Plus size={16} /> {t('budgetUi.new')}
             </button>
             <button type="button" className={btnGhost} onClick={onImport}>
-              <Upload size={16} /> Importer
+              <Upload size={16} /> {t('common.import')}
             </button>
           </>
         )}
         {selected && canManage && (
           <button type="button" className={btnGhost} onClick={openEdit}>
-            <Pencil size={14} /> Modifier
+            <Pencil size={14} /> {t('common.edit')}
           </button>
         )}
         {selected && canRemove && (
@@ -2535,21 +2541,21 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
             className={btnGhost + ' !text-danger'}
             onClick={() => setConfirm({ type: 'budget', id: selected.id })}
           >
-            <Trash2 size={14} /> Supprimer
+            <Trash2 size={14} /> {t('common.delete')}
           </button>
         )}
       </div>
 
       {denied ? (
-        <EmptyState title="Accès refusé" hint="Aucun budget n’a été partagé avec vous." />
+        <EmptyState title={t('budgetUi.accessDenied')} hint={t('budgetUi.accessHint')} />
       ) : !selected ? (
         <EmptyState
-          title="Aucun budget"
-          hint="Créez un budget rattaché à un projet, en EUR ou USD."
+          title={t('budgetUi.empty')}
+          hint={t('budgetUi.emptyHint')}
           action={
             canWriteRole(user) ? (
               <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
-                <Plus size={16} /> Créer un budget
+                <Plus size={16} /> {t('budgetUi.create')}
               </button>
             ) : null
           }
@@ -2571,33 +2577,29 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
           </section>
 
           <div className="flex flex-wrap gap-2">
-            {BUDGET_TABS.map((t) => (
+            {BUDGET_TABS.map((tabDef) => (
               <button
-                key={t.id}
+                key={tabDef.id}
                 type="button"
-                onClick={() => setTab(t.id)}
+                onClick={() => setTab(tabDef.id)}
                 className={`min-h-11 rounded-xl px-4 py-2 text-sm font-semibold ${
-                  tab === t.id ? 'bg-sage-700 text-white' : 'bg-white/80 text-sage-800 border border-sage-200'
+                  tab === tabDef.id ? 'bg-sage-700 text-white' : 'bg-white/80 text-sage-800 border border-sage-200'
                 }`}
               >
-                {t.label}
+                {t(`budgetUi.tab${tabDef.id.charAt(0).toUpperCase()}${tabDef.id.slice(1)}`)}
               </button>
             ))}
             {canManage && (
               <button type="button" className={btnPrimary} onClick={() => openLine(null)}>
-                <Plus size={16} /> Ajouter une ligne
+                <Plus size={16} /> {t('budgetUi.addLine')}
               </button>
             )}
           </div>
 
           {tabLines.length === 0 ? (
             <EmptyState
-              title="Aucune ligne"
-              hint={
-                tab === 'salary'
-                  ? 'Indiquez un intitulé de poste, jamais un identifiant personnel.'
-                  : 'Ajoutez une ligne pour alimenter les totaux.'
-              }
+              title={t('budgetUi.noLines')}
+              hint={tab === 'salary' ? t('budgetUi.noSalaryHint') : t('budgetUi.noLinesHint')}
             />
           ) : (
             <>
@@ -2605,11 +2607,11 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
                 <table className="min-w-full text-left text-sm">
                   <thead className="bg-sage-100 text-sage-700">
                     <tr>
-                      <th className="px-4 py-3 font-semibold">Libellé</th>
-                      <th className="px-4 py-3 font-semibold">Catégorie</th>
-                      <th className="px-4 py-3 font-semibold">Montant</th>
-                      <th className="px-4 py-3 font-semibold">{tab === 'salary' ? 'Période' : 'Date'}</th>
-                      <th className="px-4 py-3 font-semibold">{tab === 'actual' ? 'Statut' : 'Responsable'}</th>
+                      <th className="px-4 py-3 font-semibold">{t('budgetUi.label')}</th>
+                      <th className="px-4 py-3 font-semibold">{t('budgetUi.category')}</th>
+                      <th className="px-4 py-3 font-semibold">{t('budgetUi.amount')}</th>
+                      <th className="px-4 py-3 font-semibold">{tab === 'salary' ? t('budgetUi.period') : t('budgetUi.date')}</th>
+                      <th className="px-4 py-3 font-semibold">{tab === 'actual' ? t('budgetUi.status') : t('budgetUi.responsible')}</th>
                       <th className="px-4 py-3 font-semibold" />
                     </tr>
                   </thead>
@@ -2700,7 +2702,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
 
       <Modal
         open={open}
-        title={editing ? 'Modifier le budget' : 'Nouveau budget'}
+        title={editing ? t('budgetUi.edit') : t('budgetUi.new')}
         onClose={() => setOpen(false)}
         wide
         asForm
@@ -2998,6 +3000,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
 }
 
 function RisksView({ user, risks, actions, projects, projectsById, users, flash, onImport }) {
+  const { t, lang } = useI18n()
   const [filterProject, setFilterProject] = useState('')
   const [filterAssignee, setFilterAssignee] = useState('')
   const [filterPriority, setFilterPriority] = useState('')
@@ -3183,8 +3186,8 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
       <div className="space-y-4 animate-fade-up">
         <LocalBanner />
         <EmptyState
-          title="Aucun projet"
-          hint="Les risques sont rattachés à un projet. Créez d’abord un projet."
+          title={t('projectsUi.empty')}
+          hint={t('risksUi.needProject')}
         />
       </div>
     )
@@ -3199,10 +3202,10 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
         {canWriteRole(user) && (
           <>
             <button type="button" className={btnPrimary} onClick={openCreate}>
-              <Plus size={16} /> Nouveau risque
+              <Plus size={16} /> {t('risksUi.new')}
             </button>
             <button type="button" className={btnGhost} onClick={onImport}>
-              <Upload size={16} /> Importer
+              <Upload size={16} /> {t('common.import')}
             </button>
           </>
         )}
@@ -3211,7 +3214,7 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
           value={filterProject}
           onChange={(e) => setFilterProject(e.target.value)}
         >
-          <option value="">Projet</option>
+          <option value="">{t('risksUi.allProjects')}</option>
           {projects.map((p) => (
             <option key={p.id} value={p.id}>
               {p.title}
@@ -3223,7 +3226,7 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
           value={filterAssignee}
           onChange={(e) => setFilterAssignee(e.target.value)}
         >
-          <option value="">Assigné</option>
+          <option value="">{t('risksUi.allPeople')}</option>
           {users.map((u) => (
             <option key={u.id} value={u.id}>
               {u.fullName}
@@ -3235,9 +3238,11 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
           value={filterPriority}
           onChange={(e) => setFilterPriority(e.target.value)}
         >
-          <option value="">Priorité</option>
+          <option value="">{t('risksUi.allPriorities')}</option>
           {['élevée', 'moyenne', 'faible'].map((p) => (
-            <option key={p}>{p}</option>
+            <option key={p} value={p}>
+              {valueLabel(lang, p)}
+            </option>
           ))}
         </select>
         <select
@@ -3245,23 +3250,25 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value)}
         >
-          <option value="">Statut</option>
+          <option value="">{t('risksUi.allStatuses')}</option>
           {RISK_STATUSES.map((s) => (
-            <option key={s}>{s}</option>
+            <option key={s} value={s}>
+              {valueLabel(lang, s)}
+            </option>
           ))}
         </select>
       </div>
 
       {denied ? (
-        <EmptyState title="Accès refusé" hint="Aucun risque n’a été partagé avec vous." />
+        <EmptyState title={t('common.accessDenied')} hint={t('risksUi.accessHint')} />
       ) : filtered.length === 0 && !detail ? (
         <EmptyState
-          title="Aucun risque"
-          hint="Enregistrez un risque, sa priorité est calculée (probabilité × impact)."
+          title={t('risksUi.empty')}
+          hint={t('risksUi.emptyHint')}
           action={
             canWriteRole(user) ? (
               <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
-                <Plus size={16} /> Créer un risque
+                <Plus size={16} /> {t('risksUi.new')}
               </button>
             ) : null
           }
@@ -3315,14 +3322,14 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
                 </div>
                 <PriorityBadge value={detail.priority || computeRiskPriority(detail.probability, detail.impact)} />
               </div>
-              <p className="mt-3 whitespace-pre-wrap text-sm text-sage-700">{detail.description || '—'}</p>
+              <DocumentBody content={detail.description} className="mt-3" />
               <p className="mt-2 text-xs text-sage-500">
                 {detail.probability} × {detail.impact} · détecté {detail.detectedAt || '—'} · statut {detail.status}
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 {canManageBudgetRisk(user, detail, projectsById) && (
                   <button type="button" className={btnGhost} onClick={() => openEdit(detail)}>
-                    <Pencil size={14} /> Modifier
+                    <Pencil size={14} /> {t('common.edit')}
                   </button>
                 )}
                 {canDeleteBudgetRisk(user, detail, projectsById) && (
@@ -3331,16 +3338,16 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
                     className={btnGhost + ' !text-danger'}
                     onClick={() => setConfirm({ type: 'risk', id: detail.id })}
                   >
-                    <Trash2 size={14} /> Supprimer
+                    <Trash2 size={14} /> {t('common.delete')}
                   </button>
                 )}
                 <button type="button" className={btnGhost + ' lg:hidden'} onClick={() => setDetailId(null)}>
-                  Fermer
+                  {t('common.close')}
                 </button>
               </div>
 
               <div className="mt-5 flex items-center justify-between gap-2">
-                <h3 className="font-display text-lg text-sage-900">Solutions / actions</h3>
+                <h3 className="font-display text-lg text-sage-900">{t('risksUi.actions')}</h3>
                 {canManage && (
                   <button type="button" className={btnPrimary} onClick={() => openAction(null)}>
                     <Plus size={14} /> Action
@@ -3421,7 +3428,7 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
 
       <Modal
         open={open}
-        title={editing ? 'Modifier le risque' : 'Nouveau risque'}
+        title={editing ? t('risksUi.edit') : t('risksUi.new')}
         onClose={() => setOpen(false)}
         wide
         asForm
@@ -3668,7 +3675,7 @@ function NotesView({
   onToggleNote,
   onDictate,
 }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const attachRef = useRef(null)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -3718,7 +3725,7 @@ function NotesView({
 
   const openView = (n) => {
     if (!canReadEntity(user, n)) {
-      flash('Permission refusée.', 'err')
+      flash(t('common.permissionDenied'), 'err')
       return
     }
     setViewing(n)
@@ -3748,18 +3755,18 @@ function NotesView({
   const submit = async (e) => {
     e.preventDefault()
     if (!editing && !canWriteRole(user)) {
-      flash('Permission refusée.', 'err')
+      flash(t('common.permissionDenied'), 'err')
       return
     }
     if (!canEditEntity(user, editing || { ownerId: user.id, shares: [] }) && editing) {
-      flash('Permission refusée.', 'err')
+      flash(t('common.permissionDenied'), 'err')
       return
     }
     try {
       const payload = {
         id: editing?.id,
         title: form.title.trim(),
-        content: form.content.trim(),
+        content: form.content.replace(/^\uFEFF/, '').replace(/\s+$/, ''),
         category: form.category,
         tags: form.tags
           .split(',')
@@ -3800,7 +3807,7 @@ function NotesView({
   const remove = async (id) => {
     const n = notes.find((x) => x.id === id)
     if (!canDeleteEntity(user, n)) {
-      flash('Permission refusée.', 'err')
+      flash(t('common.permissionDenied'), 'err')
       return
     }
     await deleteNote(id, user)
@@ -3827,11 +3834,11 @@ function NotesView({
                   {t('notes.contextAi')}
                 </label>
               )}
-              <h3 className="font-display text-lg text-sage-900">{n.title}</h3>
+              <h3 className="break-words font-display text-lg leading-snug text-sage-900">{n.title}</h3>
               <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-sage-500">
-                <span>{n.category}</span>
+                <span>{valueLabel(lang, n.category)}</span>
                 <VisibilityBadge value={n.visibility} />
-                {n.parentId ? <span>sous-note de {notesById[n.parentId]?.title || '…'}</span> : null}
+                {n.parentId ? <span>{t('notes.subnoteOf', { title: notesById[n.parentId]?.title || '…' })}</span> : null}
               </p>
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -3852,9 +3859,7 @@ function NotesView({
               )}
             </div>
           </div>
-          <div className="mt-3 line-clamp-6">
-            <NoteRichContent content={n.content} imageUrl={n.imageUrl} className="text-sage-700" />
-          </div>
+          <NoteCardExcerpt content={n.content} className="mt-3" />
           <NoteLinkedFiles
             files={files}
             ids={related.filter((r) => r.type === 'file').map((r) => r.id)}
@@ -3870,7 +3875,7 @@ function NotesView({
           )}
           {related.length > 0 && (
             <p className="mt-2 flex items-center gap-1 text-xs text-sage-500">
-              <Link2 size={12} /> {related.length} lien{related.length > 1 ? 's' : ''}
+              <Link2 size={12} /> {related.length > 1 ? t('common.linksCountMany', { n: related.length }) : t('common.linksCount', { n: related.length })}
             </p>
           )}
         </article>
@@ -3917,9 +3922,11 @@ function NotesView({
           value={filterCat}
           onChange={(e) => setFilterCat(e.target.value)}
         >
-          <option>Tous</option>
+          <option value="Tous">{t('common.all')}</option>
           {NOTE_CATEGORIES.map((c) => (
-            <option key={c}>{c}</option>
+            <option key={c} value={c}>
+              {valueLabel(lang, c)}
+            </option>
           ))}
         </select>
       </div>
@@ -3951,7 +3958,7 @@ function NotesView({
         onSubmit={submit}
       >
         <div className="space-y-1">
-          <Field label="Titre">
+          <Field label={t('notes.title')}>
             <input
               className={inputClass}
               value={form.title}
@@ -3961,7 +3968,7 @@ function NotesView({
           </Field>
           <Field label={t('notes.content')}>
             <textarea
-              className={inputClass + ' min-h-28'}
+              className={inputClass + ' min-h-36 whitespace-pre-wrap'}
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
             />
@@ -4011,14 +4018,16 @@ function NotesView({
             </button>
           </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <Field label="Catégorie">
+            <Field label={t('notes.category')}>
               <select
                 className={inputClass}
                 value={form.category}
                 onChange={(e) => setForm({ ...form, category: e.target.value })}
               >
                 {NOTE_CATEGORIES.map((c) => (
-                  <option key={c}>{c}</option>
+                  <option key={c} value={c}>
+                    {valueLabel(lang, c)}
+                  </option>
                 ))}
               </select>
             </Field>
@@ -4029,7 +4038,9 @@ function NotesView({
                 onChange={(e) => setForm({ ...form, visibility: e.target.value })}
               >
                 {VISIBILITIES.map((v) => (
-                  <option key={v}>{v}</option>
+                  <option key={v} value={v}>
+                    {valueLabel(lang, v)}
+                  </option>
                 ))}
               </select>
             </Field>
@@ -4047,7 +4058,7 @@ function NotesView({
               value={form.projectId}
               onChange={(e) => setForm({ ...form, projectId: e.target.value })}
             >
-              <option value="">Aucun</option>
+              <option value="">{t('common.none')}</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.title}
@@ -4090,9 +4101,9 @@ function NotesView({
                 ))}
               </div>
             </Field>
-            <Field label="Risques">
+            <Field label={t('notes.risks')}>
               <div className="flex max-h-28 flex-wrap gap-1 overflow-auto xx-scroll">
-                {risks.length === 0 && <span className="text-xs text-sage-500">Aucun risque visible.</span>}
+                {risks.length === 0 && <span className="text-xs text-sage-500">{t('notes.noRisks')}</span>}
                 {risks.map((r) => (
                   <button
                     key={r.id}
@@ -4107,9 +4118,9 @@ function NotesView({
                 ))}
               </div>
             </Field>
-            <Field label="Dépenses (lignes budget)">
+            <Field label={t('notes.expenses')}>
               <div className="flex max-h-28 flex-wrap gap-1 overflow-auto xx-scroll">
-                {budgetLines.length === 0 && <span className="text-xs text-sage-500">Aucune ligne visible.</span>}
+                {budgetLines.length === 0 && <span className="text-xs text-sage-500">{t('notes.noLines')}</span>}
                 {budgetLines.map((l) => (
                   <button
                     key={l.id}
@@ -4124,9 +4135,9 @@ function NotesView({
                 ))}
               </div>
             </Field>
-            <Field label="Idées">
+            <Field label={t('notes.ideas')}>
               <div className="flex max-h-28 flex-wrap gap-1 overflow-auto xx-scroll">
-                {ideas.length === 0 && <span className="text-xs text-sage-500">Aucune idée visible.</span>}
+                {ideas.length === 0 && <span className="text-xs text-sage-500">{t('notes.noIdeas')}</span>}
                 {ideas.map((i) => (
                   <button
                     key={i.id}
@@ -4161,7 +4172,7 @@ function NotesView({
         footer={
           <>
             <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setViewing(null)}>
-              Fermer
+              {t('common.close')}
             </button>
             {viewing && canEditEntity(user, viewing) && (
               <button
@@ -4173,7 +4184,7 @@ function NotesView({
                   openEdit(n)
                 }}
               >
-                <Pencil size={16} /> Modifier
+                <Pencil size={16} /> {t('common.edit')}
               </button>
             )}
           </>
@@ -4182,12 +4193,12 @@ function NotesView({
         {viewing && (
           <div className="space-y-3">
             <p className="flex flex-wrap items-center gap-2 text-sm text-sage-600">
-              <span>Catégorie : {viewing.category || 'Général'}</span>
+              <span>{t('notes.categoryLine', { cat: valueLabel(lang, viewing.category || 'Général'), vis: valueLabel(lang, viewing.visibility || 'Privée') })}</span>
               <VisibilityBadge value={viewing.visibility || 'Privée'} />
-              {viewing.parentId ? <span>sous-note de {notesById[viewing.parentId]?.title || '…'}</span> : null}
+              {viewing.parentId ? <span>{t('notes.subnoteOf', { title: notesById[viewing.parentId]?.title || '…' })}</span> : null}
             </p>
             {viewingAuthor ? <p className="text-sm text-sage-600">{t('notes.author', { name: viewingAuthor })}</p> : null}
-            <NoteRichContent content={viewing.content} imageUrl={viewing.imageUrl} />
+            <DocumentBody content={viewing.content} imageUrl={viewing.imageUrl} />
             <NoteLinkedFiles
               files={files}
               ids={noteLinksOf(viewing.id)
@@ -4240,6 +4251,7 @@ function fileIconFor(ext) {
 }
 
 function FilesView({ user, files, folders, foldersMap, projects, users, flash, onImport }) {
+  const { t, lang } = useI18n()
   const ctx = useMemo(
     () => ({ folders: foldersMap || {}, projects: Object.fromEntries(projects.map((p) => [p.id, p])) }),
     [foldersMap, projects],
@@ -4305,10 +4317,10 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
 
   const childFolders = folders
     .filter((f) => (f.parentId || null) === folderId)
-    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'fr'))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), dateLocale(lang)))
   const childFiles = files
     .filter((f) => (f.folderId || null) === folderId)
-    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'fr'))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), dateLocale(lang)))
 
   const authors = useMemo(() => {
     const ids = new Set(files.map((f) => f.uploadedBy || f.ownerId).filter(Boolean))
@@ -4720,7 +4732,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
     <div className="space-y-4 animate-fade-up">
       {localBlobs && (
         <div className="rounded-xl border border-warn/30 bg-warn/10 px-4 py-3 text-sm text-sage-800">
-          Mode local — fichiers non synchronisés entre appareils
+          {t('filesUi.localBanner')}
         </div>
       )}
 
@@ -4728,13 +4740,13 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
         {canWriteRole(user) && canAddHere && (
           <>
             <button type="button" className={btnPrimary} onClick={() => onImport?.(folderId)}>
-              <Upload size={16} /> Importer
+              <Upload size={16} /> {t('common.import')}
             </button>
             <button type="button" className={btnGhost} onClick={openImport}>
-              <Upload size={16} /> Téléverser
+              <Upload size={16} /> {t('filesUi.uploadDevice')}
             </button>
             <button type="button" className={btnGhost} onClick={openNewFolder}>
-              <FolderPlus size={16} /> Nouveau dossier
+              <FolderPlus size={16} /> {t('filesUi.newFolder')}
             </button>
           </>
         )}
@@ -4742,7 +4754,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
           <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sage-400" size={16} />
           <input
             className={inputClass + ' pl-9'}
-            placeholder="Rechercher…"
+            placeholder={t('filesUi.search')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -4752,7 +4764,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
           value={filterExt}
           onChange={(e) => setFilterExt(e.target.value)}
         >
-          <option value="">Type</option>
+          <option value="">{t('filesUi.type')}</option>
           {ALLOWED_FILE_EXTS.map((ext) => (
             <option key={ext} value={ext}>
               {ext.toUpperCase()}
@@ -4764,7 +4776,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
           value={filterAuthor}
           onChange={(e) => setFilterAuthor(e.target.value)}
         >
-          <option value="">Auteur</option>
+          <option value="">{t('filesUi.author')}</option>
           {authors.map((u) => (
             <option key={u.id} value={u.id}>
               {u.fullName}
@@ -4776,7 +4788,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
           value={folderId || ''}
           onChange={(e) => setFolderId(e.target.value || null)}
         >
-          <option value="">Dossier racine</option>
+          <option value="">{t('filesUi.root')}</option>
           {folders.map((f) => (
             <option key={f.id} value={f.id}>
               {f.name}
@@ -4823,30 +4835,30 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
 
       {emptyRoot ? (
         <EmptyState
-          title="Rien dans Fichiers pour l’instant"
+          title={t('filesUi.emptyRoot')}
           hint={
             canWriteRole(user)
-              ? `Importez un document (max ${maxFileSizeLabel()}). Types : ${ALLOWED_FILE_EXTS.join(', ')}.`
-              : 'Les fichiers partagés avec vous apparaîtront ici, clairement marqués Privé, Partagé ou Équipe.'
+              ? t('filesUi.emptyRootHint', { size: maxFileSizeLabel(), exts: ALLOWED_FILE_EXTS.join(', ') })
+              : t('filesUi.emptyRootRead')
           }
           action={
             canWriteRole(user) && canAddHere ? (
               <button type="button" className={btnPrimary + ' mt-4'} onClick={() => onImport?.(folderId)}>
-                <Upload size={16} /> Importer un fichier
+                <Upload size={16} /> {t('filesUi.upload')}
               </button>
             ) : null
           }
         />
       ) : emptyHere && filtersOn ? (
-        <EmptyState title="Aucun résultat" hint="Aucun fichier ne correspond aux filtres." />
+        <EmptyState title={t('filesUi.noResults')} hint={t('filesUi.noResultsHint')} />
       ) : emptyHere ? (
         <EmptyState
-          title="Dossier vide"
-          hint="Ajoutez un fichier ou un sous-dossier."
+          title={t('filesUi.emptyFolder')}
+          hint={t('filesUi.emptyFolderHint')}
           action={
             canWriteRole(user) && canAddHere ? (
               <button type="button" className={btnPrimary + ' mt-4'} onClick={() => onImport?.(folderId)}>
-                <Upload size={16} /> Importer
+                <Upload size={16} /> {t('common.import')}
               </button>
             ) : null
           }
@@ -5008,13 +5020,13 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
 
       <Modal
         open={Boolean(preview)}
-        title={preview ? 'Aperçu' : 'Aperçu'}
+        title={t('filesUi.preview')}
         onClose={closePreview}
         wide
       >
-        {previewStatus === 'loading' && <p className="text-sm text-sage-600">Chargement…</p>}
+        {previewStatus === 'loading' && <p className="text-sm text-sage-600">{t('filesUi.loading')}</p>}
         {previewStatus === 'denied' && (
-          <p className="text-sm text-danger">Accès refusé.</p>
+          <p className="text-sm text-danger">{t('filesUi.denied')}</p>
         )}
         {previewStatus === 'done' && preview && (
           <div className="space-y-3">
@@ -5023,7 +5035,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
             ) : isPdfExt(preview.ext) && previewUrl ? (
               <iframe title="PDF" src={previewUrl} className="h-[70vh] w-full rounded-xl bg-white" />
             ) : (
-              <p className="text-sm text-sage-600">Aperçu indisponible pour ce type. Téléchargez le fichier.</p>
+              <p className="text-sm text-sage-600">{t('filesUi.unavailable')}</p>
             )}
             <button type="button" className={btnPrimary} onClick={downloadPreview}>
               <Download size={16} /> Télécharger
@@ -5134,6 +5146,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
 }
 
 function IdeasView({ user, ideas, users, flash }) {
+  const { t, lang } = useI18n()
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [detail, setDetail] = useState(null)
@@ -5165,11 +5178,11 @@ function IdeasView({ user, ideas, users, flash }) {
   const submit = async (e) => {
     e.preventDefault()
     if (!editing && !canWriteRole(user)) {
-      flash('Permission refusée.', 'err')
+      flash(t('common.permissionDenied'), 'err')
       return
     }
     if (editing && !canEditEntity(user, editing)) {
-      flash('Permission refusée.', 'err')
+      flash(t('common.permissionDenied'), 'err')
       return
     }
     try {
@@ -5193,7 +5206,7 @@ function IdeasView({ user, ideas, users, flash }) {
           label: `Statut → ${saved.status}`,
         })
       }
-      flash(editing ? 'Idée mise à jour.' : 'Idée créée.')
+      flash(editing ? t('ideasUi.updated') : t('ideasUi.created'))
       setOpen(false)
     } catch (err) {
       flash(err.message, 'err')
@@ -5202,7 +5215,7 @@ function IdeasView({ user, ideas, users, flash }) {
 
   const move = async (idea, status) => {
     if (!canEditEntity(user, idea)) {
-      flash('Permission refusée.', 'err')
+      flash(t('common.permissionDenied'), 'err')
       return
     }
     await saveIdea({ ...idea, status }, user)
@@ -5215,7 +5228,7 @@ function IdeasView({ user, ideas, users, flash }) {
 
   const transform = async (idea, kind) => {
     if (idea.status !== 'Retenue') {
-      flash('Seules les idées retenues peuvent être transformées.', 'err')
+      flash(t('ideasUi.onlyKept'), 'err')
       return
     }
     if (kind === 'note') {
@@ -5230,7 +5243,7 @@ function IdeasView({ user, ideas, users, flash }) {
         },
         user,
       )
-      flash('Idée transformée en note.')
+      flash(t('ideasUi.transformedNote'))
     } else {
       await saveProject(
         {
@@ -5248,7 +5261,7 @@ function IdeasView({ user, ideas, users, flash }) {
         },
         user,
       )
-      flash('Idée transformée en projet.')
+      flash(t('ideasUi.transformedProject'))
     }
     await appendIdeaHistory(idea.id, {
       type: 'transform',
@@ -5261,18 +5274,18 @@ function IdeasView({ user, ideas, users, flash }) {
     <div className="space-y-4 animate-fade-up">
       {canWriteRole(user) && (
         <button type="button" className={btnPrimary} onClick={openCreate}>
-          <Plus size={16} /> Nouvelle idée
+          <Plus size={16} /> {t('ideasUi.new')}
         </button>
       )}
 
       {ideas.length === 0 ? (
         <EmptyState
-          title="La boîte à idées est prête"
-          hint="Déposez la première idée, puis glissez-la d’une colonne à l’autre."
+          title={t('ideasUi.empty')}
+          hint={t('ideasUi.emptyHint')}
           action={
             canWriteRole(user) ? (
               <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
-                <Plus size={16} /> Ajouter une idée
+                <Plus size={16} /> {t('ideasUi.add')}
               </button>
             ) : null
           }
@@ -5292,7 +5305,7 @@ function IdeasView({ user, ideas, users, flash }) {
               }}
             >
               <div className="mb-3 flex items-center justify-between px-1">
-                <h3 className="text-sm font-semibold text-sage-800">{col.status}</h3>
+                <h3 className="text-sm font-semibold text-sage-800">{valueLabel(lang, col.status)}</h3>
                 <span className="text-xs text-sage-500">{col.items.length}</span>
               </div>
               <div className="space-y-2">
@@ -5308,21 +5321,21 @@ function IdeasView({ user, ideas, users, flash }) {
                       className="w-full text-left"
                       onClick={() => setDetail(idea)}
                     >
-                      <p className="font-medium text-sage-900">{idea.title}</p>
-                      <p className="mt-1 line-clamp-2 text-xs text-sage-600">{idea.description}</p>
+                      <p className="break-words font-medium text-sage-900">{idea.title}</p>
+                      <p className="mt-1 line-clamp-2 whitespace-pre-wrap break-words text-xs text-sage-600">{idea.description}</p>
                     </button>
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       <CardActionButton
                         icon={Eye}
-                        label="Voir"
-                        title="Voir l’idée"
+                        label={t('common.view')}
+                        title={t('ideasUi.view')}
                         onClick={() => setDetail(idea)}
                       />
                       {canEditEntity(user, idea) && (
                         <CardActionButton
                           icon={Pencil}
-                          label="Modifier"
-                          title="Modifier l’idée"
+                          label={t('common.edit')}
+                          title={t('ideasUi.edit')}
                           onClick={() => {
                             setEditing(idea)
                             setForm({
@@ -5339,13 +5352,13 @@ function IdeasView({ user, ideas, users, flash }) {
                       {canDeleteEntity(user, idea) && (
                         <CardActionButton
                           icon={Trash2}
-                          label="Supprimer"
-                          title="Supprimer l’idée"
+                          label={t('common.delete')}
+                          title={t('ideasUi.delete')}
                           danger
                           onClick={async () => {
-                            if (confirm('Supprimer cette idée ?')) {
+                            if (confirm(t('ideasUi.confirmDelete'))) {
                               await deleteIdea(idea.id, user)
-                              flash('Idée supprimée.')
+                              flash(t('ideasUi.deleted'))
                             }
                           }}
                         />
@@ -5355,8 +5368,8 @@ function IdeasView({ user, ideas, users, flash }) {
                         className={`${btnCardAction} text-xs ${
                           (idea.votes || []).includes(user.id) ? '!bg-sage-200' : ''
                         }`}
-                        title="Voter pour cette idée"
-                        aria-label="Voter pour cette idée"
+                        title={t('ideasUi.vote')}
+                        aria-label={t('ideasUi.vote')}
                         onClick={async () => {
                           await voteIdea(idea.id, user.id)
                         }}
@@ -5368,14 +5381,14 @@ function IdeasView({ user, ideas, users, flash }) {
                         <>
                           <CardActionButton
                             icon={StickyNote}
-                            label="En note"
-                            title="Transformer en note"
+                            label={t('ideasUi.toNote')}
+                            title={t('ideasUi.toNote')}
                             onClick={() => transform(idea, 'note')}
                           />
                           <CardActionButton
                             icon={FolderKanban}
-                            label="En projet"
-                            title="Transformer en projet"
+                            label={t('ideasUi.toProject')}
+                            title={t('ideasUi.toProject')}
                             onClick={() => transform(idea, 'project')}
                           />
                         </>
@@ -5392,13 +5405,13 @@ function IdeasView({ user, ideas, users, flash }) {
 
       <Modal
         open={open}
-        title={editing ? 'Modifier l’idée' : 'Nouvelle idée'}
+        title={editing ? t('ideasUi.edit') : t('ideasUi.new')}
         onClose={() => setOpen(false)}
         asForm
         onSubmit={submit}
       >
         <div>
-          <Field label="Titre">
+          <Field label={t('ideasUi.title')}>
             <input
               className={inputClass}
               value={form.title}
@@ -5406,32 +5419,36 @@ function IdeasView({ user, ideas, users, flash }) {
               required
             />
           </Field>
-          <Field label="Description">
+          <Field label={t('ideasUi.description')}>
             <textarea
-              className={inputClass + ' min-h-24'}
+              className={inputClass + ' min-h-24 whitespace-pre-wrap'}
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
             />
           </Field>
-          <Field label="Statut">
+          <Field label={t('ideasUi.status')}>
             <select
               className={inputClass}
               value={form.status}
               onChange={(e) => setForm({ ...form, status: e.target.value })}
             >
               {IDEA_STATUSES.map((s) => (
-                <option key={s}>{s}</option>
+                <option key={s} value={s}>
+                  {valueLabel(lang, s)}
+                </option>
               ))}
             </select>
           </Field>
-          <Field label="Visibilité">
+          <Field label={t('notes.visibility')}>
             <select
               className={inputClass}
               value={form.visibility}
               onChange={(e) => setForm({ ...form, visibility: e.target.value })}
             >
               {VISIBILITIES.map((v) => (
-                <option key={v}>{v}</option>
+                <option key={v} value={v}>
+                  {valueLabel(lang, v)}
+                </option>
               ))}
             </select>
           </Field>
@@ -5455,18 +5472,18 @@ function IdeasView({ user, ideas, users, flash }) {
         {detail && (
           <div className="space-y-4">
             <p className="flex flex-wrap items-center gap-2 text-sm text-sage-600">
-              <span>Statut : {detail.status}</span>
+              <span>{t('ideasUi.status')} : {valueLabel(lang, detail.status)}</span>
               <VisibilityBadge value={detail.visibility || 'Publique'} />
-              <span>Votes : {(detail.votes || []).length}</span>
+              <span>{t('ideasUi.vote')} : {(detail.votes || []).length}</span>
             </p>
-            {entityAuthorName(users, detail, user.id) ? (
+            {entityAuthorName(users, detail, user.id, t('common.authorFallback')) ? (
               <p className="text-sm text-sage-600">
-                Auteur : {entityAuthorName(users, detail, user.id)}
+                {t('notes.author', { name: entityAuthorName(users, detail, user.id, t('common.authorFallback')) })}
               </p>
             ) : null}
-            <p className="whitespace-pre-wrap text-sm text-sage-800">{detail.description || '—'}</p>
+            <DocumentBody content={detail.description} />
             <div>
-              <h4 className="mb-2 font-semibold text-sage-800">Historique</h4>
+              <h4 className="mb-2 font-semibold text-sage-800">{t('ideasUi.history')}</h4>
               <ul className="max-h-48 space-y-2 overflow-y-auto text-sm xx-scroll">
                 {(detail.history || [])
                   .slice()
@@ -5529,6 +5546,7 @@ function projectLinked(entity, projectId, links, type) {
 }
 
 function NoteTreeList({ notes, parentId = null, depth = 0 }) {
+  const { t } = useI18n()
   const ids = new Set(notes.map((n) => n.id))
   let children = noteChildList(notes, parentId)
   if (depth === 0) {
@@ -5536,7 +5554,7 @@ function NoteTreeList({ notes, parentId = null, depth = 0 }) {
     const seen = new Set(children.map((n) => n.id))
     children = [...children, ...orphans.filter((n) => !seen.has(n.id))]
   }
-  if (!children.length && depth === 0) return <p className="text-sage-500">Aucune</p>
+  if (!children.length && depth === 0) return <p className="text-sage-500">{t('common.none')}</p>
   return (
     <ul className={depth ? 'mt-1 space-y-1 border-l border-sage-200 pl-3' : 'mt-2 space-y-1'}>
       {children.map((n) => (
@@ -5550,6 +5568,7 @@ function NoteTreeList({ notes, parentId = null, depth = 0 }) {
 }
 
 function ProjectDetailBody({ detail, notes, ideas, files, events, budgets, risks, links }) {
+  const { t, lang } = useI18n()
   const related = relatedLinkEnds(links, 'project', detail.id)
   const linkedNotes = notes.filter(
     (n) => n.projectId === detail.id || related.some((r) => r.type === 'note' && r.id === n.id),
@@ -5562,34 +5581,34 @@ function ProjectDetailBody({ detail, notes, ideas, files, events, budgets, risks
   const linkedBudgets = budgets.filter((b) => projectLinked(b, detail.id, links, 'budget'))
   const linkedRisks = risks.filter((r) => projectLinked(r, detail.id, links, 'risk'))
   const sections = [
-    ['Fichiers', linkedFiles.map((f) => f.name)],
-    ['Idées', linkedIdeas.map((i) => `${i.title} (${i.status})`)],
-    ['Événements', linkedEvents.map((e) => `${e.title} · ${e.date || ''}`)],
-    ['Budgets', linkedBudgets.map((b) => b.name)],
-    ['Risques', linkedRisks.map((r) => r.title)],
+    [t('nav.files'), linkedFiles.map((f) => f.name)],
+    [t('nav.ideas'), linkedIdeas.map((i) => `${i.title} (${valueLabel(lang, i.status)})`)],
+    [t('nav.calendar'), linkedEvents.map((e) => `${e.title} · ${e.date || ''}`)],
+    [t('nav.budget'), linkedBudgets.map((b) => b.name)],
+    [t('nav.risks'), linkedRisks.map((r) => r.title)],
   ]
   return (
     <div className="space-y-4 text-sm">
-      <p className="text-sage-700">{detail.description}</p>
+      <DocumentBody content={detail.description} />
       <p className="text-sage-500">
         {detail.startDate || '—'} → {detail.dueDate || '—'} · {detail.progress ?? 0}%
       </p>
       <div>
-        <h4 className="font-semibold text-sage-800">Notes rattachées</h4>
+        <h4 className="font-semibold text-sage-800">{t('projectsUi.linkedNotes')}</h4>
         <NoteTreeList notes={linkedNotes} />
       </div>
       {sections.map(([label, items]) => (
         <div key={label}>
           <h4 className="font-semibold text-sage-800">{label}</h4>
           <ul className="mt-2 space-y-1">
-            {items.length === 0 && <li className="text-sage-500">Aucun</li>}
+            {items.length === 0 && <li className="text-sage-500">{t('common.none')}</li>}
             {items.map((item, idx) => (
               <li key={`${label}-${idx}`}>{item}</li>
             ))}
           </ul>
         </div>
       ))}
-      <p className="text-xs text-sage-500">Les discussions d’équipe restent dans le module Chat.</p>
+      <p className="text-xs text-sage-500">{t('projectsUi.chatHint')}</p>
     </div>
   )
 }
@@ -5609,6 +5628,7 @@ function ProjectsView({
   onImport,
   onFocusProject,
 }) {
+  const { t, lang } = useI18n()
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [detail, setDetail] = useState(null)
@@ -5649,11 +5669,11 @@ function ProjectsView({
   const submit = async (e) => {
     e.preventDefault()
     if (!editing && !canWriteRole(user)) {
-      flash('Permission refusée.', 'err')
+      flash(t('common.permissionDenied'), 'err')
       return
     }
     if (editing && !canEditEntity(user, editing)) {
-      flash('Permission refusée.', 'err')
+      flash(t('common.permissionDenied'), 'err')
       return
     }
     try {
@@ -5679,7 +5699,7 @@ function ProjectsView({
           meta: { projectId: saved.id },
         })
       }
-      flash(editing ? 'Projet mis à jour.' : 'Projet créé.')
+      flash(editing ? t('projectsUi.updated') : t('projectsUi.created'))
       setOpen(false)
     } catch (err) {
       flash(err.message, 'err')
@@ -5692,22 +5712,22 @@ function ProjectsView({
       {canWriteRole(user) && (
         <div className="flex flex-wrap gap-2">
           <button type="button" className={btnPrimary} onClick={openCreate}>
-            <Plus size={16} /> Nouveau projet
+            <Plus size={16} /> {t('projectsUi.new')}
           </button>
           <button type="button" className={btnGhost} onClick={onImport}>
-            <Upload size={16} /> Importer
+            <Upload size={16} /> {t('common.import')}
           </button>
         </div>
       )}
 
       {projects.length === 0 ? (
         <EmptyState
-          title="Aucun projet"
-          hint="Un titre suffit pour commencer. Chaque projet affiche s’il est privé, partagé ou équipe."
+          title={t('projectsUi.empty')}
+          hint={t('projectsUi.emptyHint')}
           action={
             canWriteRole(user) ? (
               <button type="button" className={btnPrimary + ' mt-4'} onClick={openCreate}>
-                <Plus size={16} /> Créer un projet
+                <Plus size={16} /> {t('projectsUi.new')}
               </button>
             ) : null
           }
@@ -5723,20 +5743,20 @@ function ProjectsView({
               >
                 <div className="flex flex-col gap-3">
                   <div className="min-w-0">
-                    <h3 className="font-display text-xl text-sage-900">{p.title}</h3>
+                    <h3 className="break-words font-display text-xl text-sage-900">{p.title}</h3>
                     <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-sage-500">
-                      <span>{p.status}</span>
+                      <span>{valueLabel(lang, p.status)}</span>
                       <VisibilityBadge value={p.visibility || 'Partagée'} />
-                      <span>Responsable : {lead?.fullName || '—'}</span>
+                      <span>{t('projectsUi.lead', { name: lead?.fullName || '—' })}</span>
                     </p>
                   </div>
                   <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                    <CardActionButton icon={Eye} label="Voir" title="Voir le projet" onClick={() => setDetail(p)} />
+                    <CardActionButton icon={Eye} label={t('common.view')} title={t('projectsUi.view')} onClick={() => setDetail(p)} />
                     {canEditEntity(user, p) && (
                       <CardActionButton
                         icon={Pencil}
-                        label="Modifier"
-                        title="Modifier le projet"
+                        label={t('common.edit')}
+                        title={t('projectsUi.edit')}
                         onClick={() => {
                           setEditing(p)
                           setForm({
@@ -5758,23 +5778,23 @@ function ProjectsView({
                     {canDeleteEntity(user, p) && (
                       <CardActionButton
                         icon={Trash2}
-                        label="Supprimer"
-                        title="Supprimer le projet"
+                        label={t('common.delete')}
+                        title={t('projectsUi.delete')}
                         danger
                         onClick={async () => {
-                          if (confirm('Supprimer ce projet ?')) {
+                          if (confirm(t('projectsUi.confirmDelete'))) {
                             await deleteProject(p.id, user)
-                            flash('Projet supprimé.')
+                            flash(t('projectsUi.deleted'))
                           }
                         }}
                       />
                     )}
                   </div>
                 </div>
-                <p className="mt-3 line-clamp-3 text-sm text-sage-700">{p.description}</p>
+                <p className="mt-3 line-clamp-3 whitespace-pre-wrap break-words text-sm text-sage-700">{p.description}</p>
                 <div className="mt-4">
                   <div className="mb-1 flex justify-between text-xs text-sage-600">
-                    <span>Progression</span>
+                    <span>{t('projectsUi.progress')}</span>
                     <span>{p.progress ?? 0}%</span>
                   </div>
                   <div className="h-2 overflow-hidden rounded-full bg-sage-100">
@@ -5804,7 +5824,7 @@ function ProjectsView({
 
       <Modal
         open={open}
-        title={editing ? 'Modifier le projet' : 'Nouveau projet'}
+        title={editing ? t('projectsUi.edit') : t('projectsUi.new')}
         onClose={() => setOpen(false)}
         wide
         asForm
@@ -5812,7 +5832,7 @@ function ProjectsView({
       >
         <div className="grid grid-cols-1 gap-1 md:grid-cols-2 md:gap-x-4">
           <div className="md:col-span-2">
-            <Field label="Titre">
+            <Field label={t('projectsUi.title')}>
               <input
                 className={inputClass}
                 value={form.title}
@@ -5823,26 +5843,28 @@ function ProjectsView({
             </Field>
           </div>
           <div className="md:col-span-2">
-            <Field label="Description">
+            <Field label={t('projectsUi.description')}>
               <textarea
-                className={inputClass + ' min-h-20'}
+                className={inputClass + ' min-h-20 whitespace-pre-wrap'}
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
               />
             </Field>
           </div>
-          <Field label="Statut">
+          <Field label={t('projectsUi.status')}>
             <select
               className={inputClass}
               value={form.status}
               onChange={(e) => setForm({ ...form, status: e.target.value })}
             >
               {PROJECT_STATUSES.map((s) => (
-                <option key={s}>{s}</option>
+                <option key={s} value={s}>
+                  {valueLabel(lang, s)}
+                </option>
               ))}
             </select>
           </Field>
-          <Field label="Progression (%)">
+          <Field label={`${t('projectsUi.progress')} (%)`}>
             <input
               type="number"
               min="0"
@@ -5937,11 +5959,13 @@ function ProjectsView({
         {detail && (
           <div className="space-y-3">
             <p className="flex flex-wrap items-center gap-2 text-sm text-sage-600">
-              <span>Statut : {detail.status}</span>
+              <span>{t('projectsUi.status')} : {valueLabel(lang, detail.status)}</span>
               <VisibilityBadge value={detail.visibility || 'Partagée'} />
             </p>
-            {entityAuthorName(users, detail, user.id) ? (
-              <p className="text-sm text-sage-600">Auteur : {entityAuthorName(users, detail, user.id)}</p>
+            {entityAuthorName(users, detail, user.id, t('common.authorFallback')) ? (
+              <p className="text-sm text-sage-600">
+                {t('notes.author', { name: entityAuthorName(users, detail, user.id, t('common.authorFallback')) })}
+              </p>
             ) : null}
             <ProjectDetailBody
               detail={detail}
@@ -6019,7 +6043,7 @@ function CalendarView({ user, events, users, flash }) {
   const submit = async (e) => {
     e.preventDefault()
     if (!canWriteRole(user)) {
-      flash('Permission refusée.', 'err')
+      flash(t('common.permissionDenied'), 'err')
       return
     }
     try {
@@ -7090,7 +7114,7 @@ function TeamView({ users, presentIds }) {
                   </span>
                 </div>
                 <p className="break-all text-sm text-sage-600 md:truncate md:break-normal">{u.email}</p>
-                <p className="mt-1 text-xs text-sage-500">{u.role}</p>
+                <p className="mt-1 text-xs text-sage-500">{valueLabel(lang, u.role)}</p>
               </div>
             </li>
           )
@@ -7114,7 +7138,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
   onReadRef.current = onReadGroup
 
   useEffect(() => {
-    ensureGeneralGroup(user).catch((err) => flash(err.message || 'Chat indisponible.', 'err'))
+    ensureGeneralGroup(user).catch((err) => flash(err.message || t('chatUi.unavailable'), 'err'))
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per user session
   }, [user.id])
 
@@ -7160,7 +7184,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
     setBusy(true)
     try {
       const saved = await saveGroup({ name: groupName, memberIds: picked }, user)
-      flash('Groupe créé.')
+      flash(t('chatUi.created'))
       setCreateOpen(false)
       setGroupName('')
       setPicked([])
@@ -7178,7 +7202,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
     setBusy(true)
     try {
       await inviteToGroup(selected.id, picked, user)
-      flash('Membres ajoutés.')
+      flash(t('chatUi.invited'))
       setInviteOpen(false)
       setPicked([])
     } catch (err) {
@@ -7204,7 +7228,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
         className={`${showThread ? 'hidden lg:flex' : 'flex'} w-full min-w-0 flex-col border-sage-200 lg:w-72 lg:shrink-0 lg:border-r`}
       >
         <div className="flex items-center justify-between gap-2 border-b border-sage-100 p-3">
-          <p className="font-display text-lg text-sage-900">Groupes</p>
+          <p className="font-display text-lg text-sage-900">{t('chatUi.groups')}</p>
           {canWriteRole(user) && (
             <button
               type="button"
@@ -7216,12 +7240,12 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
               }}
             >
               <Plus size={16} />
-              <span className="sm:inline">Nouveau</span>
+              <span className="sm:inline">{t('chatUi.new')}</span>
             </button>
           )}
         </div>
         {groups.length === 0 ? (
-          <p className="p-4 text-sm text-sage-500">Aucun groupe.</p>
+          <p className="p-4 text-sm text-sage-500">{t('chatUi.none')}</p>
         ) : (
           <ul className="flex-1 overflow-y-auto xx-scroll">
             {groups.map((g) => {
@@ -7286,7 +7310,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
             </div>
             <div className="flex-1 space-y-3 overflow-y-auto px-3 py-4 xx-scroll md:px-5">
               {thread.length === 0 ? (
-                <p className="text-center text-sm text-sage-500">Aucun message. Écrivez le premier.</p>
+                <p className="text-center text-sm text-sage-500">{t('chatUi.noMessages')}</p>
               ) : (
                 thread.map((m) => {
                   const mine = m.authorId === user.id
@@ -7342,7 +7366,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
           <Field label="Inviter">
             <div className="flex flex-wrap gap-2 rounded-xl border border-sage-200 bg-white p-3">
               {users.filter((u) => u.id !== user.id).length === 0 && (
-                <p className="text-xs text-sage-500">Aucun autre compte.</p>
+                <p className="text-xs text-sage-500">{t('chatUi.noAccounts')}</p>
               )}
               {users
                 .filter((u) => u.id !== user.id)
@@ -7379,7 +7403,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
       >
         <div>
           {outsiders.length === 0 ? (
-            <p className="text-sm text-sage-600">Tout le monde est déjà membre.</p>
+            <p className="text-sm text-sage-600">{t('chatUi.allMembers')}</p>
           ) : (
             <div className="flex flex-wrap gap-2 rounded-xl border border-sage-200 bg-white p-3">
               {outsiders.map((u) => {

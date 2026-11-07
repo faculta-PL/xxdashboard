@@ -472,6 +472,7 @@ export const GUIDE_INDEX = [
   'files',
   'budget',
   'risks',
+  'canvas',
   'chat',
   'games',
   'assistant',

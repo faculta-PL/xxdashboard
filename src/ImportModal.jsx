@@ -12,6 +12,7 @@ import {
 } from './lib/store'
 import { BUDGET_CATEGORIES, RISK_IMPACTS, RISK_PROBABILITIES } from './lib/rbac'
 import { MAX_FILE_BYTES, maxFileSizeLabel, formatFileSize } from './lib/files'
+import { useI18n } from './i18n'
 import {
   IMPORT_DESTINATIONS,
   IMPORT_EXTS,
@@ -52,6 +53,7 @@ export default function ImportModal({
   projects = [],
   budgets = [],
 }) {
+  const { t, lang } = useI18n()
   const [step, setStep] = useState(1)
   const [file, setFile] = useState(null)
   const [parsed, setParsed] = useState(null)
@@ -343,13 +345,13 @@ export default function ImportModal({
 
   return createPortal(
     <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-0 sm:items-center sm:p-4">
-      <button type="button" className="absolute inset-0" aria-label="Fermer" onClick={onClose} />
+      <button type="button" className="absolute inset-0" aria-label={t('common.close')} onClick={onClose} />
       <div className="relative z-10 flex max-h-[90vh] w-full max-w-full flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-2xl animate-fade-up sm:max-h-[90vh] sm:max-w-3xl sm:rounded-2xl">
         <div className="sticky top-0 z-20 flex shrink-0 items-start justify-between gap-3 border-b border-sage-200 bg-sage-50 px-4 py-3 sm:px-5">
           <div>
-            <h3 className="font-display text-xl text-sage-900">Importer</h3>
+            <h3 className="font-display text-xl text-sage-900">{t('importUi.title')}</h3>
             <p className="text-xs text-sage-500">
-              Max {maxFileSizeLabel()} · {IMPORT_EXTS.join(', ')} · visibilité privée jusqu’à confirmation
+              {t('importUi.hint', { size: maxFileSizeLabel(), exts: IMPORT_EXTS.join(', ') })}
             </p>
           </div>
           <button
@@ -363,7 +365,7 @@ export default function ImportModal({
         <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4 xx-scroll sm:px-5">
           {step === 1 && (
             <div className="space-y-3">
-              <Field label={`Fichier (${IMPORT_EXTS.join(', ')}, max ${maxFileSizeLabel()})`}>
+              <Field label={t('importUi.file', { exts: IMPORT_EXTS.join(', '), size: maxFileSizeLabel() })}>
                 <input
                   type="file"
                   className={inputClass}
@@ -372,8 +374,7 @@ export default function ImportModal({
                 />
               </Field>
               <p className="text-xs text-sage-500">
-                Taille max {Math.round(MAX_FILE_BYTES / (1024 * 1024))} Mo (constante MAX_FILE_BYTES). Aucun partage
-                automatique.
+                {t('importUi.sizeHint', { n: Math.round(MAX_FILE_BYTES / (1024 * 1024)) })}
               </p>
             </div>
           )}
@@ -384,7 +385,7 @@ export default function ImportModal({
                 <p className="font-medium text-sage-900">{parsed.name}</p>
                 <p className="text-xs text-sage-500">
                   {parsed.ext?.toUpperCase()} · {formatFileSize(parsed.size)} ·{' '}
-                  {parsed.extractable ? 'texte extrait' : 'fichier conservé tel quel'}
+                  {parsed.extractable ? t('importUi.extracted') : t('importUi.kept')}
                 </p>
               </div>
               {parsed.kind === 'table' && (
@@ -414,7 +415,7 @@ export default function ImportModal({
                 </div>
               )}
 
-              <Field label="Destination">
+              <Field label={t('importUi.destination')}>
                 <select
                   className={inputClass}
                   value={destination}
@@ -426,33 +427,42 @@ export default function ImportModal({
                 >
                   {IMPORT_DESTINATIONS.map((d) => (
                     <option key={d.id} value={d.id}>
-                      {d.label}
+                      {t(
+                        {
+                          notes: 'importUi.destNotes',
+                          note_raw: 'importUi.destRaw',
+                          projects: 'importUi.destProjects',
+                          files: 'importUi.destFiles',
+                          budget: 'importUi.destBudget',
+                          risks: 'importUi.destRisks',
+                        }[d.id] || d.label,
+                      )}
                     </option>
                   ))}
                 </select>
               </Field>
               {destination === 'note_raw' && (
                 <p className="text-xs text-sage-600">
-                  Tout le fichier est collé dans le contenu de la note, sans découpage titre / corps.
+                  {t('importUi.rawHint')}
                 </p>
               )}
-              <Field label="Titre">
+              <Field label={t('importUi.titleField')}>
                 <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} />
               </Field>
               {showsBody && (
                 <Field
                   label={
                     destination === 'note_raw'
-                      ? 'Contenu (texte brut — fichier entier)'
+                      ? t('importUi.bodyRaw')
                       : destination === 'projects'
-                        ? 'Description'
+                        ? t('importUi.bodyProject')
                         : destination === 'files'
-                          ? 'Description du fichier'
-                          : 'Description / contenu'
+                          ? t('importUi.bodyFile')
+                          : t('importUi.bodyDefault')
                   }
                 >
                   <textarea
-                    className={inputClass + ' min-h-40 font-mono text-xs sm:text-sm'}
+                    className={inputClass + ' min-h-40 whitespace-pre-wrap font-mono text-xs sm:text-sm'}
                     value={body}
                     onChange={(e) => {
                       const next = e.target.value
@@ -464,15 +474,18 @@ export default function ImportModal({
                     }}
                     placeholder={
                       parsed.extractable
-                        ? 'Texte extrait — modifiable avant confirmation'
-                        : parsed.pasteHint || 'Collez ici le texte du fichier'
+                        ? t('importUi.extractedHint')
+                        : parsed.pasteHint || t('importUi.pasteHint')
                     }
                   />
                   <span className="mt-1 block text-[11px] text-sage-500">
-                    {body.length.toLocaleString('fr-FR')} caractère
-                    {body.length > 1 ? 's' : ''}
-                    {extractedText && !body.trim() ? ' · le texte extrait sera utilisé si le champ reste vide' : ''}
-                    {body.length >= MAX_IMPORT_CHARS ? ` · limité à ${MAX_IMPORT_CHARS.toLocaleString('fr-FR')} caractères` : ''}
+                    {body.length > 1
+                      ? t('importUi.charsMany', { n: body.length.toLocaleString(lang === 'en' ? 'en-GB' : 'fr-FR') })
+                      : t('importUi.chars', { n: body.length.toLocaleString(lang === 'en' ? 'en-GB' : 'fr-FR') })}
+                    {extractedText && !body.trim() ? t('importUi.emptyUsesExtract') : ''}
+                    {body.length >= MAX_IMPORT_CHARS
+                      ? t('importUi.limited', { n: MAX_IMPORT_CHARS.toLocaleString(lang === 'en' ? 'en-GB' : 'fr-FR') })
+                      : ''}
                   </span>
                 </Field>
               )}
@@ -512,8 +525,8 @@ export default function ImportModal({
                     value={projectMode}
                     onChange={(e) => setProjectMode(e.target.value)}
                   >
-                    <option value="create">Créer un projet</option>
-                    <option value="update">Mettre à jour la description d’un projet</option>
+                    <option value="create">{t('importUi.createProject')}</option>
+                    <option value="update">{t('importUi.updateProject')}</option>
                   </select>
                 </Field>
               )}
@@ -525,7 +538,7 @@ export default function ImportModal({
                       value={budgetId}
                       onChange={(e) => setBudgetId(e.target.value)}
                     >
-                      <option value="">Nouveau budget</option>
+                      <option value="">{t('importUi.newBudget')}</option>
                       {projectBudgets.map((b) => (
                         <option key={b.id} value={b.id}>
                           {b.name}
@@ -647,7 +660,7 @@ export default function ImportModal({
                       </tbody>
                     </table>
                     {budgetRows.length === 0 && (
-                      <p className="p-3 text-sage-500">Aucune ligne tabulaire. Importez un CSV / XLSX.</p>
+                      <p className="p-3 text-sage-500">{t('importUi.noTable')}</p>
                     )}
                   </div>
                 </>
@@ -761,12 +774,12 @@ export default function ImportModal({
                       </tbody>
                     </table>
                     {riskRows.length === 0 && (
-                      <p className="p-3 text-sage-500">Aucune ligne. Importez un CSV / XLSX de risques.</p>
+                      <p className="p-3 text-sage-500">{t('importUi.noRiskRows')}</p>
                     )}
                   </div>
                 </>
               )}
-              <p className="text-xs text-sage-500">Visibilité : Privée. Aucun partage n’est appliqué à l’import.</p>
+              <p className="text-xs text-sage-500">{t('importUi.privateVis')}</p>
             </div>
           )}
           {error && <p className="mt-3 text-sm text-danger">{error}</p>}
@@ -774,20 +787,20 @@ export default function ImportModal({
         <div className="sticky bottom-0 z-20 flex shrink-0 flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-4 py-3 sm:flex-row sm:px-5 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           {step === 2 && (
             <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setStep(1)}>
-              Retour
+              {t('common.previous')}
             </button>
           )}
           <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={onClose}>
-            Annuler
+            {t('common.cancel')}
           </button>
           {step === 2 && (
             <button type="button" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy} onClick={confirm}>
-              <Check size={16} /> {busy ? 'Import…' : 'Confirmer l’import'}
+              <Check size={16} /> {busy ? t('common.loading') : t('common.confirm')}
             </button>
           )}
           {step === 1 && (
             <span className="inline-flex items-center gap-2 text-xs text-sage-500">
-              <Upload size={14} /> Validez un fichier pour prévisualiser
+              <Upload size={14} /> {t('importUi.extractedHint')}
             </span>
           )}
         </div>

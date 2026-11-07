@@ -40,6 +40,12 @@ assert(translate('en', 'exportUi.hint').toLowerCase().includes('encoding'), 'enc
 assert(translate('fr', 'exportUi.hint').includes('Encodage'), 'encoding fr')
 assert(translate('en', 'chrome.export').length > 10, 'chrome export en')
 assert(translate('fr', 'chrome.export').length > 10, 'chrome export fr')
+assert(translate('fr', 'canvas.openModule') === 'Ouvrir le module', 'canvas fr')
+assert(translate('en', 'canvas.openModule') === 'Open module', 'canvas en')
+assert(translate('fr', 'about.nextDo') === 'Ensuite :', 'next fr')
+assert(translate('en', 'about.nextDo') === 'Next:', 'next en')
+assert(translate('fr', 'canvas.filter').includes('canvas'), 'filter fr')
+assert(translate('en', 'canvas.hintEdit').toLowerCase().includes('workspace map'), 'hint en')
 assert(dateLocale('en') === 'en-GB', 'date en')
 assert(dateLocale('fr') === 'fr-FR', 'date fr')
 

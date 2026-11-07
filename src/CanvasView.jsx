@@ -17,31 +17,28 @@ import {
 import { saveCanvasLayout, saveNote, getBackendMode } from './lib/store'
 import { canWriteRole, entityKey } from './lib/rbac'
 import { formatFileSize } from './lib/files'
-
-const inputClass =
-  'w-full min-h-11 rounded-xl border border-sage-300 bg-white px-3 py-2.5 text-sage-900 outline-none ring-sage-400 placeholder:text-sage-400 focus:ring-2'
-const btnPrimary =
-  'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-sage-700 px-4 py-2.5 text-sm font-semibold text-sage-50 transition hover:bg-sage-800 disabled:opacity-50'
-const btnGhost =
-  'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-sage-300 bg-white/70 px-3 py-2 text-sm font-medium text-sage-800 transition hover:bg-sage-100'
+import { useI18n, valueLabel, formatDateTime, formatDate, dateLocale } from './i18n'
+import { DocumentBody } from './NoteMedia'
+import { EmptyState, StatusBadge, VisibilityBadge, formatMoney, inputClass, btnPrimary, btnGhost } from './components/ui'
 
 const CARD_W = 220
-const CARD_H = 96
-const TYPES = [
-  { id: 'project', label: 'Projets', icon: FolderKanban },
-  { id: 'note', label: 'Notes', icon: StickyNote },
-  { id: 'idea', label: 'Idées', icon: Lightbulb },
-  { id: 'file', label: 'Fichiers', icon: FileText },
-  { id: 'budget', label: 'Budgets', icon: Wallet },
-  { id: 'risk', label: 'Risques', icon: ShieldAlert },
-  { id: 'event', label: 'Événements', icon: CalendarDays },
+const CARD_H = 104
+
+const TYPE_META = [
+  { id: 'project', icon: FolderKanban, labelKey: 'canvas.typeProject' },
+  { id: 'note', icon: StickyNote, labelKey: 'canvas.typeNote' },
+  { id: 'idea', icon: Lightbulb, labelKey: 'canvas.typeIdea' },
+  { id: 'file', icon: FileText, labelKey: 'canvas.typeFile' },
+  { id: 'budget', icon: Wallet, labelKey: 'canvas.typeBudget' },
+  { id: 'risk', icon: ShieldAlert, labelKey: 'canvas.typeRisk' },
+  { id: 'event', icon: CalendarDays, labelKey: 'canvas.typeEvent' },
 ]
 
-function LocalBanner() {
+function LocalBanner({ t }) {
   if (getBackendMode() !== 'local') return null
   return (
     <div className="rounded-xl border border-warn/30 bg-warn/10 px-4 py-3 text-sm text-sage-800">
-      Mode local — positions et liens non synchronisés entre appareils
+      {t('canvas.localBanner')}
     </div>
   )
 }
@@ -54,13 +51,127 @@ function defaultPos(index) {
   }
 }
 
-function budgetSnippet(budget, lines) {
+function budgetFigures(budget, lines) {
   const planned = Number(budget.plannedTotal || 0)
   const paid = (lines || [])
     .filter((l) => l.budgetId === budget.id && l.kind === 'actual' && l.status === 'paid')
     .reduce((s, l) => s + Number(l.amount || 0), 0)
+  const remaining = planned - paid
   const pct = planned > 0 ? Math.round((paid / planned) * 100) : 0
-  return `${pct} % consommé`
+  return { planned, paid, remaining, pct }
+}
+
+function entityWhen(entity) {
+  return entity?.updatedAt || entity?.createdAt || entity?.date || entity?.uploadedAt || ''
+}
+
+function entityOwner(entity, users) {
+  const id = entity?.ownerId || entity?.uploadedBy || entity?.leadId
+  if (!id) return entity?.ownerEmail || ''
+  const u = users?.find((x) => x.id === id)
+  return u?.fullName || entity?.ownerEmail || ''
+}
+
+function MetaGrid({ rows }) {
+  const visible = rows.filter((r) => r.value !== '' && r.value != null)
+  if (!visible.length) return null
+  return (
+    <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {visible.map((row) => (
+        <div key={row.label} className="rounded-xl bg-white/80 px-3 py-2">
+          <dt className="text-[11px] font-semibold uppercase tracking-wide text-sage-500">{row.label}</dt>
+          <dd className="mt-0.5 break-words text-sm font-medium text-sage-900">{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function PeekBody({ peek, budgetLines, users, t, lang }) {
+  const entity = peek.entity || {}
+  const locale = dateLocale(lang)
+  if (peek.type === 'note') {
+    return <DocumentBody content={entity.content} imageUrl={entity.imageUrl} />
+  }
+  if (peek.type === 'project') {
+    return (
+      <div className="space-y-3">
+        <MetaGrid
+          rows={[
+            { label: t('canvas.fieldStatus'), value: <StatusBadge value={valueLabel(lang, entity.status)} /> },
+            { label: t('canvas.fieldProgress'), value: `${Number(entity.progress || 0)} %` },
+            { label: t('canvas.fieldLead'), value: entityOwner(entity, users) },
+            { label: t('canvas.fieldDate'), value: [formatDate(lang, entity.startDate), formatDate(lang, entity.dueDate)].filter(Boolean).join(' → ') },
+          ]}
+        />
+        <DocumentBody content={entity.description} />
+      </div>
+    )
+  }
+  if (peek.type === 'budget') {
+    const fig = budgetFigures(entity, budgetLines)
+    return (
+      <div className="space-y-3">
+        <MetaGrid
+          rows={[
+            { label: t('canvas.fieldPlanned'), value: formatMoney(fig.planned, entity.currency, locale) },
+            { label: t('canvas.fieldPaid'), value: formatMoney(fig.paid, entity.currency, locale) },
+            { label: t('canvas.fieldRemaining'), value: formatMoney(fig.remaining, entity.currency, locale) },
+            { label: t('canvas.fieldStatus'), value: t('canvas.consumed', { n: fig.pct }) },
+          ]}
+        />
+      </div>
+    )
+  }
+  if (peek.type === 'idea') {
+    return (
+      <div className="space-y-3">
+        <MetaGrid rows={[{ label: t('canvas.fieldStatus'), value: <StatusBadge value={valueLabel(lang, entity.status)} /> }]} />
+        <DocumentBody content={entity.description} />
+      </div>
+    )
+  }
+  if (peek.type === 'risk') {
+    return (
+      <div className="space-y-3">
+        <MetaGrid
+          rows={[
+            { label: t('canvas.fieldPriority'), value: valueLabel(lang, entity.priority) },
+            { label: t('canvas.fieldStatus'), value: valueLabel(lang, entity.status) },
+            { label: t('canvas.fieldDate'), value: formatDate(lang, entity.dueDate) },
+          ]}
+        />
+        <DocumentBody content={entity.description} />
+      </div>
+    )
+  }
+  if (peek.type === 'file') {
+    return (
+      <div className="space-y-3">
+        <MetaGrid
+          rows={[
+            { label: t('canvas.fieldSize'), value: `${(entity.ext || '').toUpperCase()} · ${formatFileSize(entity.size)}` },
+            { label: t('canvas.fieldCategory'), value: entity.folderId ? entity.folderId : '' },
+          ]}
+        />
+        <DocumentBody content={entity.description} />
+      </div>
+    )
+  }
+  if (peek.type === 'event') {
+    return (
+      <div className="space-y-3">
+        <MetaGrid
+          rows={[
+            { label: t('canvas.fieldDate'), value: formatDate(lang, entity.date) },
+            { label: t('canvas.fieldTime'), value: entity.time || '' },
+          ]}
+        />
+        <DocumentBody content={entity.description} />
+      </div>
+    )
+  }
+  return <DocumentBody content={entity.content || entity.description || peek.subtitle} />
 }
 
 export default function CanvasView({
@@ -78,7 +189,9 @@ export default function CanvasView({
   flash,
   onImport,
   onOpenModule,
+  users = [],
 }) {
+  const { t, lang } = useI18n()
   const [projectId, setProjectId] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [query, setQuery] = useState('')
@@ -89,6 +202,8 @@ export default function CanvasView({
   const boardRef = useRef(null)
   const dragRef = useRef(null)
   const positionsRef = useRef(positions)
+  const peekBodyRef = useRef(null)
+  const noteBodyRef = useRef(null)
   const canEdit = canWriteRole(user)
 
   useEffect(() => {
@@ -98,6 +213,27 @@ export default function CanvasView({
   useEffect(() => {
     positionsRef.current = positions
   }, [positions])
+
+  useEffect(() => {
+    if (!peek) return undefined
+    const frame = window.requestAnimationFrame(() => {
+      if (peekBodyRef.current) peekBodyRef.current.scrollTop = 0
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [peek])
+
+  useEffect(() => {
+    if (!noteOpen) return undefined
+    const frame = window.requestAnimationFrame(() => {
+      if (noteBodyRef.current) noteBodyRef.current.scrollTop = 0
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [noteOpen])
+
+  const typeLabel = (id) => {
+    const meta = TYPE_META.find((x) => x.id === id)
+    return meta ? t(meta.labelKey) : id
+  }
 
   const cards = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -120,7 +256,7 @@ export default function CanvasView({
           type: 'project',
           id: p.id,
           title: p.title,
-          subtitle: p.status,
+          subtitle: valueLabel(lang, p.status),
           view: 'projects',
           entity: p,
         })
@@ -133,7 +269,7 @@ export default function CanvasView({
           type: 'note',
           id: n.id,
           title: n.title,
-          subtitle: n.parentId ? 'Sous-note' : n.category,
+          subtitle: n.parentId ? t('canvas.subnote') : valueLabel(lang, n.category),
           view: 'notes',
           entity: n,
         })
@@ -146,7 +282,7 @@ export default function CanvasView({
           type: 'idea',
           id: i.id,
           title: i.title,
-          subtitle: i.status,
+          subtitle: valueLabel(lang, i.status),
           view: 'ideas',
           entity: i,
         })
@@ -168,11 +304,12 @@ export default function CanvasView({
     if (!typeFilter || typeFilter === 'budget') {
       for (const b of budgets) {
         if (!inProject(b) || !match(b.name)) continue
+        const fig = budgetFigures(b, budgetLines)
         list.push({
           type: 'budget',
           id: b.id,
           title: b.name,
-          subtitle: budgetSnippet(b, budgetLines),
+          subtitle: t('canvas.consumed', { n: fig.pct }),
           view: 'budget',
           entity: b,
         })
@@ -185,7 +322,7 @@ export default function CanvasView({
           type: 'risk',
           id: r.id,
           title: r.title,
-          subtitle: r.priority || r.status,
+          subtitle: valueLabel(lang, r.priority || r.status),
           view: 'risks',
           entity: r,
         })
@@ -198,14 +335,14 @@ export default function CanvasView({
           type: 'event',
           id: e.id,
           title: e.title,
-          subtitle: `${e.date || ''} ${e.time || ''}`.trim(),
+          subtitle: `${formatDate(lang, e.date)} ${e.time || ''}`.trim(),
           view: 'calendar',
           entity: e,
         })
       }
     }
     return list
-  }, [projects, notes, ideas, files, events, budgets, budgetLines, risks, links, projectId, typeFilter, query])
+  }, [projects, notes, ideas, files, events, budgets, budgetLines, risks, links, projectId, typeFilter, query, lang, t])
 
   const placed = cards.map((card, index) => {
     const key = entityKey(card.type, card.id)
@@ -240,7 +377,7 @@ export default function CanvasView({
     try {
       await saveCanvasLayout(next, user)
     } catch (err) {
-      flash(err.message || 'Positions non enregistrées.', 'err')
+      flash(err.message || t('common.localBanner'), 'err')
     }
   }
 
@@ -294,7 +431,7 @@ export default function CanvasView({
       await saveNote(
         {
           title: noteForm.title.trim(),
-          content: noteForm.content.trim(),
+          content: noteForm.content.trimEnd(),
           category: 'Général',
           tags: [],
           visibility: 'Privée',
@@ -304,7 +441,7 @@ export default function CanvasView({
         },
         user,
       )
-      flash('Note créée.')
+      flash(t('notes.created'))
       setNoteOpen(false)
       setNoteForm({ title: '', content: '' })
     } catch (err) {
@@ -312,22 +449,27 @@ export default function CanvasView({
     }
   }
 
+  const peekMeta = peek ? TYPE_META.find((x) => x.id === peek.type) : null
+  const PeekIcon = peekMeta?.icon || FileText
+  const peekOwner = peek ? entityOwner(peek.entity, users) : ''
+  const peekWhen = peek ? entityWhen(peek.entity) : ''
+
   return (
     <div className="space-y-4 animate-fade-up">
-      <LocalBanner />
+      <LocalBanner t={t} />
       <div className="flex flex-wrap items-center gap-2">
         {canEdit && (
           <>
             <button type="button" className={btnPrimary} onClick={() => setNoteOpen(true)}>
-              <Plus size={16} /> Nouvelle note
+              <Plus size={16} /> {t('canvas.newNote')}
             </button>
             <button type="button" className={btnGhost} onClick={onImport}>
-              <Upload size={16} /> Importer
+              <Upload size={16} /> {t('canvas.import')}
             </button>
           </>
         )}
         <select className={inputClass + ' max-w-full md:!w-auto'} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-          <option value="">Tous les projets</option>
+          <option value="">{t('canvas.allProjects')}</option>
           {projects.map((p) => (
             <option key={p.id} value={p.id}>
               {p.title}
@@ -335,10 +477,10 @@ export default function CanvasView({
           ))}
         </select>
         <select className={inputClass + ' max-w-full md:!w-auto'} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-          <option value="">Tous les types</option>
-          {TYPES.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.label}
+          <option value="">{t('canvas.allTypes')}</option>
+          {TYPE_META.map((row) => (
+            <option key={row.id} value={row.id}>
+              {t(row.labelKey)}
             </option>
           ))}
         </select>
@@ -346,22 +488,27 @@ export default function CanvasView({
           <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sage-400" size={16} />
           <input
             className={inputClass + ' pl-9'}
-            placeholder="Filtrer le canvas…"
+            placeholder={t('canvas.filter')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
       </div>
-      <p className="text-xs text-sage-500">
-        Carte du workspace — les modules restent inchangés. {canEdit ? 'Glissez pour ranger (souris et tactile).' : 'Lecture seule.'}
-      </p>
+      <p className="text-xs text-sage-500">{canEdit ? t('canvas.hintEdit') : t('canvas.hintRead')}</p>
 
       {placed.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-sage-300 bg-white/50 px-6 py-14 text-center">
-          <BoxSelect className="mx-auto text-sage-400" size={28} />
-          <p className="mt-3 font-display text-xl text-sage-800">Espace visuel vide</p>
-          <p className="mt-2 text-sm text-sage-600">Ajoutez une note ou importez un fichier, ou créez des contenus dans les modules.</p>
-        </div>
+        <EmptyState
+          icon={BoxSelect}
+          title={t('canvas.empty')}
+          hint={t('canvas.emptyHint')}
+          action={
+            canEdit ? (
+              <button type="button" className={btnPrimary + ' mt-4'} onClick={() => setNoteOpen(true)}>
+                <Plus size={16} /> {t('canvas.newNote')}
+              </button>
+            ) : null
+          }
+        />
       ) : (
         <div
           ref={boardRef}
@@ -383,23 +530,23 @@ export default function CanvasView({
               ))}
             </svg>
             {placed.map((card) => {
-              const meta = TYPES.find((t) => t.id === card.type)
+              const meta = TYPE_META.find((row) => row.id === card.type)
               const Icon = meta?.icon || FileText
               return (
                 <button
                   key={card.key}
                   type="button"
-                  className="absolute touch-none rounded-2xl border border-sage-200 bg-white/95 p-3 text-left shadow-sm hover:border-sage-400"
+                  className="absolute touch-none overflow-hidden rounded-2xl border border-sage-200 bg-white/95 p-3 text-left shadow-sm hover:border-sage-400"
                   style={{ left: card.x, top: card.y, width: CARD_W, height: CARD_H }}
                   onPointerDown={(e) => onPointerDown(e, card)}
                   onPointerMove={onPointerMove}
                   onPointerUp={onPointerUp}
                   onPointerCancel={onPointerUp}
                 >
-                  <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-sage-500">
-                    <Icon size={14} /> {meta?.label || card.type}
+                  <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-sage-500">
+                    <Icon size={13} /> {typeLabel(card.type)}
                   </p>
-                  <p className="mt-1 line-clamp-2 font-medium text-sage-900">{card.title}</p>
+                  <p className="mt-1 line-clamp-2 break-words font-medium leading-snug text-sage-900">{card.title}</p>
                   <p className="mt-0.5 truncate text-xs text-sage-500">{card.subtitle}</p>
                 </button>
               )
@@ -410,83 +557,108 @@ export default function CanvasView({
 
       {peek &&
         createPortal(
-        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-0 sm:items-center sm:p-4">
-          <button type="button" className="absolute inset-0" aria-label="Fermer" onClick={() => setPeek(null)} />
-          <div className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-2xl sm:rounded-2xl">
-            <div className="mb-3 flex items-start justify-between gap-2">
-              <div>
-                <p className="text-xs font-semibold uppercase text-sage-500">{peek.type}</p>
-                <h3 className="font-display text-xl text-sage-900">{peek.title}</h3>
+          <div
+            className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-0 sm:items-center sm:p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="nazix-canvas-peek-title"
+          >
+            <button type="button" className="absolute inset-0" aria-label={t('common.close')} onClick={() => setPeek(null)} />
+            <div className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-2xl sm:rounded-2xl">
+              <div className="sticky top-0 z-20 shrink-0 border-b border-sage-200 bg-sage-50 px-5 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="inline-flex items-center gap-1.5 rounded-full bg-sage-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-sage-700">
+                      <PeekIcon size={12} /> {typeLabel(peek.type)}
+                    </p>
+                    <h3 id="nazix-canvas-peek-title" className="mt-1.5 break-words font-display text-xl leading-snug text-sage-900">
+                      {peek.title}
+                    </h3>
+                    <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-sage-500">
+                      {peek.entity?.visibility ? <VisibilityBadge value={peek.entity.visibility} /> : null}
+                      {peekOwner ? <span>{peekOwner}</span> : null}
+                      {peekWhen ? <span>{formatDateTime(lang, peekWhen)}</span> : null}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg p-2 text-sage-600 hover:bg-sage-200"
+                    onClick={() => setPeek(null)}
+                    aria-label={t('common.close')}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
-              <button type="button" className="rounded-lg p-2 hover:bg-sage-200" onClick={() => setPeek(null)}>
-                <X size={16} />
-              </button>
+              <div ref={peekBodyRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-4 xx-scroll">
+                <PeekBody peek={peek} budgetLines={budgetLines} users={users} t={t} lang={lang} />
+              </div>
+              <div className="sticky bottom-0 z-20 flex shrink-0 flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-5 py-3 sm:flex-row sm:justify-end pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setPeek(null)}>
+                  {t('common.close')}
+                </button>
+                <button
+                  type="button"
+                  className={btnPrimary + ' w-full sm:w-auto'}
+                  onClick={() => {
+                    onOpenModule?.(peek.view)
+                    setPeek(null)
+                  }}
+                >
+                  {t('canvas.openModule')}
+                </button>
+              </div>
             </div>
-            <p className="whitespace-pre-wrap text-sm text-sage-700">
-              {peek.entity.content || peek.entity.description || peek.subtitle || '—'}
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2 px-5 pb-5">
-              <button
-                type="button"
-                className={btnPrimary}
-                onClick={() => {
-                  onOpenModule?.(peek.view)
-                  setPeek(null)
-                }}
-              >
-                Ouvrir le module
-              </button>
-              <button type="button" className={btnGhost} onClick={() => setPeek(null)}>
-                Fermer
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+          </div>,
+          document.body,
+        )}
 
       {noteOpen &&
         createPortal(
-        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-0 sm:items-center sm:p-4">
-          <button type="button" className="absolute inset-0" aria-label="Fermer" onClick={() => setNoteOpen(false)} />
-          <form
-            onSubmit={createNote}
-            className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-2xl sm:rounded-2xl"
+          <div
+            className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-0 sm:items-center sm:p-4"
+            role="dialog"
+            aria-modal="true"
           >
-            <div className="sticky top-0 shrink-0 border-b border-sage-200 px-5 py-3">
-              <h3 className="font-display text-xl text-sage-900">Nouvelle note</h3>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-              <label className="mb-3 block text-sm">
-                <span className="mb-1 block font-medium text-sage-800">Titre</span>
-                <input
-                  className={inputClass}
-                  value={noteForm.title}
-                  onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })}
-                  required
-                />
-              </label>
-              <label className="mb-3 block text-sm">
-                <span className="mb-1 block font-medium text-sage-800">Contenu</span>
-                <textarea
-                  className={inputClass + ' min-h-24'}
-                  value={noteForm.content}
-                  onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })}
-                />
-              </label>
-            </div>
-            <div className="sticky bottom-0 flex shrink-0 flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-5 py-3 sm:flex-row">
-              <button type="button" className={btnGhost} onClick={() => setNoteOpen(false)}>
-                Annuler
-              </button>
-              <button type="submit" className={btnPrimary}>
-                Enregistrer
-              </button>
-            </div>
-          </form>
-        </div>,
-        document.body,
-      )}
+            <button type="button" className="absolute inset-0" aria-label={t('common.close')} onClick={() => setNoteOpen(false)} />
+            <form
+              onSubmit={createNote}
+              className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-2xl sm:rounded-2xl"
+            >
+              <div className="sticky top-0 shrink-0 border-b border-sage-200 px-5 py-3">
+                <h3 className="font-display text-xl text-sage-900">{t('notes.new')}</h3>
+              </div>
+              <div ref={noteBodyRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-4 xx-scroll">
+                <label className="mb-3 block text-sm">
+                  <span className="mb-1 block font-medium text-sage-800">{t('notes.title')}</span>
+                  <input
+                    className={inputClass}
+                    value={noteForm.title}
+                    onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })}
+                    required
+                  />
+                </label>
+                <label className="mb-3 block text-sm">
+                  <span className="mb-1 block font-medium text-sage-800">{t('notes.content')}</span>
+                  <textarea
+                    className={inputClass + ' min-h-36 whitespace-pre-wrap'}
+                    value={noteForm.content}
+                    onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })}
+                  />
+                </label>
+              </div>
+              <div className="sticky bottom-0 flex shrink-0 flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-5 py-3 sm:flex-row sm:justify-end pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                <button type="button" className={btnGhost} onClick={() => setNoteOpen(false)}>
+                  {t('common.cancel')}
+                </button>
+                <button type="submit" className={btnPrimary}>
+                  {t('common.save')}
+                </button>
+              </div>
+            </form>
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }
