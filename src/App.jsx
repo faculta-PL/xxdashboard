@@ -947,23 +947,23 @@ export default function App() {
     const password = authForm.password
     const minLen = getMinPasswordLength()
     if (authMode === 'login' || authMode === 'register' || authMode === 'forgot') {
-      if (!email) fields.email = 'Saisissez votre e-mail.'
-      else if (!email.includes('@')) fields.email = 'Adresse e-mail invalide.'
+      if (!email) fields.email = t('auth.emailRequired')
+      else if (!email.includes('@')) fields.email = t('auth.emailInvalid')
     }
     if (authMode === 'login' || authMode === 'register') {
-      if (!password) fields.password = 'Saisissez votre mot de passe.'
+      if (!password) fields.password = t('auth.passwordRequired')
       else if (authMode === 'register' && password.length < minLen) {
-        fields.password = `Au moins ${minLen} caractères.`
+        fields.password = t('auth.passwordMin', { n: minLen })
       }
     }
     if (authMode === 'register' && !String(authForm.fullName || '').trim()) {
-      fields.fullName = 'Saisissez votre nom.'
+      fields.fullName = t('auth.nameRequired')
     }
     if (authMode === 'reset') {
-      if (!String(authForm.resetToken || '').trim()) fields.resetToken = 'Saisissez le code reçu.'
-      if (!authForm.newPassword) fields.newPassword = 'Saisissez le nouveau mot de passe.'
+      if (!String(authForm.resetToken || '').trim()) fields.resetToken = t('auth.codeRequired')
+      if (!authForm.newPassword) fields.newPassword = t('auth.passwordRequired')
       else if (authForm.newPassword.length < minLen) {
-        fields.newPassword = `Au moins ${minLen} caractères.`
+        fields.newPassword = t('auth.passwordMin', { n: minLen })
       }
     }
     if (Object.keys(fields).length) {
@@ -980,7 +980,7 @@ export default function App() {
     authBusyTimer.current = setTimeout(() => {
       timedOut = true
       setAuthBusy(false)
-      const msg = 'La connexion a pris trop de temps. Réessayez.'
+      const msg = t('auth.timeout')
       setAuthError(msg)
       flash(msg, 'err')
     }, 12000)
@@ -990,7 +990,7 @@ export default function App() {
         setUser(res.user)
         setSession(res.session)
         if (res.warning) flash(res.warning, 'warn')
-        else flash('Session ouverte.')
+        else flash(t('auth.sessionOpen'))
       } else if (authMode === 'register') {
         const created = await registerUser(authForm)
         const logged = await loginUser(authForm.email, authForm.password)
@@ -1021,11 +1021,11 @@ export default function App() {
         setAuthMode('reset')
       } else if (authMode === 'reset') {
         await resetPasswordWithToken(authForm.resetToken, authForm.newPassword)
-        flash('Mot de passe mis à jour. Vous pouvez vous connecter.')
+        flash(t('auth.passwordUpdated'))
         setAuthMode('login')
       }
     } catch (err) {
-      const msg = toUserMessage(err, 'Connexion impossible. Réessayez.')
+      const msg = toUserMessage(err, t('auth.failed'))
       setAuthError(msg)
       const nextFields = {}
       if (authMode === 'register') {
@@ -1105,7 +1105,7 @@ export default function App() {
         <Suspense
           fallback={
             <div className="flex min-h-[100dvh] items-center justify-center bg-cream-green">
-              <p className="font-display text-2xl text-sage-800">Arcade…</p>
+              <p className="font-display text-2xl text-sage-800">{t('gamesUi.loading')}</p>
             </div>
           }
         >
@@ -1290,6 +1290,7 @@ export default function App() {
               notes={notes}
               ideas={ideas}
               files={files}
+              folders={folders}
               events={events}
               budgets={budgets}
               budgetLines={budgetLines}
@@ -2155,14 +2156,14 @@ function AuthModal({
                     {RESET_EMAIL.body(authForm.email || emailNotice?.email || '', emailNotice?.code || '…')}
                   </pre>
                 </div>
-                <Field label="Code reçu par e-mail" error={authFieldErrors.resetToken}>
+                <Field label={t('auth.code')} error={authFieldErrors.resetToken}>
                   <input
                     className={inputClass}
                     value={authForm.resetToken}
                     onChange={(e) => setAuthForm({ ...authForm, resetToken: e.target.value })}
                   />
                 </Field>
-                <Field label="Nouveau mot de passe" error={authFieldErrors.newPassword}>
+                <Field label={t('auth.newPassword')} error={authFieldErrors.newPassword}>
                   <input
                     type="password"
                     className={inputClass}
@@ -2385,10 +2386,10 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
         user,
       )
       setSelectedId(saved.id)
-      flash(editing ? 'Budget mis à jour.' : 'Budget créé.')
+      flash(editing ? t('budgetUi.updated') : t('budgetUi.created'))
       setOpen(false)
     } catch (err) {
-      flash(err.message || 'Erreur', 'err')
+      flash(err.message || t('common.error'), 'err')
     } finally {
       setBusy(false)
     }
@@ -2429,10 +2430,10 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
         },
         user,
       )
-      flash(lineEditing ? 'Ligne mise à jour.' : 'Ligne ajoutée.')
+      flash(lineEditing ? t('budgetUi.lineUpdated') : t('budgetUi.lineAdded'))
       setLineOpen(false)
     } catch (err) {
-      flash(err.message || 'Erreur', 'err')
+      flash(err.message || t('common.error'), 'err')
     } finally {
       setBusy(false)
     }
@@ -2445,11 +2446,11 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
     try {
       await addBudgetLineComment(commentLine.id, commentBody, user)
       setCommentBody('')
-      flash('Commentaire ajouté.')
+      flash(t('common.commentAdded'))
       const updated = lines.find((l) => l.id === commentLine.id)
       if (updated) setCommentLine({ ...updated, comments: [...(updated.comments || [])] })
     } catch (err) {
-      flash(err.message || 'Erreur', 'err')
+      flash(err.message || t('common.error'), 'err')
     } finally {
       setBusy(false)
     }
@@ -2461,15 +2462,15 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
     try {
       if (confirm.type === 'budget') {
         await deleteBudget(confirm.id, user)
-        flash('Budget supprimé.')
+        flash(t('budgetUi.deleted'))
         setSelectedId('')
       } else {
         await deleteBudgetLine(confirm.id, user)
-        flash('Ligne supprimée.')
+        flash(t('budgetUi.lineDeleted'))
       }
       setConfirm(null)
     } catch (err) {
-      flash(err.message || 'Erreur', 'err')
+      flash(err.message || t('common.error'), 'err')
     } finally {
       setBusy(false)
     }
@@ -2680,7 +2681,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
                       {canManage && (
                         <>
                           <button type="button" className={btnGhost} onClick={() => openLine(l)}>
-                            <Pencil size={14} /> Modifier
+                            <Pencil size={14} /> {t('common.edit')}
                           </button>
                           <button
                             type="button"
@@ -2710,7 +2711,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
         busy={busy}
       >
         <div className="space-y-1">
-          <Field label="Nom">
+          <Field label={t('budgetUi.name')}>
             <input
               className={inputClass}
               value={form.name}
@@ -2719,14 +2720,14 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
             />
           </Field>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <Field label="Projet">
+            <Field label={t('budgetUi.project')}>
               <select
                 className={inputClass}
                 value={form.projectId}
                 onChange={(e) => setForm({ ...form, projectId: e.target.value })}
                 required
               >
-                <option value="">Choisir…</option>
+                <option value="">{t('common.choose')}</option>
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.title}
@@ -2734,7 +2735,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
                 ))}
               </select>
             </Field>
-            <Field label="Devise">
+            <Field label={t('budgetUi.currency')}>
               <select
                 className={inputClass}
                 value={form.currency}
@@ -2746,7 +2747,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
               </select>
             </Field>
           </div>
-          <Field label="Total prévu">
+          <Field label={t('budgetUi.totalPlanned')}>
             <input
               className={inputClass}
               type="number"
@@ -2758,7 +2759,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
             />
           </Field>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <Field label="Début">
+            <Field label={t('budgetUi.start')}>
               <input
                 className={inputClass}
                 type="date"
@@ -2766,7 +2767,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
                 onChange={(e) => setForm({ ...form, periodStart: e.target.value })}
               />
             </Field>
-            <Field label="Fin">
+            <Field label={t('budgetUi.end')}>
               <input
                 className={inputClass}
                 type="date"
@@ -2774,7 +2775,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
                 onChange={(e) => setForm({ ...form, periodEnd: e.target.value })}
               />
             </Field>
-            <Field label="Lancement">
+            <Field label={t('budgetUi.launch')}>
               <input
                 className={inputClass}
                 type="date"
@@ -2783,14 +2784,16 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
               />
             </Field>
           </div>
-          <Field label="Visibilité">
+          <Field label={t('notes.visibility')}>
             <select
               className={inputClass}
               value={form.visibility}
               onChange={(e) => setForm({ ...form, visibility: e.target.value })}
             >
               {SCOPED_VISIBILITIES.map((v) => (
-                <option key={v}>{v}</option>
+                <option key={v} value={v}>
+                  {valueLabel(lang, v)}
+                </option>
               ))}
             </select>
           </Field>
@@ -2808,7 +2811,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
 
       <Modal
         open={lineOpen}
-        title={lineEditing ? 'Modifier la ligne' : 'Nouvelle ligne'}
+        title={lineEditing ? t('budgetUi.editLine') : t('budgetUi.newLine')}
         onClose={() => setLineOpen(false)}
         wide
         asForm
@@ -2816,7 +2819,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
         busy={busy}
       >
         <div className="space-y-1">
-          <Field label="Libellé">
+          <Field label={t('budgetUi.label')}>
             <input
               className={inputClass}
               value={lineForm.name}
@@ -2825,7 +2828,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
             />
           </Field>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <Field label="Catégorie">
+            <Field label={t('budgetUi.category')}>
               <select
                 className={inputClass}
                 value={lineForm.category}
@@ -2836,7 +2839,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
                 ))}
               </select>
             </Field>
-            <Field label="Montant">
+            <Field label={t('budgetUi.amount')}>
               <input
                 className={inputClass}
                 type="number"
@@ -2849,7 +2852,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
             </Field>
           </div>
           {(lineEditing?.kind || tab) !== 'salary' && (
-            <Field label="Date">
+            <Field label={t('budgetUi.date')}>
               <input
                 className={inputClass}
                 type="date"
@@ -2860,7 +2863,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
           )}
           {(lineEditing?.kind || tab) === 'actual' && (
             <>
-              <Field label="Statut">
+              <Field label={t('budgetUi.status')}>
                 <select
                   className={inputClass}
                   value={lineForm.status}
@@ -2868,12 +2871,12 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
                 >
                   {BUDGET_ACTUAL_STATUSES.map((s) => (
                     <option key={s} value={s}>
-                      {s === 'planned' ? 'prévu' : s === 'paid' ? 'payé' : 'annulé'}
+                      {valueLabel(lang, s)}
                     </option>
                   ))}
                 </select>
               </Field>
-              <Field label="Note de reçu">
+              <Field label={t('budgetUi.receipt')}>
                 <input
                   className={inputClass}
                   value={lineForm.receiptNote}
@@ -2884,15 +2887,15 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
           )}
           {(lineEditing?.kind || tab) === 'salary' && (
             <>
-              <Field label="Intitulé de poste (pas d’identifiant personnel)">
+              <Field label={t('budgetUi.roleTitle')}>
                 <input
                   className={inputClass}
                   value={lineForm.roleTitle}
                   onChange={(e) => setLineForm({ ...lineForm, roleTitle: e.target.value })}
-                  placeholder="Ex. Chargé de projet"
+                  placeholder={t('budgetUi.rolePlaceholder')}
                 />
               </Field>
-              <Field label="Période due">
+              <Field label={t('budgetUi.duePeriod')}>
                 <input
                   className={inputClass}
                   type="month"
@@ -2902,13 +2905,13 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
               </Field>
             </>
           )}
-          <Field label="Responsable">
+          <Field label={t('budgetUi.responsible')}>
             <select
               className={inputClass}
               value={lineForm.responsibleId}
               onChange={(e) => setLineForm({ ...lineForm, responsibleId: e.target.value })}
             >
-              <option value="">Aucun</option>
+              <option value="">{t('common.none')}</option>
               {users.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.fullName}
@@ -2916,7 +2919,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
               ))}
             </select>
           </Field>
-          <Field label="Notes">
+          <Field label={t('budgetUi.notes')}>
             <textarea
               className={inputClass + ' min-h-20'}
               value={lineForm.notes}
@@ -2928,7 +2931,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
 
       <Modal
         open={Boolean(liveCommentLine)}
-        title={liveCommentLine ? `Commentaires — ${liveCommentLine.name}` : 'Commentaires'}
+        title={liveCommentLine ? `${t('risksUi.comments')} — ${liveCommentLine.name}` : t('risksUi.comments')}
         onClose={() => {
           setCommentLine(null)
           setCommentBody('')
@@ -2937,7 +2940,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
         {liveCommentLine && (
           <div className="space-y-3">
             {(liveCommentLine.comments || []).length === 0 ? (
-              <p className="text-sm text-sage-500">Aucun commentaire.</p>
+              <p className="text-sm text-sage-500">{t('common.noComments')}</p>
             ) : (
               <ul className="space-y-2">
                 {(liveCommentLine.comments || []).map((c, idx) => (
@@ -2956,11 +2959,11 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
                   className={inputClass + ' min-h-20'}
                   value={commentBody}
                   onChange={(e) => setCommentBody(e.target.value)}
-                  placeholder="Ajouter un commentaire"
+                  placeholder={t('common.addComment')}
                 />
                 <ModalActions>
                   <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={busy}>
-                    Envoyer
+                    {t('common.send')}
                   </button>
                 </ModalActions>
               </form>
@@ -2971,12 +2974,12 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
 
       <Modal
         open={Boolean(confirm)}
-        title="Confirmer la suppression"
+        title={t('common.confirmDelete')}
         onClose={() => setConfirm(null)}
         footer={
           <>
             <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirm(null)}>
-              Annuler
+              {t('common.cancel')}
             </button>
             <button
               type="button"
@@ -2984,15 +2987,13 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
               disabled={busy}
               onClick={runConfirm}
             >
-              Supprimer
+              {t('common.delete')}
             </button>
           </>
         }
       >
         <p className="text-sm text-sage-700">
-          {confirm?.type === 'budget'
-            ? 'Le budget et toutes ses lignes seront supprimés.'
-            : 'Cette ligne sera définitivement supprimée.'}
+          {confirm?.type === 'budget' ? t('budgetUi.confirmBudget') : t('budgetUi.confirmLine')}
         </p>
       </Modal>
     </div>
@@ -3099,10 +3100,10 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
         user,
       )
       setDetailId(saved.id)
-      flash(editing ? 'Risque mis à jour.' : 'Risque créé.')
+      flash(editing ? t('risksUi.updated') : t('risksUi.created'))
       setOpen(false)
     } catch (err) {
-      flash(err.message || 'Erreur', 'err')
+      flash(err.message || t('common.error'), 'err')
     } finally {
       setBusy(false)
     }
@@ -3137,10 +3138,10 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
         },
         user,
       )
-      flash(actionEditing ? 'Action mise à jour.' : 'Action ajoutée.')
+      flash(actionEditing ? t('risksUi.actionUpdated') : t('risksUi.actionAdded'))
       setActionOpen(false)
     } catch (err) {
-      flash(err.message || 'Erreur', 'err')
+      flash(err.message || t('common.error'), 'err')
     } finally {
       setBusy(false)
     }
@@ -3153,9 +3154,9 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
     try {
       await addRiskComment(detail.id, commentBody, user)
       setCommentBody('')
-      flash('Commentaire ajouté.')
+      flash(t('common.commentAdded'))
     } catch (err) {
-      flash(err.message || 'Erreur', 'err')
+      flash(err.message || t('common.error'), 'err')
     } finally {
       setBusy(false)
     }
@@ -3168,14 +3169,14 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
       if (confirm.type === 'risk') {
         await deleteRisk(confirm.id, user)
         if (detailId === confirm.id) setDetailId(null)
-        flash('Risque supprimé.')
+        flash(t('risksUi.deleted'))
       } else {
         await deleteRiskAction(confirm.id, user)
-        flash('Action supprimée.')
+        flash(t('risksUi.actionDeleted'))
       }
       setConfirm(null)
     } catch (err) {
-      flash(err.message || 'Erreur', 'err')
+      flash(err.message || t('common.error'), 'err')
     } finally {
       setBusy(false)
     }
@@ -3350,12 +3351,12 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
                 <h3 className="font-display text-lg text-sage-900">{t('risksUi.actions')}</h3>
                 {canManage && (
                   <button type="button" className={btnPrimary} onClick={() => openAction(null)}>
-                    <Plus size={14} /> Action
+                    <Plus size={14} /> {t('risksUi.addAction')}
                   </button>
                 )}
               </div>
               {detailActions.length === 0 ? (
-                <p className="mt-2 text-sm text-sage-500">Aucune action pour le moment.</p>
+                <p className="mt-2 text-sm text-sage-500">{t('risksUi.noActions')}</p>
               ) : (
                 <ul className="mt-3 space-y-2">
                   {detailActions.map((a) => (
@@ -3393,9 +3394,9 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
                 </ul>
               )}
 
-              <h3 className="mt-5 font-display text-lg text-sage-900">Commentaires</h3>
+              <h3 className="mt-5 font-display text-lg text-sage-900">{t('risksUi.comments')}</h3>
               {(detail.comments || []).length === 0 ? (
-                <p className="mt-2 text-sm text-sage-500">Aucun commentaire.</p>
+                <p className="mt-2 text-sm text-sage-500">{t('risksUi.noComments')}</p>
               ) : (
                 <ul className="mt-2 space-y-2">
                   {(detail.comments || []).map((c, idx) => (
@@ -3414,10 +3415,10 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
                     className={inputClass + ' min-h-20'}
                     value={commentBody}
                     onChange={(e) => setCommentBody(e.target.value)}
-                    placeholder="Ajouter un commentaire"
+                    placeholder={t('common.addComment')}
                   />
                   <button type="submit" className={btnPrimary + ' mt-2'} disabled={busy}>
-                    Envoyer
+                    {t('common.send')}
                   </button>
                 </form>
               )}
@@ -3436,7 +3437,7 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
         busy={busy}
       >
         <div className="space-y-1">
-          <Field label="Titre">
+          <Field label={t('risksUi.title')}>
             <input
               className={inputClass}
               value={form.title}
@@ -3444,22 +3445,22 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
               required
             />
           </Field>
-          <Field label="Description">
+          <Field label={t('risksUi.description')}>
             <textarea
-              className={inputClass + ' min-h-24'}
+              className={inputClass + ' min-h-24 whitespace-pre-wrap'}
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
             />
           </Field>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <Field label="Projet">
+            <Field label={t('risksUi.project')}>
               <select
                 className={inputClass}
                 value={form.projectId}
                 onChange={(e) => setForm({ ...form, projectId: e.target.value })}
                 required
               >
-                <option value="">Choisir…</option>
+                <option value="">{t('common.choose')}</option>
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.title}
@@ -3467,55 +3468,61 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
                 ))}
               </select>
             </Field>
-            <Field label="Catégorie">
+            <Field label={t('risksUi.category')}>
               <select
                 className={inputClass}
                 value={form.category}
                 onChange={(e) => setForm({ ...form, category: e.target.value })}
               >
                 {RISK_CATEGORIES.map((c) => (
-                  <option key={c}>{c}</option>
+                  <option key={c} value={c}>
+                    {valueLabel(lang, c)}
+                  </option>
                 ))}
               </select>
             </Field>
           </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <Field label="Probabilité">
+            <Field label={t('risksUi.probability')}>
               <select
                 className={inputClass}
                 value={form.probability}
                 onChange={(e) => setForm({ ...form, probability: e.target.value })}
               >
                 {RISK_PROBABILITIES.map((p) => (
-                  <option key={p}>{p}</option>
+                  <option key={p} value={p}>
+                    {valueLabel(lang, p)}
+                  </option>
                 ))}
               </select>
             </Field>
-            <Field label="Impact">
+            <Field label={t('risksUi.impact')}>
               <select
                 className={inputClass}
                 value={form.impact}
                 onChange={(e) => setForm({ ...form, impact: e.target.value })}
               >
                 {RISK_IMPACTS.map((p) => (
-                  <option key={p}>{p}</option>
+                  <option key={p} value={p}>
+                    {valueLabel(lang, p)}
+                  </option>
                 ))}
               </select>
             </Field>
-            <Field label="Priorité calculée">
+            <Field label={t('risksUi.computedPriority')}>
               <div className="flex min-h-11 items-center">
                 <PriorityBadge value={computeRiskPriority(form.probability, form.impact)} />
               </div>
             </Field>
           </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <Field label="Assigné">
+            <Field label={t('risksUi.assignee')}>
               <select
                 className={inputClass}
                 value={form.assigneeId}
                 onChange={(e) => setForm({ ...form, assigneeId: e.target.value })}
               >
-                <option value="">Aucun</option>
+                <option value="">{t('common.none')}</option>
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.fullName}
@@ -3523,20 +3530,22 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
                 ))}
               </select>
             </Field>
-            <Field label="Statut">
+            <Field label={t('common.status')}>
               <select
                 className={inputClass}
                 value={form.status}
                 onChange={(e) => setForm({ ...form, status: e.target.value })}
               >
                 {RISK_STATUSES.map((s) => (
-                  <option key={s}>{s}</option>
+                  <option key={s} value={s}>
+                    {valueLabel(lang, s)}
+                  </option>
                 ))}
               </select>
             </Field>
           </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <Field label="Détecté le">
+            <Field label={t('risksUi.detected')}>
               <input
                 className={inputClass}
                 type="date"
@@ -3544,7 +3553,7 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
                 onChange={(e) => setForm({ ...form, detectedAt: e.target.value })}
               />
             </Field>
-            <Field label="Échéance">
+            <Field label={t('risksUi.due')}>
               <input
                 className={inputClass}
                 type="date"
@@ -3553,14 +3562,16 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
               />
             </Field>
           </div>
-          <Field label="Visibilité">
+          <Field label={t('notes.visibility')}>
             <select
               className={inputClass}
               value={form.visibility}
               onChange={(e) => setForm({ ...form, visibility: e.target.value })}
             >
               {SCOPED_VISIBILITIES.map((v) => (
-                <option key={v}>{v}</option>
+                <option key={v} value={v}>
+                  {valueLabel(lang, v)}
+                </option>
               ))}
             </select>
           </Field>
@@ -3578,14 +3589,14 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
 
       <Modal
         open={actionOpen}
-        title={actionEditing ? 'Modifier l’action' : 'Nouvelle action'}
+        title={actionEditing ? t('risksUi.editAction') : t('risksUi.newAction')}
         onClose={() => setActionOpen(false)}
         asForm
         onSubmit={submitAction}
         busy={busy}
       >
         <div className="space-y-1">
-          <Field label="Titre">
+          <Field label={t('risksUi.title')}>
             <input
               className={inputClass}
               value={actionForm.title}
@@ -3593,13 +3604,13 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
               required
             />
           </Field>
-          <Field label="Assigné">
+          <Field label={t('risksUi.assignee')}>
             <select
               className={inputClass}
               value={actionForm.assigneeId}
               onChange={(e) => setActionForm({ ...actionForm, assigneeId: e.target.value })}
             >
-              <option value="">Aucun</option>
+              <option value="">{t('common.none')}</option>
               {users.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.fullName}
@@ -3607,7 +3618,7 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
               ))}
             </select>
           </Field>
-          <Field label="Échéance">
+          <Field label={t('risksUi.due')}>
             <input
               className={inputClass}
               type="date"
@@ -3615,14 +3626,16 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
               onChange={(e) => setActionForm({ ...actionForm, dueDate: e.target.value })}
             />
           </Field>
-          <Field label="Statut">
+          <Field label={t('common.status')}>
             <select
               className={inputClass}
               value={actionForm.status}
               onChange={(e) => setActionForm({ ...actionForm, status: e.target.value })}
             >
               {RISK_ACTION_STATUSES.map((s) => (
-                <option key={s}>{s}</option>
+                <option key={s} value={s}>
+                  {valueLabel(lang, s)}
+                </option>
               ))}
             </select>
           </Field>
@@ -3631,12 +3644,12 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
 
       <Modal
         open={Boolean(confirm)}
-        title="Confirmer la suppression"
+        title={t('common.confirmDelete')}
         onClose={() => setConfirm(null)}
         footer={
           <>
             <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirm(null)}>
-              Annuler
+              {t('common.cancel')}
             </button>
             <button
               type="button"
@@ -3644,15 +3657,13 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
               disabled={busy}
               onClick={runConfirm}
             >
-              Supprimer
+              {t('common.delete')}
             </button>
           </>
         }
       >
         <p className="text-sm text-sage-700">
-          {confirm?.type === 'risk'
-            ? 'Le risque et ses actions seront supprimés.'
-            : 'Cette action sera définitivement supprimée.'}
+          {confirm?.type === 'risk' ? t('risksUi.confirmRisk') : t('risksUi.confirmAction')}
         </p>
       </Modal>
     </div>
@@ -4384,7 +4395,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
         },
         user,
       )
-      flash('Dossier créé.')
+      flash(t('filesUi.folderCreated'))
       setFolderOpen(false)
     } catch (err) {
       flash(err.message, 'err')
@@ -4409,7 +4420,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
   const runUpload = async (e) => {
     e.preventDefault()
     if (!upload.file) {
-      setUpload((u) => ({ ...u, error: 'Choisissez un fichier.', status: 'error' }))
+      setUpload((u) => ({ ...u, error: t('filesUi.chooseFile'), status: 'error' }))
       return
     }
     setUpload((u) => ({ ...u, status: 'progress', progress: 1, error: '' }))
@@ -4432,14 +4443,14 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
       await job.done
       uploadJob.current = null
       setUpload((u) => ({ ...u, status: 'done', progress: 100 }))
-      flash('Fichier importé.')
+      flash(t('filesUi.imported'))
       setImportOpen(false)
     } catch (err) {
       uploadJob.current = null
       setUpload((u) => ({
         ...u,
         status: 'error',
-        error: err.message || 'Échec du téléversement.',
+        error: err.message || t('filesUi.uploadFail'),
       }))
     }
   }
@@ -4460,7 +4471,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
       setPreviewStatus('done')
     } catch (err) {
       setPreviewStatus('denied')
-      flash(err.message || 'Accès refusé.', 'err')
+      flash(err.message || t('common.accessDenied'), 'err')
     }
   }
 
@@ -4527,7 +4538,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
           user,
         )
       }
-      flash('Enregistré.')
+      flash(t('filesUi.saved'))
       setEditItem(null)
     } catch (err) {
       flash(err.message, 'err')
@@ -4563,7 +4574,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
           user,
         )
       }
-      flash('Partage mis à jour.')
+      flash(t('filesUi.shareUpdated'))
       setShareItem(null)
     } catch (err) {
       flash(err.message, 'err')
@@ -4578,15 +4589,15 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
       setConfirm({
         kind,
         item,
-        title: 'Supprimer le dossier',
-        body: `Le dossier et son contenu seront supprimés : ${summary.fileCount} fichier(s), ${summary.folderCount} sous-dossier(s). Cette action est définitive.`,
+        title: t('filesUi.deleteFolder'),
+        body: t('filesUi.deleteFolderBody', { files: summary.fileCount, folders: summary.folderCount }),
       })
     } else {
       setConfirm({
         kind,
         item,
-        title: 'Supprimer le fichier',
-        body: 'Cette action est définitive.',
+        title: t('filesUi.deleteFile'),
+        body: t('filesUi.deleteForever'),
       })
     }
   }
@@ -4598,10 +4609,10 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
       if (confirm.kind === 'folder') {
         await deleteFolder(confirm.item.id, user)
         if (folderId === confirm.item.id) setFolderId(confirm.item.parentId || null)
-        flash('Dossier supprimé.')
+        flash(t('filesUi.folderDeleted'))
       } else {
         await deleteFile(confirm.item.id, user)
-        flash('Fichier supprimé.')
+        flash(t('filesUi.fileDeleted'))
       }
       setConfirm(null)
     } catch (err) {
@@ -4630,17 +4641,17 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
   const renderActions = (item, kind) => (
     <div className="flex flex-wrap gap-1">
       {kind === 'file' && (
-        <button type="button" className={btnGhost + ' !px-2'} onClick={() => openPreview(item)} title="Aperçu">
+        <button type="button" className={btnGhost + ' !px-2'} onClick={() => openPreview(item)} title={t('filesUi.preview')}>
           <Eye size={14} />
         </button>
       )}
       {canModifyFileOrFolder(user, item, ctx) && (
-        <button type="button" className={btnGhost + ' !px-2'} onClick={() => openEdit(item, kind)} title="Modifier">
+        <button type="button" className={btnGhost + ' !px-2'} onClick={() => openEdit(item, kind)} title={t('common.edit')}>
           <Pencil size={14} />
         </button>
       )}
       {canManageFileOrFolder(user, item, ctx) && (
-        <button type="button" className={btnGhost + ' !px-2'} onClick={() => openShare(item, kind)} title="Partage">
+        <button type="button" className={btnGhost + ' !px-2'} onClick={() => openShare(item, kind)} title={t('common.share')}>
           <Share2 size={14} />
         </button>
       )}
@@ -4649,7 +4660,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
           type="button"
           className={btnGhost + ' !px-2 !text-danger'}
           onClick={() => openDelete(item, kind)}
-          title="Supprimer"
+          title={t('common.delete')}
         >
           <Trash2 size={14} />
         </button>
@@ -4802,7 +4813,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
               layout === 'list' ? 'bg-sage-200' : ''
             }`}
             onClick={() => setLayout('list')}
-            aria-label="Liste"
+            aria-label={t('common.list')}
           >
             <List size={16} />
           </button>
@@ -4812,7 +4823,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
               layout === 'grid' ? 'bg-sage-200' : ''
             }`}
             onClick={() => setLayout('grid')}
-            aria-label="Grille"
+            aria-label={t('common.grid')}
           >
             <LayoutGrid size={16} />
           </button>
@@ -4877,7 +4888,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
 
       <Modal
         open={importOpen}
-        title="Importer un fichier"
+        title={t('filesUi.upload')}
         onClose={() => setImportOpen(false)}
         wide
         asForm
@@ -4886,22 +4897,22 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
         footer={
           upload.status === 'progress' ? (
             <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={cancelUpload}>
-              Annuler
+              {t('common.cancel')}
             </button>
           ) : (
             <>
               <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setImportOpen(false)}>
-                Annuler
+                {t('common.cancel')}
               </button>
               <button type="submit" className={btnPrimary + ' w-full sm:w-auto'} disabled={!upload.file}>
-                <Upload size={16} /> Téléverser
+                <Upload size={16} /> {t('filesUi.uploadDevice')}
               </button>
             </>
           )
         }
       >
         <div className="space-y-1">
-          <Field label={`Fichier (max ${maxFileSizeLabel()})`}>
+          <Field label={t('filesUi.fileMax', { size: maxFileSizeLabel() })}>
             <input
               type="file"
               className={inputClass}
@@ -4910,15 +4921,15 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
             />
           </Field>
           <p className="mb-3 text-xs text-sage-500">
-            Types : {ALLOWED_FILE_EXTS.join(', ')}. Exécutables, HTML, SVG et scripts sont bloqués.
+            {t('filesUi.typesHint', { exts: ALLOWED_FILE_EXTS.join(', ') })}
           </p>
-          <Field label="Dossier">
+          <Field label={t('filesUi.folder')}>
             <select
               className={inputClass}
               value={upload.folderId}
               onChange={(e) => setUpload((u) => ({ ...u, folderId: e.target.value }))}
             >
-              <option value="">Racine</option>
+              <option value="">{t('filesUi.root')}</option>
               {folders.map((f) => (
                 <option key={f.id} value={f.id}>
                   {f.name}
@@ -4926,20 +4937,20 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
               ))}
             </select>
           </Field>
-          <Field label="Description">
+          <Field label={t('filesUi.description')}>
             <textarea
               className={inputClass + ' min-h-20'}
               value={upload.description}
               onChange={(e) => setUpload((u) => ({ ...u, description: e.target.value }))}
             />
           </Field>
-          <Field label="Projet associé (optionnel)">
+          <Field label={t('filesUi.linkedProject')}>
             <select
               className={inputClass}
               value={upload.projectId}
               onChange={(e) => setUpload((u) => ({ ...u, projectId: e.target.value }))}
             >
-              <option value="">Aucun</option>
+              <option value="">{t('common.none')}</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.title}
@@ -4969,9 +4980,9 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
         </div>
       </Modal>
 
-      <Modal open={folderOpen} title="Nouveau dossier" onClose={() => setFolderOpen(false)} asForm onSubmit={submitFolder} submitLabel="Créer" busy={busy}>
+      <Modal open={folderOpen} title={t('filesUi.newFolder')} onClose={() => setFolderOpen(false)} asForm onSubmit={submitFolder} submitLabel={t('filesUi.create')} busy={busy}>
         <div>
-          <Field label="Nom">
+          <Field label={t('filesUi.name')}>
             <input
               className={inputClass}
               value={folderForm.name}
@@ -4979,13 +4990,13 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
               required
             />
           </Field>
-          <Field label="Dossier parent">
+          <Field label={t('filesUi.parentFolder')}>
             <select
               className={inputClass}
               value={folderForm.parentId}
               onChange={(e) => setFolderForm({ ...folderForm, parentId: e.target.value })}
             >
-              <option value="">Racine</option>
+              <option value="">{t('filesUi.root')}</option>
               {folders.map((f) => (
                 <option key={f.id} value={f.id}>
                   {f.name}
@@ -4993,13 +5004,13 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
               ))}
             </select>
           </Field>
-          <Field label="Projet associé (optionnel)">
+          <Field label={t('filesUi.linkedProject')}>
             <select
               className={inputClass}
               value={folderForm.projectId}
               onChange={(e) => setFolderForm({ ...folderForm, projectId: e.target.value })}
             >
-              <option value="">Aucun</option>
+              <option value="">{t('common.none')}</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.title}
@@ -5038,7 +5049,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
               <p className="text-sm text-sage-600">{t('filesUi.unavailable')}</p>
             )}
             <button type="button" className={btnPrimary} onClick={downloadPreview}>
-              <Download size={16} /> Télécharger
+              <Download size={16} /> {t('filesUi.download')}
             </button>
           </div>
         )}
@@ -5046,14 +5057,14 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
 
       <Modal
         open={Boolean(editItem)}
-        title={editItem?.kind === 'folder' ? 'Modifier le dossier' : 'Modifier le fichier'}
+        title={editItem?.kind === 'folder' ? t('filesUi.editFolder') : t('filesUi.editFile')}
         onClose={() => setEditItem(null)}
         asForm
         onSubmit={submitEdit}
         busy={busy}
       >
         <div>
-          <Field label="Nom">
+          <Field label={t('filesUi.name')}>
             <input
               className={inputClass}
               value={editForm.name}
@@ -5062,7 +5073,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
             />
           </Field>
           {editItem?.kind === 'file' && (
-            <Field label="Description">
+            <Field label={t('filesUi.description')}>
               <textarea
                 className={inputClass + ' min-h-20'}
                 value={editForm.description}
@@ -5070,7 +5081,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
               />
             </Field>
           )}
-          <Field label={editItem?.kind === 'folder' ? 'Dossier parent' : 'Dossier'}>
+          <Field label={editItem?.kind === 'folder' ? t('filesUi.parentFolder') : t('filesUi.folder')}>
             <select
               className={inputClass}
               value={editItem?.kind === 'folder' ? editForm.parentId : editForm.folderId}
@@ -5081,7 +5092,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
                 })
               }
             >
-              <option value="">Racine</option>
+              <option value="">{t('filesUi.root')}</option>
               {(editItem?.kind === 'folder' ? folderChoices : folders).map((f) => (
                 <option key={f.id} value={f.id}>
                   {f.name}
@@ -5089,13 +5100,13 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
               ))}
             </select>
           </Field>
-          <Field label="Projet associé (optionnel)">
+          <Field label={t('filesUi.linkedProject')}>
             <select
               className={inputClass}
               value={editForm.projectId}
               onChange={(e) => setEditForm({ ...editForm, projectId: e.target.value })}
             >
-              <option value="">Aucun</option>
+              <option value="">{t('common.none')}</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.title}
@@ -5106,7 +5117,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
         </div>
       </Modal>
 
-      <Modal open={Boolean(shareItem)} title="Partage" onClose={() => setShareItem(null)} asForm onSubmit={submitShare} busy={busy}>
+      <Modal open={Boolean(shareItem)} title={t('shareUi.title')} onClose={() => setShareItem(null)} asForm onSubmit={submitShare} busy={busy}>
         <div>
           <FileShareBlock
             users={users}
@@ -5121,12 +5132,12 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
 
       <Modal
         open={Boolean(confirm)}
-        title={confirm?.title || 'Confirmer'}
+        title={confirm?.title || t('common.confirm')}
         onClose={() => setConfirm(null)}
         footer={
           <>
             <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setConfirm(null)}>
-              Annuler
+              {t('common.cancel')}
             </button>
             <button
               type="button"
@@ -5134,7 +5145,7 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
               onClick={runDelete}
               disabled={busy}
             >
-              Supprimer
+              {t('common.delete')}
             </button>
           </>
         }
@@ -5516,7 +5527,7 @@ function IdeasView({ user, ideas, users, flash }) {
                     setOpen(true)
                   }}
                 >
-                  <Pencil size={14} /> Modifier
+                  <Pencil size={14} /> {t('common.edit')}
                 </button>
               )}
               {canDeleteEntity(user, detail) && (
@@ -5526,10 +5537,10 @@ function IdeasView({ user, ideas, users, flash }) {
                   onClick={async () => {
                     await deleteIdea(detail.id, user)
                     setDetail(null)
-                    flash('Idée supprimée.')
+                    flash(t('ideasUi.deleted'))
                   }}
                 >
-                  <Trash2 size={14} /> Supprimer
+                  <Trash2 size={14} /> {t('common.delete')}
                 </button>
               )}
             </ModalActions>
@@ -5874,7 +5885,7 @@ function ProjectsView({
               onChange={(e) => setForm({ ...form, progress: e.target.value })}
             />
           </Field>
-          <Field label="Responsable">
+          <Field label={t('projectsUi.leadField')}>
             <select
               className={inputClass}
               value={form.leadId}
@@ -5887,7 +5898,7 @@ function ProjectsView({
               ))}
             </select>
           </Field>
-          <Field label="Visibilité">
+          <Field label={t('notes.visibility')}>
             <select
               className={inputClass}
               value={form.visibility}
@@ -5898,7 +5909,7 @@ function ProjectsView({
               ))}
             </select>
           </Field>
-          <Field label="Date de début">
+          <Field label={t('projectsUi.startDate')}>
             <input
               type="date"
               className={inputClass}
@@ -5906,7 +5917,7 @@ function ProjectsView({
               onChange={(e) => setForm({ ...form, startDate: e.target.value })}
             />
           </Field>
-          <Field label="Échéance">
+          <Field label={t('projectsUi.dueDate')}>
             <input
               type="date"
               className={inputClass}
@@ -5915,7 +5926,7 @@ function ProjectsView({
             />
           </Field>
           <div className="md:col-span-2">
-            <Field label="Membres">
+            <Field label={t('projectsUi.members')}>
               <div className="flex flex-wrap gap-2 rounded-xl border border-sage-200 bg-white p-3">
                 {users
                   .filter((u) => u.id !== form.leadId)
@@ -6295,7 +6306,7 @@ function CalendarView({ user, events, users, flash }) {
                     type="button"
                     className={btnGhost + ' !text-danger'}
                     onClick={async () => {
-                      if (confirm('Supprimer cet événement ?')) {
+                      if (confirm(t('calendar.confirmDelete'))) {
                         await deleteEvent(ev.id, user)
                         flash(t('calendar.deleted'))
                       }
@@ -6347,7 +6358,7 @@ function CalendarView({ user, events, users, flash }) {
                   type="button"
                   className={btnGhost + ' !text-danger'}
                   onClick={async () => {
-                    if (confirm('Supprimer cet événement ?')) {
+                    if (confirm(t('calendar.confirmDelete'))) {
                       await deleteEvent(ev.id, user)
                       flash(t('calendar.deleted'))
                     }
@@ -6363,7 +6374,7 @@ function CalendarView({ user, events, users, flash }) {
 
       <Modal open={open} title={t('calendar.newEvent')} onClose={() => setOpen(false)} asForm onSubmit={submit} submitLabel={t('calendar.schedule')}>
         <div>
-          <Field label="Titre">
+          <Field label={t('calendar.title')}>
             <input
               className={inputClass}
               value={form.title}
@@ -6371,7 +6382,7 @@ function CalendarView({ user, events, users, flash }) {
               required
             />
           </Field>
-          <Field label="Description">
+          <Field label={t('calendar.description')}>
             <textarea
               className={inputClass}
               value={form.description}
@@ -6379,7 +6390,7 @@ function CalendarView({ user, events, users, flash }) {
             />
           </Field>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <Field label="Date">
+            <Field label={t('calendar.date')}>
               <input
                 type="date"
                 className={inputClass}
@@ -6388,7 +6399,7 @@ function CalendarView({ user, events, users, flash }) {
                 required
               />
             </Field>
-            <Field label="Heure">
+            <Field label={t('calendar.time')}>
               <input
                 type="time"
                 className={inputClass}
@@ -6398,7 +6409,7 @@ function CalendarView({ user, events, users, flash }) {
               />
             </Field>
           </div>
-          <Field label="Participants">
+          <Field label={t('calendar.participants')}>
             <div className="flex flex-wrap gap-2 rounded-xl border border-sage-200 bg-white p-3">
               {users
                 .filter((u) => u.id !== user.id)
@@ -6425,7 +6436,7 @@ function CalendarView({ user, events, users, flash }) {
                   )
                 })}
               {users.length <= 1 && (
-                <p className="text-xs text-sage-500">Invitez d’autres comptes pour collaborer.</p>
+                <p className="text-xs text-sage-500">{t('common.inviteHint')}</p>
               )}
             </div>
           </Field>
@@ -6559,12 +6570,12 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
           </select>
           <input
             className={inputClass + ' w-full max-w-full md:!w-40'}
-            placeholder="Étiquette"
+            placeholder={t('searchUi.tag')}
             value={tag}
             onChange={(e) => setTag(e.target.value)}
           />
           <select className={inputClass + ' max-w-full md:!w-auto'} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            <option value="">Projet</option>
+            <option value="">{t('searchUi.project')}</option>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.title}
@@ -6576,11 +6587,11 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
 
       <section>
         <h2 className="mb-3 flex items-center gap-2 font-display text-lg text-sage-900">
-          <Filter size={16} /> Résultats internes ({internal.length})
+          <Filter size={16} /> {t('searchUi.internalResults', { n: internal.length })}
         </h2>
         {internal.length === 0 ? (
           <p className="text-sm text-sage-500">
-            {query ? 'Aucun résultat interne.' : 'Saisissez un mot-clé pour parcourir vos contenus.'}
+            {query ? t('searchUi.noInternal') : t('searchUi.typeKeyword')}
           </p>
         ) : (
           <ul className="space-y-2">
@@ -6589,7 +6600,7 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
                 <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">{item.kind}</p>
                 <p className="font-medium text-sage-900">{item.title}</p>
                 <p className="line-clamp-2 text-sm text-sage-600">
-                  {item.parentTitle ? `Sous « ${item.parentTitle} » · ` : ''}
+                  {item.parentTitle ? `${t('searchUi.underTitle', { title: item.parentTitle })} · ` : ''}
                   {item.description || item.content || item.status || ''}
                 </p>
               </li>
@@ -6807,13 +6818,13 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
                   try {
                     await verifyEmail(user.id, code)
                     await onUserUpdated()
-                    flash('E-mail vérifié.')
+                    flash(t('settingsUi.emailVerifiedToast'))
                   } catch (err) {
                     flash(err.message, 'err')
                   }
                 }}
               >
-                Vérifier
+                {t('settingsUi.verify')}
               </button>
               <button
                 type="button"
@@ -6822,13 +6833,13 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
                   try {
                     await verifyEmail(user.id, '')
                     await onUserUpdated()
-                    flash('E-mail vérifié via Firebase.')
+                    flash(t('settingsUi.firebaseVerified'))
                   } catch (err) {
                     flash(err.message, 'err')
                   }
                 }}
               >
-                J’ai cliqué le lien
+                {t('settingsUi.clickedLink')}
               </button>
               <button
                 type="button"
@@ -6842,7 +6853,7 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
                   }
                 }}
               >
-                <Mail size={14} /> Renvoyer l’e-mail de vérification
+                <Mail size={14} /> {t('settingsUi.resendEmail')}
               </button>
             </div>
           </div>
@@ -6889,12 +6900,9 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
 
       <section className="rounded-2xl border border-sage-200 bg-white/80 p-5">
         <h2 className="flex items-center gap-2 font-display text-lg text-sage-900">
-          <Volume2 size={18} /> Notifications sonores
+          <Volume2 size={18} /> {t('settingsUi.soundTitle')}
         </h2>
-        <p className="mt-2 text-sm text-sage-700">
-          Un bref signal est joué quand une nouvelle notification arrive pour votre compte. Coupé sur
-          cet appareil uniquement.
-        </p>
+        <p className="mt-2 text-sm text-sage-700">{t('settingsUi.soundHint')}</p>
         <label className="mt-3 flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium text-sage-800">
           <input
             type="checkbox"
@@ -6904,10 +6912,10 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
               const on = e.target.checked
               setSoundOn(on)
               writeSoundPref(on)
-              flash(on ? 'Son des notifications activé.' : 'Son des notifications coupé.')
+              flash(on ? t('settingsUi.soundEnabled') : t('settingsUi.soundMuted'))
             }}
           />
-          Jouer un son (activé par défaut)
+          {t('settingsUi.soundOn')}
         </label>
       </section>
 
@@ -6915,15 +6923,13 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
 
       <section className="rounded-2xl border border-sage-200 bg-white/80 p-5">
         <h2 className="flex items-center gap-2 font-display text-lg text-sage-900">
-          <FolderOpen size={18} /> Fichiers
+          <FolderOpen size={18} /> {t('settingsUi.filesTitle')}
         </h2>
         <p className="mt-2 text-sm text-sage-700">
-          Taille maximale : <strong>{maxFileSizeLabel()}</strong> (constante{' '}
-          <code className="rounded bg-sage-100 px-1">MAX_FILE_BYTES</code> = {MAX_FILE_BYTES} octets).
+          {t('settingsUi.filesMax', { size: maxFileSizeLabel() })}
         </p>
         <p className="mt-1 text-sm text-sage-600">
-          Types autorisés : {ALLOWED_FILE_EXTS.join(', ')}. Exécutables, HTML, SVG et scripts (XSS) sont
-          bloqués.
+          {t('settingsUi.filesTypes', { exts: ALLOWED_FILE_EXTS.join(', ') })}
         </p>
         <p className="mt-2 text-xs text-sage-500">
           La région Firebase Storage ne peut pas être définie depuis le client. Choisissez-la dans
@@ -6934,7 +6940,7 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
 
       <section className="rounded-2xl border border-sage-200 bg-white/80 p-5">
         <h2 className="flex items-center gap-2 font-display text-lg text-sage-900">
-          <Database size={18} /> Diagnostic Firebase / déploiement
+          <Database size={18} /> {t('settingsUi.diagTitle')}
         </h2>
         <p className="mt-2 text-sm text-sage-600">
           Mode actuel : <strong>{getBackendMode()}</strong>
@@ -6944,7 +6950,7 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
         </p>
         {!firebaseConfigured && (
           <div className="mt-3 rounded-xl border border-warn/30 bg-warn/10 p-3 text-sm text-sage-800">
-            <p className="font-medium">Firebase n’est pas configuré sur cet environnement.</p>
+            <p className="font-medium">{t('settingsUi.firebaseMissing')}</p>
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-sage-700">
               <li>
                 Copiez <code className="rounded bg-white px-1">.env.example</code> vers{' '}
@@ -6969,9 +6975,9 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
         {firebaseConfigured && (
           <p className="mt-2 text-xs text-sage-500">
             Projet {getFirebaseStatus().projectId} · Auth{' '}
-            {getFirebaseStatus().authReady ? 'OK' : 'indisponible'} · Firestore{' '}
-            {getFirebaseStatus().firestoreReady ? 'OK' : 'indisponible'} · Storage{' '}
-            {getFirebaseStatus().storageReady ? 'OK' : 'indisponible'}
+            {getFirebaseStatus().authReady ? t('settingsUi.firebaseOk') : t('settingsUi.firebaseDown')} · Firestore{' '}
+            {getFirebaseStatus().firestoreReady ? t('settingsUi.firebaseOk') : t('settingsUi.firebaseDown')} · Storage{' '}
+            {getFirebaseStatus().storageReady ? t('settingsUi.firebaseOk') : t('settingsUi.firebaseDown')}
           </p>
         )}
         <div className="mt-3 flex flex-wrap gap-2">
@@ -6980,7 +6986,7 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
             className={btnGhost}
             onClick={() => setDiag(diagnoseDatabase())}
           >
-            <RefreshCw size={14} /> Diagnostiquer
+            <RefreshCw size={14} /> {t('settingsUi.diagnose')}
           </button>
           <button
             type="button"
@@ -6988,10 +6994,10 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
             onClick={async () => {
               const kit = await exportDeploymentKit()
               exportJSON(kit, 'nazix-deployment-kit.json')
-              flash('Kit d’exportation téléchargé.')
+              flash(t('settingsUi.exportKit'))
             }}
           >
-            <Download size={14} /> Kit d’exportation
+            <Download size={14} /> {t('settingsUi.exportKitBtn')}
           </button>
           {isAdmin(user) && (
             <>
@@ -7001,7 +7007,7 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
                 onClick={async () => {
                   try {
                     setDiag(await pushLocalToFirebase())
-                    flash('Poussée vers Firebase OK.')
+                    flash(t('settingsUi.pushOk'))
                   } catch (err) {
                     flash(err.message, 'err')
                   }
@@ -7015,7 +7021,7 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
                 onClick={async () => {
                   try {
                     setDiag(await pullFirebaseToLocal())
-                    flash('Pull Firebase OK.')
+                    flash(t('settingsUi.pullOk'))
                   } catch (err) {
                     flash(err.message, 'err')
                   }
@@ -7353,9 +7359,9 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
         )}
       </section>
 
-      <Modal open={createOpen} title="Nouveau groupe" onClose={() => setCreateOpen(false)} asForm onSubmit={createGroup} submitLabel="Créer" busy={busy}>
+      <Modal open={createOpen} title={t('chatUi.newGroup')} onClose={() => setCreateOpen(false)} asForm onSubmit={createGroup} submitLabel={t('common.create')} busy={busy}>
         <div>
-          <Field label="Nom">
+          <Field label={t('chatUi.name')}>
             <input
               className={inputClass}
               value={groupName}
@@ -7363,7 +7369,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
               required
             />
           </Field>
-          <Field label="Inviter">
+          <Field label={t('chatUi.invite')}>
             <div className="flex flex-wrap gap-2 rounded-xl border border-sage-200 bg-white p-3">
               {users.filter((u) => u.id !== user.id).length === 0 && (
                 <p className="text-xs text-sage-500">{t('chatUi.noAccounts')}</p>
@@ -7394,11 +7400,11 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
 
       <Modal
         open={inviteOpen}
-        title="Inviter dans le groupe"
+        title={t('chatUi.inviteTitle')}
         onClose={() => setInviteOpen(false)}
         asForm
         onSubmit={invite}
-        submitLabel="Ajouter"
+        submitLabel={t('chatUi.add')}
         busy={busy}
       >
         <div>

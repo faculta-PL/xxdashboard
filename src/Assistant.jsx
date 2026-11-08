@@ -160,6 +160,7 @@ function Bubble({ msg, onCopy }) {
 }
 
 function ActionButtons({ actions, canWrite, onPick }) {
+  const { t } = useI18n()
   if (!actions?.length) return null
   return (
     <div className="flex flex-wrap gap-1.5">
@@ -169,7 +170,7 @@ function ActionButtons({ actions, canWrite, onPick }) {
           type="button"
           className={btnGhost + ' !min-h-9 !px-2.5 !py-1.5 !text-xs'}
           disabled={!canWrite && a.kind !== 'draft_message'}
-          title={!canWrite && a.kind !== 'draft_message' ? 'Lecture seule — actions désactivées' : ''}
+          title={!canWrite && a.kind !== 'draft_message' ? t('ai.readOnlyActions') : ''}
           onClick={() => onPick(a)}
         >
           {a.label}
@@ -186,30 +187,35 @@ function ConfirmAction({ action, users, projects, budgets, notes, user, onClose,
   const canWrite = canWriteRole(user)
   const writeBlocked = !canWrite && action.kind !== 'draft_message'
   return (
-    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-3">
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-0 sm:items-center sm:p-4">
       <button type="button" className="absolute inset-0" aria-label={t('common.close')} onClick={onClose} />
-      <div className="relative z-10 w-full max-w-md rounded-t-2xl bg-sage-50 p-4 shadow-xl sm:rounded-2xl">
-        <h3 className="font-display text-lg text-sage-900">{t('common.confirm')} — {action.label}</h3>
-        <p className="mt-1 text-xs text-sage-600">{t('ai.noMemory')}</p>
-        {writeBlocked && (
-          <p className="mt-2 rounded-lg bg-warn/10 px-2 py-1 text-xs text-warn">Rôle Lecteur : création interdite.</p>
-        )}
-        <div className="mt-3 space-y-2">
-          {(action.kind === 'create_note' || action.kind === 'create_subnote' || action.kind === 'create_idea' || action.kind === 'create_risk') && (
+      <div className="relative z-10 flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl bg-sage-50 shadow-2xl sm:rounded-2xl">
+        <div className="sticky top-0 z-20 shrink-0 border-b border-sage-200 bg-sage-50 px-4 py-3">
+          <h3 className="font-display text-lg text-sage-900">
+            {t('common.confirm')} — {action.label}
+          </h3>
+          <p className="mt-1 text-xs text-sage-600">{t('ai.noMemory')}</p>
+          {writeBlocked && <p className="mt-2 rounded-lg bg-warn/10 px-2 py-1 text-xs text-warn">{t('ai.readerBlocked')}</p>}
+        </div>
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3 xx-scroll">
+          {(action.kind === 'create_note' ||
+            action.kind === 'create_subnote' ||
+            action.kind === 'create_idea' ||
+            action.kind === 'create_risk') && (
             <label className="block text-sm">
-              <span className="mb-1 block font-medium text-sage-800">Titre</span>
+              <span className="mb-1 block font-medium text-sage-800">{t('notes.title')}</span>
               <input className={inputClass} value={draft.title || ''} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
             </label>
           )}
           {action.kind === 'create_subnote' && (
             <label className="block text-sm">
-              <span className="mb-1 block font-medium text-sage-800">Note parente</span>
+              <span className="mb-1 block font-medium text-sage-800">{t('ai.parentNote')}</span>
               <select
                 className={inputClass}
                 value={draft.parentId || ''}
                 onChange={(e) => setDraft({ ...draft, parentId: e.target.value })}
               >
-                <option value="">Choisir…</option>
+                <option value="">{t('ai.choose')}</option>
                 {notes.map((n) => (
                   <option key={n.id} value={n.id}>
                     {n.title}
@@ -220,7 +226,7 @@ function ConfirmAction({ action, users, projects, budgets, notes, user, onClose,
           )}
           {(action.kind === 'create_note' || action.kind === 'create_subnote') && (
             <label className="block text-sm">
-              <span className="mb-1 block font-medium text-sage-800">Contenu</span>
+              <span className="mb-1 block font-medium text-sage-800">{t('ai.content')}</span>
               <textarea
                 className={inputClass + ' min-h-24'}
                 value={draft.content || ''}
@@ -230,7 +236,7 @@ function ConfirmAction({ action, users, projects, budgets, notes, user, onClose,
           )}
           {action.kind === 'create_idea' && (
             <label className="block text-sm">
-              <span className="mb-1 block font-medium text-sage-800">Description</span>
+              <span className="mb-1 block font-medium text-sage-800">{t('ai.description')}</span>
               <textarea
                 className={inputClass + ' min-h-20'}
                 value={draft.description || ''}
@@ -241,13 +247,13 @@ function ConfirmAction({ action, users, projects, budgets, notes, user, onClose,
           {action.kind === 'create_risk' && (
             <>
               <label className="block text-sm">
-                <span className="mb-1 block font-medium text-sage-800">Projet</span>
+                <span className="mb-1 block font-medium text-sage-800">{t('common.project')}</span>
                 <select
                   className={inputClass}
                   value={draft.projectId || ''}
                   onChange={(e) => setDraft({ ...draft, projectId: e.target.value })}
                 >
-                  <option value="">Choisir…</option>
+                  <option value="">{t('ai.choose')}</option>
                   {projects.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.title}
@@ -256,7 +262,7 @@ function ConfirmAction({ action, users, projects, budgets, notes, user, onClose,
                 </select>
               </label>
               <label className="block text-sm">
-                <span className="mb-1 block font-medium text-sage-800">Description</span>
+                <span className="mb-1 block font-medium text-sage-800">{t('ai.description')}</span>
                 <textarea
                   className={inputClass + ' min-h-16'}
                   value={draft.description || ''}
@@ -268,13 +274,13 @@ function ConfirmAction({ action, users, projects, budgets, notes, user, onClose,
           {action.kind === 'create_budget_line' && (
             <>
               <label className="block text-sm">
-                <span className="mb-1 block font-medium text-sage-800">Budget</span>
+                <span className="mb-1 block font-medium text-sage-800">{t('searchUi.budget')}</span>
                 <select
                   className={inputClass}
                   value={draft.budgetId || ''}
                   onChange={(e) => setDraft({ ...draft, budgetId: e.target.value })}
                 >
-                  <option value="">Choisir…</option>
+                  <option value="">{t('ai.choose')}</option>
                   {budgets.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
@@ -283,11 +289,11 @@ function ConfirmAction({ action, users, projects, budgets, notes, user, onClose,
                 </select>
               </label>
               <label className="block text-sm">
-                <span className="mb-1 block font-medium text-sage-800">Libellé</span>
+                <span className="mb-1 block font-medium text-sage-800">{t('ai.label')}</span>
                 <input className={inputClass} value={draft.name || ''} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
               </label>
               <label className="block text-sm">
-                <span className="mb-1 block font-medium text-sage-800">Montant</span>
+                <span className="mb-1 block font-medium text-sage-800">{t('ai.amount')}</span>
                 <input
                   type="number"
                   min="0"
@@ -301,13 +307,13 @@ function ConfirmAction({ action, users, projects, budgets, notes, user, onClose,
           {action.kind === 'draft_message' && (
             <>
               <label className="block text-sm">
-                <span className="mb-1 block font-medium text-sage-800">Destinataire</span>
+                <span className="mb-1 block font-medium text-sage-800">{t('ai.recipient')}</span>
                 <select
                   className={inputClass}
                   value={draft.userId || ''}
                   onChange={(e) => setDraft({ ...draft, userId: e.target.value })}
                 >
-                  <option value="">Choisir un membre…</option>
+                  <option value="">{t('ai.chooseMember')}</option>
                   {users
                     .filter((u) => u.id !== user.id)
                     .map((u) => (
@@ -318,7 +324,7 @@ function ConfirmAction({ action, users, projects, budgets, notes, user, onClose,
                 </select>
               </label>
               <label className="block text-sm">
-                <span className="mb-1 block font-medium text-sage-800">Brouillon</span>
+                <span className="mb-1 block font-medium text-sage-800">{t('ai.draft')}</span>
                 <textarea
                   className={inputClass + ' min-h-24'}
                   value={draft.body || ''}
@@ -332,14 +338,14 @@ function ConfirmAction({ action, users, projects, budgets, notes, user, onClose,
                   checked={Boolean(draft.postGeneral)}
                   onChange={(e) => setDraft({ ...draft, postGeneral: e.target.checked })}
                 />
-                Publier aussi dans le chat Général
+                {t('ai.postGeneral')}
               </label>
             </>
           )}
         </div>
-        <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <div className="sticky bottom-0 z-20 flex shrink-0 flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-4 py-3 sm:flex-row sm:justify-end pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button type="button" className={btnGhost} onClick={onClose}>
-            Annuler
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -347,7 +353,7 @@ function ConfirmAction({ action, users, projects, budgets, notes, user, onClose,
             disabled={busy || writeBlocked}
             onClick={() => onApply({ ...action, draft })}
           >
-            <Check size={16} /> Confirmer
+            <Check size={16} /> {t('common.confirm')}
           </button>
         </div>
       </div>
@@ -369,7 +375,7 @@ function useAiChat({
   pendingPrompt = '',
   onPendingConsumed,
 }) {
-  const { lang } = useI18n()
+  const { t, lang } = useI18n()
   const [threadId, setThreadId] = useState(null)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -433,9 +439,9 @@ function useAiChat({
   const copy = async (text) => {
     try {
       await navigator.clipboard.writeText(text)
-      flash?.('Réponse copiée.')
+      flash?.(t('ai.copied'))
     } catch {
-      flash?.('Copie impossible.', 'err')
+      flash?.(t('ai.copyFail'), 'err')
     }
   }
 
@@ -634,14 +640,14 @@ function useAiChat({
   const applyAction = async (action) => {
     // Never run from JSON in the bubble — only the confirm dialog calls this.
     if (action.kind !== 'draft_message' && !canWriteRole(user)) {
-      flash?.('Permission refusée (Lecteur).', 'err')
+      flash?.(t('ai.readerDenied'), 'err')
       return
     }
     setActionBusy(true)
     try {
       const d = action.draft || {}
       if (action.kind === 'create_note' || action.kind === 'create_subnote') {
-        if (action.kind === 'create_subnote' && !d.parentId) throw new Error('Choisissez une note parente.')
+        if (action.kind === 'create_subnote' && !d.parentId) throw new Error(t('ai.pickParent'))
         await saveNote(
           {
             title: String(d.title || '').trim() || 'Note IA',
@@ -653,7 +659,7 @@ function useAiChat({
           },
           user,
         )
-        flash?.('Note créée (privée).')
+        flash?.(t('ai.noteCreated'))
       } else if (action.kind === 'create_idea') {
         await saveIdea(
           {
@@ -665,9 +671,9 @@ function useAiChat({
           },
           user,
         )
-        flash?.('Idée créée (privée).')
+        flash?.(t('ai.ideaCreated'))
       } else if (action.kind === 'create_risk') {
-        if (!d.projectId) throw new Error('Choisissez un projet.')
+        if (!d.projectId) throw new Error(t('ai.pickProject'))
         await saveRisk(
           {
             title: String(d.title || '').trim() || 'Risque IA',
@@ -681,9 +687,9 @@ function useAiChat({
           },
           user,
         )
-        flash?.('Risque créé (privé).')
+        flash?.(t('ai.riskCreated'))
       } else if (action.kind === 'create_budget_line') {
-        if (!d.budgetId) throw new Error('Choisissez un budget.')
+        if (!d.budgetId) throw new Error(t('ai.pickBudget'))
         await saveBudgetLine(
           {
             budgetId: d.budgetId,
@@ -694,11 +700,11 @@ function useAiChat({
           },
           user,
         )
-        flash?.('Ligne budgétaire créée.')
+        flash?.(t('ai.lineCreated'))
       } else if (action.kind === 'draft_message') {
-        if (!d.userId) throw new Error('Choisissez un destinataire.')
+        if (!d.userId) throw new Error(t('ai.pickRecipient'))
         const body = String(d.body || '').trim()
-        if (!body) throw new Error('Message vide.')
+        if (!body) throw new Error(t('ai.emptyMessage'))
         const target = users.find((u) => u.id === d.userId)
         await createNotification({
           userId: d.userId,
@@ -711,11 +717,11 @@ function useAiChat({
           const general = await ensureGeneralGroup(user)
           await sendMessage(general.id, `${target ? `@${target.fullName} ` : ''}${body}`, user)
         }
-        flash?.(d.postGeneral ? 'Notification envoyée et publiée dans Général.' : 'Notification envoyée.')
+        flash?.(d.postGeneral ? t('ai.notifyPosted') : t('ai.notifySent'))
       }
       setPendingAction(null)
     } catch (err) {
-      flash?.(toUserMessage(err, 'Action impossible.'), 'err')
+      flash?.(toUserMessage(err, t('ai.actionFail')), 'err')
     } finally {
       setActionBusy(false)
     }
@@ -724,7 +730,7 @@ function useAiChat({
   const remove = async (id) => {
     await deleteAiThread(id, user)
     if (threadId === id) setThreadId(null)
-    flash?.('Conversation supprimée.')
+    flash?.(t('ai.deleted'))
   }
 
   return {
@@ -1039,29 +1045,29 @@ export function AssistantView({
         </div>
         <ul className="flex-1 overflow-y-auto xx-scroll p-2">
           {threads.length === 0 && <li className="px-2 py-6 text-center text-sm text-sage-500">{t('ai.none')}</li>}
-          {threads.map((t) => (
-            <li key={t.id}>
+          {threads.map((thread) => (
+            <li key={thread.id}>
               <div
                 className={`mb-1 flex items-center gap-1 rounded-xl px-2 py-2 ${
-                  chat.threadId === t.id ? 'bg-sage-200' : 'hover:bg-sage-100'
+                  chat.threadId === thread.id ? 'bg-sage-200' : 'hover:bg-sage-100'
                 }`}
               >
                 <button
                   type="button"
                   className="min-w-0 flex-1 text-left"
                   onClick={() => {
-                    chat.setThreadId(t.id)
+                    chat.setThreadId(thread.id)
                     setMobileThread(true)
                   }}
                 >
-                  <p className="truncate text-sm font-medium text-sage-900">{t.title}</p>
-                  <p className="truncate text-[11px] text-sage-500">{t.contextLabel || t.section}</p>
+                  <p className="truncate text-sm font-medium text-sage-900">{thread.title}</p>
+                  <p className="truncate text-[11px] text-sage-500">{thread.contextLabel || thread.section}</p>
                 </button>
                 <button
                   type="button"
                   className="rounded p-1.5 text-sage-500 hover:bg-white hover:text-danger"
-                  onClick={() => chat.remove(t.id)}
-                  aria-label="Supprimer la conversation"
+                  onClick={() => chat.remove(thread.id)}
+                  aria-label={t('ai.deleteThread')}
                 >
                   <Trash2 size={14} />
                 </button>

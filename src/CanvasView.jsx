@@ -87,7 +87,7 @@ function MetaGrid({ rows }) {
   )
 }
 
-function PeekBody({ peek, budgetLines, users, t, lang }) {
+function PeekBody({ peek, budgetLines, users, folders = [], t, lang }) {
   const entity = peek.entity || {}
   const locale = dateLocale(lang)
   if (peek.type === 'note') {
@@ -151,7 +151,12 @@ function PeekBody({ peek, budgetLines, users, t, lang }) {
         <MetaGrid
           rows={[
             { label: t('canvas.fieldSize'), value: `${(entity.ext || '').toUpperCase()} · ${formatFileSize(entity.size)}` },
-            { label: t('canvas.fieldCategory'), value: entity.folderId ? entity.folderId : '' },
+            {
+              label: t('canvas.fieldFolder'),
+              value: entity.folderId
+                ? folders.find((f) => f.id === entity.folderId)?.name || t('filesUi.root')
+                : t('filesUi.root'),
+            },
           ]}
         />
         <DocumentBody content={entity.description} />
@@ -190,6 +195,7 @@ export default function CanvasView({
   onImport,
   onOpenModule,
   users = [],
+  folders = [],
 }) {
   const { t, lang } = useI18n()
   const [projectId, setProjectId] = useState('')
@@ -591,7 +597,7 @@ export default function CanvasView({
                 </div>
               </div>
               <div ref={peekBodyRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-4 xx-scroll">
-                <PeekBody peek={peek} budgetLines={budgetLines} users={users} t={t} lang={lang} />
+                <PeekBody peek={peek} budgetLines={budgetLines} users={users} folders={folders} t={t} lang={lang} />
               </div>
               <div className="sticky bottom-0 z-20 flex shrink-0 flex-col-reverse gap-2 border-t border-sage-200 bg-sage-50 px-5 py-3 sm:flex-row sm:justify-end pb-[max(0.75rem,env(safe-area-inset-bottom))]">
                 <button type="button" className={btnGhost + ' w-full sm:w-auto'} onClick={() => setPeek(null)}>

@@ -2,7 +2,7 @@ import { lazy, Suspense, useMemo, useState } from 'react'
 import { ArrowLeft, Gamepad2, Trophy } from 'lucide-react'
 import { getBackendMode, saveGameProfile, createGameScore } from '../lib/store'
 import { btnGhost, btnPrimary, EmptyState, inputClass, MemberAvatar } from '../components/ui'
-import { GAME_META } from './GameShell'
+import { GAME_META, RULE_KEYS } from './GameShell'
 import { KINGX, ZIANOTIX } from './chars'
 import { useI18n } from '../i18n'
 
@@ -39,7 +39,7 @@ export default function GamesHub({ user, profiles = [], scores = [], flash, onBa
   const onSaveScore = async (id, score) => {
     if (!mine?.displayName) {
       flash(t('gamesUi.needNick'), 'err')
-      throw new Error('Pseudo requis')
+      throw new Error(t('gamesUi.needNickErr'))
     }
     await createGameScore({ gameId: id, score, displayName: mine.displayName }, user)
     flash(t('gamesUi.scoreSaved'))
@@ -128,16 +128,16 @@ export default function GamesHub({ user, profiles = [], scores = [], flash, onBa
                   onClick={() => setGameId(g.id)}
                   className="rounded-2xl border border-sage-200 bg-white p-4 text-left shadow-sm transition hover:border-sage-400 hover:shadow animate-fade-up"
                   style={{ animationDelay: `${i * 80}ms` }}
-                  aria-label={`Ouvrir ${g.title}`}
+                  aria-label={t('gamesUi.openGame', { title: g.title })}
                 >
                   <p className="text-xs font-semibold uppercase tracking-wide text-sage-500">{g.character}</p>
                   <h3 className="mt-1 font-display text-xl text-sage-900">{g.title}</h3>
                   <ul className="mt-2 space-y-1 text-sm text-sage-700">
-                    {g.rules.map((r) => (
-                      <li key={r}>{r}</li>
+                    {(RULE_KEYS[g.id] || []).map((key) => (
+                      <li key={key}>{t(key)}</li>
                     ))}
                   </ul>
-                  <span className={`${btnPrimary} mt-4`}>Jouer</span>
+                  <span className={`${btnPrimary} mt-4`}>{t('gamesUi.play')}</span>
                 </button>
               ))}
             </section>
@@ -146,22 +146,22 @@ export default function GamesHub({ user, profiles = [], scores = [], flash, onBa
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <Trophy size={18} className="text-sage-700" />
                 <h2 className="font-display text-lg text-sage-900">
-                  {localBoard ? 'Classement local' : 'Classement'}
+                  {localBoard ? t('gamesUi.boardLocal') : t('gamesUi.board')}
                 </h2>
                 {localBoard && (
                   <span className="rounded-full bg-warn/15 px-2 py-0.5 text-xs font-semibold text-warn">
-                    pas un classement partagé
+                    {t('gamesUi.boardLocalHint')}
                   </span>
                 )}
               </div>
               <div className="mb-3 flex flex-wrap gap-1">
                 {[
-                  ['global', 'Global'],
-                  ['game:kingx-cueillette', 'Cueillette'],
-                  ['game:zianotix-vol', 'Vol'],
-                  ['game:relais-duo', 'Relais'],
-                  ['best', 'Mes records'],
-                  ['recent', 'Récents'],
+                  ['global', t('gamesUi.tabGlobal')],
+                  ['game:kingx-cueillette', t('gamesUi.tabCueillette')],
+                  ['game:zianotix-vol', t('gamesUi.tabVol')],
+                  ['game:relais-duo', t('gamesUi.tabRelais')],
+                  ['best', t('gamesUi.tabBest')],
+                  ['recent', t('gamesUi.tabRecent')],
                 ].map(([id, label]) => (
                   <button
                     key={id}
@@ -176,7 +176,7 @@ export default function GamesHub({ user, profiles = [], scores = [], flash, onBa
                 ))}
               </div>
               {shown.length === 0 ? (
-                <EmptyState title="Aucun score" hint="Jouez une partie puis enregistrez votre score." />
+                <EmptyState title={t('gamesUi.noScore')} hint={t('gamesUi.noScoreHint')} />
               ) : (
                 <ol className="space-y-2">
                   {shown.map((row, i) => (
@@ -201,14 +201,14 @@ export default function GamesHub({ user, profiles = [], scores = [], flash, onBa
               type="button"
               className={`${btnGhost} mb-3 self-start`}
               onClick={() => setGameId(null)}
-              aria-label="Retour à l’arcade"
+              aria-label={t('gamesUi.backArcade')}
             >
-              <ArrowLeft size={16} /> Arcade
+              <ArrowLeft size={16} /> {t('gamesUi.arcadeShort')}
             </button>
             <Suspense
               fallback={
                 <p className="py-16 text-center text-sm text-sage-600" role="status">
-                  Chargement du jeu…
+                  {t('gamesUi.loadingGame')}
                 </p>
               }
             >

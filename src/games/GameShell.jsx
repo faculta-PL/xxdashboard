@@ -2,7 +2,7 @@ import { Pause, Play, RotateCcw } from 'lucide-react'
 import { btnGhost, btnPrimary } from '../components/ui'
 import { useI18n } from '../i18n'
 
-const RULE_KEYS = {
+export const RULE_KEYS = {
   'kingx-cueillette': ['gamesUi.kingx1', 'gamesUi.kingx2', 'gamesUi.kingx3'],
   'zianotix-vol': ['gamesUi.zian1', 'gamesUi.zian2', 'gamesUi.zian3'],
   'relais-duo': ['gamesUi.relais1', 'gamesUi.relais2', 'gamesUi.relais3'],

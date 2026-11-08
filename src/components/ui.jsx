@@ -83,42 +83,39 @@ export function ProgressBar({ value = 0, label, className = '' }) {
 
 const VIS_META = {
   Privée: {
-    label: 'Privé',
     Icon: Lock,
     className: 'bg-sage-200 text-sage-900',
-    hint: 'Visible par vous et les personnes choisies',
+    hintKey: 'shareUi.hintPrivate',
   },
   Partagée: {
-    label: 'Partagé',
     Icon: Share2,
     className: 'bg-sage-100 text-sage-800',
-    hint: 'Visible par les personnes avec qui c’est partagé',
+    hintKey: 'shareUi.hintShared',
   },
   Équipe: {
-    label: 'Équipe',
     Icon: Users,
     className: 'bg-ok/15 text-ok',
-    hint: 'Visible par tout compte connecté',
+    hintKey: 'shareUi.hintTeam',
   },
   Publique: {
-    label: 'Publique',
     Icon: Globe,
     className: 'bg-sage-100 text-sage-700',
-    hint: 'Visible par tous les comptes de l’espace',
+    hintKey: 'shareUi.hintPublic',
   },
 }
 
 export function VisibilityBadge({ value, className = '' }) {
-  const { lang } = useI18n()
+  const { t, lang } = useI18n()
   const key = VIS_META[value] ? value : 'Privée'
   const meta = VIS_META[key]
   const Icon = meta.Icon
   const label = valueLabel(lang, key)
+  const hint = t(meta.hintKey)
   return (
     <span
       className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.className} ${className}`}
-      title={meta.hint}
-      aria-label={`${label}. ${meta.hint}`}
+      title={hint}
+      aria-label={`${label}. ${hint}`}
     >
       <Icon size={12} className="shrink-0" aria-hidden="true" />
       {label}

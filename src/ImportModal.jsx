@@ -143,7 +143,7 @@ export default function ImportModal({
       }
       setStep(2)
     } catch (err) {
-      const msg = String(err?.message || 'Fichier illisible.').split('\n')[0].slice(0, 180)
+      const msg = String(err?.message || t('importUi.unreadable')).split('\n')[0].slice(0, 180)
       setError(msg)
       flash(msg, 'err')
     }
@@ -164,7 +164,7 @@ export default function ImportModal({
         file,
         folderId: defaultFolderId || null,
         projectId: extra.projectId || projectId || null,
-        description: extra.description || 'Fichier importé (privé)',
+        description: extra.description || t('importUi.importedPrivate'),
         shares: [],
         teamWide: false,
       },
@@ -175,15 +175,15 @@ export default function ImportModal({
 
   const confirm = async () => {
     if (!file || !parsed) {
-      setError('Choisissez un fichier.')
+      setError(t('importUi.chooseFile'))
       return
     }
     if (needsProject && !projectId) {
-      setError('Choisissez un projet.')
+      setError(t('importUi.pickProject'))
       return
     }
     if (destination === 'projects' && projectMode === 'update' && !projectId) {
-      setError('Choisissez le projet à mettre à jour.')
+      setError(t('importUi.pickProjectUpdate'))
       return
     }
     setBusy(true)
@@ -193,7 +193,7 @@ export default function ImportModal({
       const name = title.trim() || parsed.title
       const content = (body.trim() || extractedText).slice(0, MAX_IMPORT_CHARS)
       if (showsBody && !content && extractedText) {
-        throw new Error('Le contenu extrait n’a pas pu être recopié.')
+        throw new Error(t('importUi.extractFailed'))
       }
 
       if (destination === 'files') {
@@ -201,7 +201,7 @@ export default function ImportModal({
           projectId,
           description: content || name,
         })
-        flash('Fichier importé (visibilité privée).')
+        flash(t('importUi.fileImported'))
       } else if (destination === 'notes' || destination === 'note_raw') {
         const note = await saveNote(
           {
@@ -230,8 +230,8 @@ export default function ImportModal({
         }
         flash(
           destination === 'note_raw'
-            ? 'Note brute créée (privée) avec le texte intégral.'
-            : 'Note créée (privée) et fichier original conservé.',
+            ? t('importUi.noteRawCreated')
+            : t('importUi.noteCreated'),
         )
       } else if (destination === 'projects') {
         if (projectMode === 'update' && projectId) {
@@ -245,7 +245,7 @@ export default function ImportModal({
             },
             user,
           )
-          flash('Description du projet mise à jour (sans partage automatique).')
+          flash(t('importUi.projectUpdated'))
         } else {
           await saveProject(
             {
@@ -262,11 +262,11 @@ export default function ImportModal({
             },
             user,
           )
-          flash('Projet créé (visibilité privée).')
+          flash(t('importUi.projectCreated'))
         }
       } else if (destination === 'budget') {
         const included = budgetRows.filter((r) => r.included)
-        if (!included.length) throw new Error('Cochez au moins une ligne budgétaire.')
+        if (!included.length) throw new Error(t('importUi.checkBudget'))
         let budget = budgetId ? budgets.find((b) => b.id === budgetId) : null
         if (!budget) {
           budget = await saveBudget(
@@ -294,10 +294,10 @@ export default function ImportModal({
             user,
           )
         }
-        flash(`${included.length} ligne(s) prévisionnelle(s) importée(s) (privé).`)
+        flash(t('importUi.linesImported', { n: included.length }))
       } else if (destination === 'risks') {
         const included = riskRows.filter((r) => r.included)
-        if (!included.length) throw new Error('Cochez au moins un risque.')
+        if (!included.length) throw new Error(t('importUi.checkRisk'))
         for (const row of included) {
           await saveRisk(
             {
@@ -314,12 +314,12 @@ export default function ImportModal({
             user,
           )
         }
-        flash(`${included.length} risque(s) créé(s) (visibilité privée).`)
+        flash(t('importUi.risksImported', { n: included.length }))
       }
       onClose()
     } catch (err) {
-      const raw = String(err?.message || 'Import impossible.')
-      const msg = /permission[- ]denied/i.test(raw) ? 'Permission refusée.' : raw.split('\n')[0].slice(0, 180)
+      const raw = String(err?.message || t('importUi.importFail'))
+      const msg = /permission[- ]denied/i.test(raw) ? t('common.permissionDenied') : raw.split('\n')[0].slice(0, 180)
       setError(msg)
       flash(msg, 'err')
     } finally {
@@ -498,10 +498,10 @@ export default function ImportModal({
                 <Field
                   label={
                     destination === 'projects'
-                      ? 'Projet à mettre à jour'
+                      ? t('importUi.projectUpdate')
                       : destination === 'budget' || destination === 'risks'
-                        ? 'Projet (requis)'
-                        : 'Projet (optionnel)'
+                        ? t('importUi.projectRequired')
+                        : t('importUi.projectOptional')
                   }
                 >
                   <select
@@ -509,7 +509,7 @@ export default function ImportModal({
                     value={projectId}
                     onChange={(e) => setProjectId(e.target.value)}
                   >
-                    <option value="">{destination === 'budget' || destination === 'risks' ? 'Choisir…' : 'Aucun'}</option>
+                    <option value="">{destination === 'budget' || destination === 'risks' ? t('common.choose') : t('common.none')}</option>
                     {projects.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.title}
@@ -519,7 +519,7 @@ export default function ImportModal({
                 </Field>
               )}
               {destination === 'projects' && (
-                <Field label="Action projet">
+                <Field label={t('importUi.actionProject')}>
                   <select
                     className={inputClass}
                     value={projectMode}
@@ -532,7 +532,7 @@ export default function ImportModal({
               )}
               {destination === 'budget' && (
                 <>
-                  <Field label="Budget cible">
+                  <Field label={t('importUi.targetBudget')}>
                     <select
                       className={inputClass}
                       value={budgetId}
@@ -547,7 +547,7 @@ export default function ImportModal({
                     </select>
                   </Field>
                   {!budgetId && (
-                    <Field label="Nom du nouveau budget">
+                    <Field label={t('importUi.newBudgetName')}>
                       <input
                         className={inputClass}
                         value={budgetName}
@@ -559,10 +559,10 @@ export default function ImportModal({
                   {parsed.kind === 'table' && (
                     <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                       {[
-                        ['name', 'Colonne libellé'],
-                        ['category', 'Colonne catégorie'],
-                        ['amount', 'Colonne montant'],
-                        ['date', 'Colonne date'],
+                        ['name', t('importUi.colName')],
+                        ['category', t('importUi.colCategory')],
+                        ['amount', t('importUi.colAmount')],
+                        ['date', t('importUi.colDate')],
                       ].map(([key, label]) => (
                         <Field key={key} label={label}>
                           <select
@@ -670,11 +670,11 @@ export default function ImportModal({
                   {parsed.kind === 'table' && (
                     <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                       {[
-                        ['title', 'Colonne titre'],
-                        ['description', 'Colonne description'],
-                        ['probability', 'Colonne probabilité'],
-                        ['impact', 'Colonne impact'],
-                        ['dueDate', 'Colonne échéance'],
+                        ['title', t('importUi.colTitle')],
+                        ['description', t('importUi.colDescription')],
+                        ['probability', t('importUi.colProbability')],
+                        ['impact', t('importUi.colImpact')],
+                        ['dueDate', t('importUi.colDue')],
                       ].map(([key, label]) => (
                         <Field key={key} label={label}>
                           <select
