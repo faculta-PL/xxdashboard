@@ -3,6 +3,7 @@ import { MessageSquarePlus, ThumbsUp, Upload } from 'lucide-react'
 import { EmptyState, btnGhost, btnPrimary, inputClass } from '../components/ui'
 import { dateLocale, useI18n } from '../i18n'
 import { subscribeStore } from '../lib/store'
+import { useFormDraft } from '../lib/formDraft'
 import { importFeedbackItems, setFeedbackStatus, submitFeedback, voteFeedbackOnce } from './api.js'
 import { feedbackT } from './i18n.js'
 import {
@@ -49,7 +50,7 @@ function statusTone(status) {
 }
 
 export function FeedbackBoard({ user, users = [], flash }) {
-  const { lang } = useI18n()
+  const { lang, t } = useI18n()
   const tf = (key, vars) => feedbackT(lang, key, vars)
   const [items, setItems] = useState([])
   const [orgId, setOrgId] = useState(() => readActiveOrgId())
@@ -62,10 +63,22 @@ export function FeedbackBoard({ user, users = [], flash }) {
   const [moduleFilter, setModuleFilter] = useState('all')
   const [preview, setPreview] = useState(null)
   const [busy, setBusy] = useState(false)
+  const feedbackDraft = useFormDraft(
+    'feedback',
+    orgId,
+    title || detail ? JSON.stringify({ title, detail, moduleId }) : '',
+    (data) => {
+      if (!data) return
+      setTitle(data.title || '')
+      setDetail(data.detail || '')
+      setModuleId(data.moduleId || '')
+    },
+  )
 
   useEffect(() => subscribeStore((db) => {
     dbRef.current = db
     setItems(Object.values(db?.xx_feedback || {}))
+    if (db?.activeOrgId) setOrgId(db.activeOrgId)
   }), [])
 
   useEffect(() => {
@@ -133,6 +146,7 @@ export function FeedbackBoard({ user, users = [], flash }) {
       setTitle('')
       setDetail('')
       setModuleId('')
+      feedbackDraft.clear()
       flash(tf('sent'))
     } catch (err) {
       fail(err)
@@ -230,6 +244,11 @@ export function FeedbackBoard({ user, users = [], flash }) {
               maxLength={8000}
               placeholder={tf('placeholderDetail')}
             />
+            {feedbackDraft.hasDraft ? (
+              <button type="button" className="mt-1 text-xs font-semibold text-sage-700 underline" onClick={feedbackDraft.clear}>
+                {t('draft.clear')}
+              </button>
+            ) : null}
           </Field>
           <Field label={tf('fieldModule')}>
             <select className={inputClass} value={moduleId} onChange={(event) => setModuleId(event.target.value)}>

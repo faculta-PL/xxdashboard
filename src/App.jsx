@@ -50,6 +50,7 @@ import {
   Sparkles,
   Gamepad2,
   Mic,
+  Star,
 } from 'lucide-react'
 import ImportModal from './ImportModal'
 import CanvasView from './CanvasView'
@@ -60,6 +61,9 @@ import DashboardView from './components/DashboardView'
 import TodosView from './views/Todos'
 import { FeedbackBoard } from './feedback'
 import { StableChatPane } from './chat'
+import MiniApp, { isMiniRequest } from './MiniApp'
+import { useAutosave, useFormDraft } from './lib/formDraft'
+import { InstallBanner, OrgAdmin, OrgGate, OrgHome, OrgSwitcher, SyncBadge } from './org/OrgScreens'
 import CreateToolsView from './CreateToolsView'
 import VoiceModal from './VoiceModal'
 import { DocumentBody, NoteCardExcerpt, NoteLinkedFiles } from './NoteMedia'
@@ -143,6 +147,10 @@ import {
   saveRiskAction,
   deleteRiskAction,
   syncNoteLinks,
+  resolveOrganizations,
+  selectOrganization,
+  listOrgMemberships,
+  getActiveOrgId,
 } from './lib/store'
 import { firebaseConfigured, missingFirebaseVars, getFirebaseStatus } from './lib/firebase'
 import {
@@ -624,40 +632,52 @@ export default function App() {
     setAuthFieldErrors({})
   }, [authMode])
 
-  const users = useMemo(() => (db ? listUsers() : []), [db])
+  const orgId = db?.activeOrgId || ''
+  const inOrg = (row) => Boolean(orgId) && row?.orgId === orgId
+  const allUsers = useMemo(() => (db ? listUsers() : []), [db])
+  const users = useMemo(() => {
+    if (!db || !user) return []
+    const ids = new Set(
+      Object.values(db.xx_org_members || {})
+        .filter((m) => m.orgId === orgId && m.userId)
+        .map((m) => m.userId),
+    )
+    ids.add(user.id)
+    return allUsers.filter((u) => ids.has(u.id))
+  }, [db, user, orgId, allUsers])
   const notes = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_notes || {}).filter((n) => canReadEntity(user, n))
+        ? Object.values(db.xx_notes || {}).filter((n) => inOrg(n) && canReadEntity(user, n))
         : [],
-    [db, user],
+    [db, user, orgId],
   )
   const ideas = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_ideas || {}).filter((i) => canReadEntity(user, i))
+        ? Object.values(db.xx_ideas || {}).filter((i) => inOrg(i) && canReadEntity(user, i))
         : [],
-    [db, user],
+    [db, user, orgId],
   )
   const projects = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_projects || {}).filter((p) => canReadEntity(user, p))
+        ? Object.values(db.xx_projects || {}).filter((p) => inOrg(p) && canReadEntity(user, p))
         : [],
-    [db, user],
+    [db, user, orgId],
   )
   const events = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_events || {}).filter((e) => canReadEntity(user, e))
+        ? Object.values(db.xx_events || {}).filter((e) => inOrg(e) && canReadEntity(user, e))
         : [],
-    [db, user],
+    [db, user, orgId],
   )
   const todoLists = useMemo(
     () =>
       db && user
         ? Object.values(db.xx_todo_lists || {})
-            .filter((list) => canReadEntity(user, list))
+            .filter((list) => inOrg(list) && canReadEntity(user, list))
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr'))
         : [],
     [db, user],
@@ -665,9 +685,9 @@ export default function App() {
   const todos = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_todos || {}).filter((task) => canReadEntity(user, task))
+        ? Object.values(db.xx_todos || {}).filter((task) => inOrg(task) && canReadEntity(user, task))
         : [],
-    [db, user],
+    [db, user, orgId],
   )
   const fileCtx = useMemo(
     () => ({ folders: db?.xx_folders || {}, projects: db?.xx_projects || {} }),
@@ -676,16 +696,16 @@ export default function App() {
   const folders = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_folders || {}).filter((f) => canReadFileOrFolder(user, f, fileCtx))
+        ? Object.values(db.xx_folders || {}).filter((f) => inOrg(f) && canReadFileOrFolder(user, f, fileCtx))
         : [],
-    [db, user, fileCtx],
+    [db, user, fileCtx, orgId],
   )
   const files = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_files || {}).filter((f) => canReadFileOrFolder(user, f, fileCtx))
+        ? Object.values(db.xx_files || {}).filter((f) => inOrg(f) && canReadFileOrFolder(user, f, fileCtx))
         : [],
-    [db, user, fileCtx],
+    [db, user, fileCtx, orgId],
   )
   const projectsById = useMemo(
     () => Object.fromEntries(projects.map((p) => [p.id, p])),
@@ -695,7 +715,7 @@ export default function App() {
     () =>
       db && user
         ? Object.values(db.xx_budgets || {})
-            .filter((b) => canReadEntity(user, b))
+            .filter((b) => inOrg(b) && canReadEntity(user, b))
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr'))
         : [],
     [db, user],
@@ -712,7 +732,7 @@ export default function App() {
     () =>
       db && user
         ? Object.values(db.xx_risks || {})
-            .filter((r) => canReadEntity(user, r))
+            .filter((r) => inOrg(r) && canReadEntity(user, r))
             .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
         : [],
     [db, user],
@@ -729,7 +749,7 @@ export default function App() {
     () =>
       db && user
         ? Object.values(db.xx_notifications || {})
-            .filter((n) => n.userId === user.id)
+            .filter((n) => n.userId === user.id && inOrg(n))
             .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
         : [],
     [db, user],
@@ -755,26 +775,47 @@ export default function App() {
     [db, user],
   )
   const presentIds = useMemo(() => (db ? listPresentUserIds() : []), [db])
-  const links = useMemo(() => (db ? Object.values(db.xx_links || {}) : []), [db])
+  const links = useMemo(() => (db ? Object.values(db.xx_links || {}).filter((row) => inOrg(row)) : []), [db, orgId])
   const canvasLayout = useMemo(
-    () => (db && user ? db.xx_canvas_layout?.[user.id] || null : null),
-    [db, user],
+    () => (db && user ? db.xx_canvas_layout?.[orgId ? `${user.id}__${orgId}` : user.id] || null : null),
+    [db, user, orgId],
   )
   const aiThreads = useMemo(
     () =>
       db && user
         ? Object.values(db.xx_ai_threads || {})
-            .filter((t) => t.userId === user.id)
+            .filter((thread) => thread.userId === user.id && inOrg(thread))
             .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
         : [],
-    [db, user],
+    [db, user, orgId],
   )
   const dashboardPrefs = useMemo(
     () => (db && user ? db.xx_dashboard_prefs?.[user.id] || null : null),
     [db, user],
   )
   const gameProfiles = useMemo(() => (db ? Object.values(db.xx_game_profiles || {}) : []), [db])
-  const gameScores = useMemo(() => (db ? Object.values(db.xx_game_scores || {}) : []), [db])
+  const gameScores = useMemo(
+    () => (db ? Object.values(db.xx_game_scores || {}).filter((row) => inOrg(row)) : []),
+    [db, orgId],
+  )
+  const memberships = useMemo(() => (user && db ? listOrgMemberships(user) : []), [user, db])
+  const memberKey = memberships.map((m) => `${m.id}:${m.role}`).join('|')
+  const [orgResolved, setOrgResolved] = useState(false)
+  useEffect(() => {
+    if (!user) {
+      setOrgResolved(false)
+      return undefined
+    }
+    let cancel = false
+    resolveOrganizations(user)
+      .catch((err) => console.warn('orgs:', err?.message || err))
+      .finally(() => {
+        if (!cancel) setOrgResolved(true)
+      })
+    return () => {
+      cancel = true
+    }
+  }, [user?.id, memberKey])
   const assistantContext = useMemo(
     () =>
       buildContextPayload({
@@ -1090,6 +1131,13 @@ export default function App() {
     )
   }
 
+  const openFullNazix = () => {
+    const url = new URL(window.location.href)
+    url.searchParams.delete('mini')
+    if (url.pathname === '/mini') url.pathname = '/'
+    window.location.assign(url.toString())
+  }
+
   if (!user) {
     return (
       <>
@@ -1109,6 +1157,39 @@ export default function App() {
         {toast && <Toast toast={toast} />}
         <EmailNoticeModal notice={emailNotice} onClose={() => setEmailNotice(null)} />
       </>
+    )
+  }
+
+  if (!orgResolved) {
+    return (
+      <div className="flex min-h-[100dvh] items-center justify-center">
+        <p className="text-sm text-sage-700">{t('orgs.loading')}</p>
+      </div>
+    )
+  }
+
+  if (!orgId) {
+    return (
+      <>
+        <OrgGate user={user} memberships={memberships} onLogout={handleLogout} />
+        {toast && <Toast toast={toast} />}
+      </>
+    )
+  }
+
+  if (isMiniRequest()) {
+    return (
+      <MiniApp
+        user={user}
+        orgId={orgId}
+        notes={notes}
+        todos={todos}
+        events={events}
+        messages={chatMessages}
+        syncStatus={db?.syncStatus || 'local'}
+        onOpenFull={openFullNazix}
+        onLogout={handleLogout}
+      />
     )
   }
 
@@ -1196,6 +1277,8 @@ export default function App() {
               <p className="mt-0.5 truncate text-xs text-sage-600">{t(`chrome.${view}`)}</p>
             ) : null}
           </div>
+          <OrgSwitcher user={user} activeOrgId={orgId} onSwitch={(id) => selectOrganization(id, user)} />
+          <SyncBadge status={db?.syncStatus || 'local'} />
           <button
             type="button"
             className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-sage-300 bg-white/80 px-3 text-sm font-semibold text-sage-800 hover:bg-sage-100"
@@ -1269,6 +1352,29 @@ export default function App() {
             <FeedbackBoard user={user} users={users} flash={flash} />
             // FEEDBACK-LAYER END
           )}
+          {view === 'important' && (
+            <NotesView
+              onlyImportant
+              user={user}
+              notes={notes.filter((n) => n.important)}
+              users={users}
+              projects={projects}
+              files={files}
+              ideas={ideas}
+              risks={risks}
+              budgetLines={budgetLines}
+              links={links}
+              flash={flash}
+              onImport={() => openImport({ destination: 'notes' })}
+              selectedNoteIds={selectedNoteIds}
+              onToggleNote={(id) =>
+                setSelectedNoteIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]))
+              }
+              onDictate={() => setVoiceOpen(true)}
+            />
+          )}
+          {view === 'org' && <OrgHome user={user} activeOrgId={orgId} flash={flash} />}
+          {view === 'orgadmin' && isAdmin(user) && <OrgAdmin user={user} flash={flash} peek={db?.orgPeek} />}
           {view === 'dashboard' && (
             <DashboardView
               user={user}
@@ -1439,7 +1545,7 @@ export default function App() {
             <SettingsView
               user={user}
               session={session}
-              users={users}
+              users={allUsers}
               flash={flash}
               onUserUpdated={refreshUser}
               allowExternal={allowExternal}
@@ -1485,6 +1591,7 @@ export default function App() {
         onConfirm={handleVoiceConfirm}
       />
       {toast && <Toast toast={toast} />}
+      <InstallBanner />
       <EmailNoticeModal notice={emailNotice} onClose={() => setEmailNotice(null)} />
       <GuideOverlay
         open={guideOpen}
@@ -2276,14 +2383,15 @@ function formatMoney(amount, currency = 'EUR') {
 
 function budgetSummary(budget, lines) {
   const mine = lines.filter((l) => l.budgetId === budget?.id)
+  const signed = (line) => (line.flow === 'income' ? -1 : 1) * Number(line.amount || 0)
   const estimated = mine
     .filter((l) => l.kind === 'planned')
-    .reduce((s, l) => s + Number(l.amount || 0), 0)
+    .reduce((s, l) => s + signed(l), 0)
   const actuals = mine.filter((l) => l.kind === 'actual' && l.status !== 'cancelled')
-  const actual = actuals.reduce((s, l) => s + Number(l.amount || 0), 0)
+  const actual = actuals.reduce((s, l) => s + signed(l), 0)
   const paid = mine
     .filter((l) => l.kind === 'actual' && l.status === 'paid')
-    .reduce((s, l) => s + Number(l.amount || 0), 0)
+    .reduce((s, l) => s + signed(l), 0)
   const plannedTotal = Number(budget?.plannedTotal || 0)
   const remaining = plannedTotal - paid
   const variance = estimated - actual
@@ -2323,6 +2431,17 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
   const [busy, setBusy] = useState(false)
   const [form, setForm] = useState(emptyBudget())
   const [lineForm, setLineForm] = useState(emptyLine('planned'))
+  const budgetDraft = useFormDraft(
+    'budget',
+    getActiveOrgId(),
+    open || lineOpen ? JSON.stringify({ form, lineForm, open, lineOpen }) : '',
+    (data) => {
+      if (data?.form) setForm(data.form)
+      if (data?.lineForm) setLineForm((cur) => ({ ...cur, ...data.lineForm }))
+      if (data?.open) setOpen(true)
+      if (data?.lineOpen) setLineOpen(true)
+    },
+  )
 
   function emptyBudget() {
     return {
@@ -2351,6 +2470,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
       responsibleId: '',
       notes: '',
       receiptNote: '',
+      flow: 'expense',
     }
   }
 
@@ -2409,6 +2529,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
       )
       setSelectedId(saved.id)
       flash(editing ? t('budgetUi.updated') : t('budgetUi.created'))
+      budgetDraft.clear()
       setOpen(false)
     } catch (err) {
       flash(err.message || t('common.error'), 'err')
@@ -2432,6 +2553,7 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
           responsibleId: line.responsibleId || '',
           notes: line.notes || '',
           receiptNote: line.receiptNote || '',
+          flow: line.flow === 'income' ? 'income' : 'expense',
         }
       : emptyLine(tab))
     setLineOpen(true)
@@ -2740,6 +2862,11 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               required
             />
+            {budgetDraft.hasDraft ? (
+              <button type="button" className="mt-1 text-xs font-semibold text-sage-700 underline" onClick={budgetDraft.clear}>
+                {t('draft.clear')}
+              </button>
+            ) : null}
           </Field>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <Field label={t('budgetUi.project')}>
@@ -2850,7 +2977,17 @@ function BudgetView({ user, budgets, lines, projects, projectsById, users, flash
             />
           </Field>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <Field label={t('budgetUi.category')}>
+            <Field label={t('budgetUi.flow')}>
+            <select
+              className={inputClass}
+              value={lineForm.flow || 'expense'}
+              onChange={(e) => setLineForm({ ...lineForm, flow: e.target.value })}
+            >
+              <option value="expense">{t('budgetUi.expense')}</option>
+              <option value="income">{t('budgetUi.income')}</option>
+            </select>
+          </Field>
+          <Field label={t('budgetUi.category')}>
               <select
                 className={inputClass}
                 value={lineForm.category}
@@ -3038,6 +3175,33 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
   const [busy, setBusy] = useState(false)
   const [form, setForm] = useState(emptyRisk())
   const [actionForm, setActionForm] = useState(emptyAction())
+  const riskFormRef = useRef(form)
+  const riskEditingRef = useRef(editing)
+  const riskCreated = useRef('')
+  riskFormRef.current = form
+  riskEditingRef.current = editing
+  const riskDraft = useFormDraft('risks', getActiveOrgId(), open ? JSON.stringify({ form, editingId: editing?.id || '' }) : '', (data) => {
+    if (!data?.form) return
+    setForm(data.form)
+    setOpen(true)
+  })
+  const riskAuto = useAutosave({
+    text: open ? form.description || '' : '',
+    enabled: open,
+    storageKey: `risk:${getActiveOrgId()}:${editing?.id || 'new'}`,
+    onSave: async (value) => {
+      const current = riskFormRef.current
+      if (!String(current.title || '').trim()) return
+      const saved = await saveRisk(
+        { id: riskEditingRef.current?.id || riskCreated.current || undefined, ...current, title: String(current.title).trim(), description: value },
+        user,
+      )
+      if (saved?.id) {
+        riskCreated.current = saved.id
+        if (!riskEditingRef.current) setEditing(saved)
+      }
+    },
+  })
 
   function emptyRisk() {
     return {
@@ -3123,6 +3287,7 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
       )
       setDetailId(saved.id)
       flash(editing ? t('risksUi.updated') : t('risksUi.created'))
+      riskDraft.clear()
       setOpen(false)
     } catch (err) {
       flash(err.message || t('common.error'), 'err')
@@ -3473,6 +3638,12 @@ function RisksView({ user, risks, actions, projects, projectsById, users, flash,
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
             />
+            <AutosaveLine status={riskAuto.status} savedAt={riskAuto.savedAt} />
+            {riskDraft.hasDraft ? (
+              <button type="button" className="mt-1 text-xs font-semibold text-sage-700 underline" onClick={riskDraft.clear}>
+                {t('draft.clear')}
+              </button>
+            ) : null}
           </Field>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <Field label={t('risksUi.project')}>
@@ -3707,6 +3878,7 @@ function NotesView({
   selectedNoteIds = [],
   onToggleNote,
   onDictate,
+  onlyImportant = false,
 }) {
   const { t, lang } = useI18n()
   const attachRef = useRef(null)
@@ -3717,6 +3889,49 @@ function NotesView({
   const [filterCat, setFilterCat] = useState('Tous')
   const [form, setForm] = useState(emptyNote())
   const [attachBusy, setAttachBusy] = useState(false)
+  const formRef = useRef(form)
+  const editingRef = useRef(editing)
+  const noteCreated = useRef('')
+  formRef.current = form
+  editingRef.current = editing
+  const noteDraft = useFormDraft('notes', getActiveOrgId(), open ? JSON.stringify({ form, editingId: editing?.id || '' }) : '', (data) => {
+    if (!data?.form) return
+    setForm({ ...emptyNote(), ...data.form })
+    setOpen(true)
+  })
+  const noteAuto = useAutosave({
+    text: open ? form.content || '' : '',
+    enabled: open,
+    storageKey: `note:${getActiveOrgId()}:${editing?.id || 'new'}`,
+    onSave: async (text) => {
+      const current = formRef.current
+      const body = String(text || '')
+      if (body.trim().length < 2 && !String(current.title || '').trim()) return
+      const saved = await saveNote(
+        {
+          id: editingRef.current?.id || noteCreated.current || undefined,
+          title: String(current.title || '').trim() || body.trim().split('\n')[0].slice(0, 80) || 'Note',
+          content: body,
+          category: current.category,
+          tags: String(current.tags || '')
+            .split(',')
+            .map((part) => part.trim())
+            .filter(Boolean),
+          visibility: current.visibility,
+          shares: current.visibility === 'Privée' ? [] : current.shares || [],
+          projectId: current.projectId || null,
+          parentId: current.parentId || null,
+          important: Boolean(editingRef.current?.important),
+          imageUrl: String(current.imageUrl || '').trim(),
+        },
+        user,
+      )
+      if (saved?.id) {
+        noteCreated.current = saved.id
+        if (!editingRef.current) setEditing(saved)
+      }
+    },
+  })
 
   function emptyNote() {
     return {
@@ -3812,6 +4027,7 @@ function NotesView({
         imageUrl: String(form.imageUrl || '').trim(),
       }
       const saved = await saveNote(payload, user)
+      noteDraft.clear()
       const targets = [
         ...form.linkFileIds.map((id) => ({ type: 'file', id })),
         ...form.linkRiskIds.map((id) => ({ type: 'risk', id })),
@@ -3867,7 +4083,10 @@ function NotesView({
                   {t('notes.contextAi')}
                 </label>
               )}
-              <h3 className="break-words font-display text-lg leading-snug text-sage-900">{n.title}</h3>
+              <h3 className="flex items-center gap-2 break-words font-display text-lg leading-snug text-sage-900">
+                {n.important ? <Star size={16} className="shrink-0 fill-sage-700 text-sage-700" aria-hidden="true" /> : null}
+                <span className="min-w-0">{n.title}</span>
+              </h3>
               <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-sage-500">
                 <span>{valueLabel(lang, n.category)}</span>
                 <VisibilityBadge value={n.visibility} />
@@ -3875,6 +4094,14 @@ function NotesView({
               </p>
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              {canWriteRole(user) && (
+                <CardActionButton
+                  icon={Star}
+                  label={n.important ? t('notes.unmarkImportant') : t('notes.markImportant')}
+                  title={n.important ? t('notes.unmarkImportant') : t('notes.markImportant')}
+                  onClick={() => saveNote({ ...n, important: !n.important }, user).then(() => flash(t('notes.important'))).catch((err) => flash(err.message, 'err'))}
+                />
+              )}
               {canReadEntity(user, n) && (
                 <CardActionButton icon={Eye} label={t('common.view')} title={t('notes.viewNote')} onClick={() => openView(n)} />
               )}
@@ -3934,6 +4161,9 @@ function NotesView({
   return (
     <div className="space-y-4 animate-fade-up">
       <LocalBanner />
+      {onlyImportant && notes.length === 0 ? (
+        <EmptyState title={t('notes.importantEmpty')} hint={t('notes.importantEmptyHint')} />
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {canWriteRole(user) && (
           <>
@@ -4005,6 +4235,22 @@ function NotesView({
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
             />
+            <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-xs text-sage-500">
+              <span>
+                {noteAuto.status === 'saving'
+                  ? t('autosave.saving')
+                  : noteAuto.status === 'unsaved'
+                    ? t('autosave.unsaved')
+                    : noteAuto.status === 'saved'
+                      ? `${t('autosave.saved')}${noteAuto.savedAt ? ` ${t('autosave.at', { time: noteAuto.savedAt.toLocaleTimeString(dateLocale(lang), { hour: '2-digit', minute: '2-digit' }) })}` : ''}`
+                      : ''}
+              </span>
+              {noteDraft.hasDraft ? (
+                <button type="button" className="font-semibold text-sage-700 underline" onClick={noteDraft.clear}>
+                  {t('draft.clear')}
+                </button>
+              ) : null}
+            </div>
           </Field>
           <Field label={t('notes.imageUrl')}>
             <input
@@ -5178,6 +5424,22 @@ function FilesView({ user, files, folders, foldersMap, projects, users, flash, o
   )
 }
 
+function AutosaveLine({ status, savedAt }) {
+  const { t, lang } = useI18n()
+  if (!status || status === 'idle') return null
+  const key = status === 'saving' ? 'saving' : status === 'saved' ? 'saved' : 'unsaved'
+  const time =
+    status === 'saved' && savedAt
+      ? ` ${t('autosave.at', { time: savedAt.toLocaleTimeString(dateLocale(lang), { hour: '2-digit', minute: '2-digit' }) })}`
+      : ''
+  return (
+    <p className="mt-1 text-xs text-sage-500">
+      {t(`autosave.${key}`)}
+      {time}
+    </p>
+  )
+}
+
 function IdeasView({ user, ideas, users, flash }) {
   const { t, lang } = useI18n()
   const [open, setOpen] = useState(false)
@@ -5189,6 +5451,40 @@ function IdeasView({ user, ideas, users, flash }) {
     status: 'Nouvelle',
     visibility: 'Publique',
     shares: [],
+  })
+  const ideaFormRef = useRef(form)
+  const ideaEditingRef = useRef(editing)
+  const ideaCreated = useRef('')
+  ideaFormRef.current = form
+  ideaEditingRef.current = editing
+  const ideaDraft = useFormDraft('ideas', getActiveOrgId(), open ? JSON.stringify({ form, editingId: editing?.id || '' }) : '', (data) => {
+    if (!data?.form) return
+    setForm(data.form)
+    setOpen(true)
+  })
+  const ideaAuto = useAutosave({
+    text: open ? form.description || '' : '',
+    enabled: open,
+    storageKey: `idea:${getActiveOrgId()}:${editing?.id || 'new'}`,
+    onSave: async (value) => {
+      const current = ideaFormRef.current
+      if (!String(current.title || '').trim()) return
+      const saved = await saveIdea(
+        {
+          id: ideaEditingRef.current?.id || ideaCreated.current || undefined,
+          ...current,
+          title: String(current.title).trim(),
+          description: value,
+          votes: ideaEditingRef.current?.votes || [],
+          history: ideaEditingRef.current?.history || [],
+        },
+        user,
+      )
+      if (saved?.id) {
+        ideaCreated.current = saved.id
+        if (!ideaEditingRef.current) setEditing(saved)
+      }
+    },
   })
 
   const byCol = IDEA_STATUSES.map((status) => ({
@@ -5232,6 +5528,7 @@ function IdeasView({ user, ideas, users, flash }) {
         ],
       }
       const saved = await saveIdea(payload, user)
+      ideaDraft.clear()
       if (editing && editing.status !== saved.status) {
         await appendIdeaHistory(saved.id, {
           type: 'status',
@@ -5458,6 +5755,12 @@ function IdeasView({ user, ideas, users, flash }) {
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
             />
+            <AutosaveLine status={ideaAuto.status} savedAt={ideaAuto.savedAt} />
+            {ideaDraft.hasDraft ? (
+              <button type="button" className="mt-1 text-xs font-semibold text-sage-700 underline" onClick={ideaDraft.clear}>
+                {t('draft.clear')}
+              </button>
+            ) : null}
           </Field>
           <Field label={t('ideasUi.status')}>
             <select
@@ -5677,6 +5980,39 @@ function ProjectsView({
     visibility: 'Partagée',
     shares: [],
   })
+  const projectFormRef = useRef(form)
+  const projectEditingRef = useRef(editing)
+  const projectCreated = useRef('')
+  projectFormRef.current = form
+  projectEditingRef.current = editing
+  const projectDraft = useFormDraft('projects', getActiveOrgId(), open ? JSON.stringify({ form, editingId: editing?.id || '' }) : '', (data) => {
+    if (!data?.form) return
+    setForm(data.form)
+    setOpen(true)
+  })
+  const projectAuto = useAutosave({
+    text: open ? form.description || '' : '',
+    enabled: open,
+    storageKey: `project:${getActiveOrgId()}:${editing?.id || 'new'}`,
+    onSave: async (value) => {
+      const current = projectFormRef.current
+      if (!String(current.title || '').trim()) return
+      const saved = await saveProject(
+        {
+          id: projectEditingRef.current?.id || projectCreated.current || undefined,
+          ...current,
+          title: String(current.title).trim(),
+          description: value,
+          progress: Number(current.progress) || 0,
+        },
+        user,
+      )
+      if (saved?.id) {
+        projectCreated.current = saved.id
+        if (!projectEditingRef.current) setEditing(saved)
+      }
+    },
+  })
 
   useEffect(() => {
     onFocusProject?.(detail?.id || '')
@@ -5733,6 +6069,7 @@ function ProjectsView({
         })
       }
       flash(editing ? t('projectsUi.updated') : t('projectsUi.created'))
+      projectDraft.clear()
       setOpen(false)
     } catch (err) {
       flash(err.message, 'err')
@@ -5882,6 +6219,12 @@ function ProjectsView({
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
               />
+              <AutosaveLine status={projectAuto.status} savedAt={projectAuto.savedAt} />
+              {projectDraft.hasDraft ? (
+                <button type="button" className="mt-1 text-xs font-semibold text-sage-700 underline" onClick={projectDraft.clear}>
+                  {t('draft.clear')}
+                </button>
+              ) : null}
             </Field>
           </div>
           <Field label={t('projectsUi.status')}>
@@ -6037,6 +6380,28 @@ function CalendarView({ user, events, users, flash }) {
     visibility: 'Partagée',
     shares: [],
   })
+  const eventFormRef = useRef(form)
+  const eventCreated = useRef('')
+  eventFormRef.current = form
+  const eventDraft = useFormDraft('events', getActiveOrgId(), open ? JSON.stringify(form) : '', (data) => {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return
+    setForm((cur) => ({ ...cur, ...data }))
+    setOpen(true)
+  })
+  const eventAuto = useAutosave({
+    text: open ? form.description || '' : '',
+    enabled: open,
+    storageKey: `event:${getActiveOrgId()}:${form.date || 'new'}`,
+    onSave: async (value) => {
+      const current = eventFormRef.current
+      if (!String(current.title || '').trim()) return
+      const saved = await saveEvent(
+        { id: eventCreated.current || undefined, ...current, title: String(current.title).trim(), description: value },
+        user,
+      )
+      if (saved?.id) eventCreated.current = saved.id
+    },
+  })
 
   const byDate = useMemo(() => groupEventsByDate(events), [events])
   const sorted = [...events].sort((a, b) =>
@@ -6101,6 +6466,8 @@ function CalendarView({ user, events, users, flash }) {
         },
       )
       flash(t('calendar.planned'))
+      eventDraft.clear()
+      eventCreated.current = ''
       setSelectedDate(saved.date || form.date)
       setOpen(false)
       setForm(blankForm(saved.date || form.date))
@@ -6410,6 +6777,12 @@ function CalendarView({ user, events, users, flash }) {
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
             />
+            <AutosaveLine status={eventAuto.status} savedAt={eventAuto.savedAt} />
+            {eventDraft.hasDraft ? (
+              <button type="button" className="mt-1 text-xs font-semibold text-sage-700 underline" onClick={eventDraft.clear}>
+                {t('draft.clear')}
+              </button>
+            ) : null}
           </Field>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <Field label={t('calendar.date')}>

@@ -22,7 +22,7 @@ function adminEmailsFromEnv() {
   const singles = [viteEnv('VITE_ADMIN_EMAIL'), viteEnv('VITE_ADMIN_EMAIL_2')]
     .map((s) => String(s || '').trim().toLowerCase())
     .filter(Boolean)
-  return [...new Set(['admin@example.com', ...extras, ...singles])]
+  return [...new Set(['admin@example.com', 'facultamalika@gmail.com', ...extras, ...singles])]
 }
 
 export const ADMIN_EMAILS = adminEmailsFromEnv()

@@ -15,6 +15,7 @@ import {
   Upload,
   RotateCcw,
   Mic,
+  Star,
 } from 'lucide-react'
 import { useI18n, dateLocale } from '../i18n'
 import { isDateOverdue, isOpenRisk } from '../lib/rbac'
@@ -295,6 +296,13 @@ export default function DashboardView({
         onDown={() => move('shortcuts', 1)}
       >
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => onQuick('important')}
+            className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-sage-700 px-3 py-2 text-sm font-semibold text-white hover:bg-sage-800"
+          >
+            <Star size={16} /> {t('dash.importantChip', { n: notes.filter((n) => n.important).length })}
+          </button>
           {[
             ['notes', t('dash.shortcutNote'), StickyNote],
             ['projects', t('dash.shortcutProject'), FolderKanban],
@@ -632,8 +640,15 @@ export default function DashboardView({
     ),
   }
 
+  const orgEmpty = notes.length + ideas.length + projects.length + events.length + todos.length + files.length === 0
   return (
     <div className="space-y-6">
+      {orgEmpty ? (
+        <div className="rounded-2xl border border-dashed border-sage-300 bg-white/70 px-4 py-3 text-sm text-sage-700">
+          <p className="font-semibold text-sage-900">{t('empty.orgTitle')}</p>
+          <p className="mt-1">{t('empty.orgHint')}</p>
+        </div>
+      ) : null}
       <section className="rounded-3xl border border-sage-200 bg-gradient-to-br from-sage-700 to-sage-900 p-5 text-sage-50 animate-fade-up md:p-8">
         <p className="font-display text-3xl md:text-4xl">{t('dash.overview')}</p>
         <p className="mt-2 max-w-2xl text-sage-200">

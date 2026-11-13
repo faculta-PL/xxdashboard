@@ -64,6 +64,7 @@ import {
   idbDeleteBlob,
 } from './files'
 import { VERIFY_EMAIL, RESET_EMAIL, firebaseUnavailableLine } from './emailCopy'
+import { ORG_SCOPED_COLLECTIONS, createOrgLayer } from './orgLayer'
 
 function viteEnv(key) {
   try {
@@ -94,6 +95,7 @@ const LOCAL_FALLBACK_NOTICE = 'Connexion en mode local — synchronisation plus 
 // Nazix persistence keys kept for compatibility with existing local data.
 const LOCAL_KEY = 'xxdashboard_v1'
 const SESSION_KEY = 'xxdashboard_session_token'
+const ACTIVE_ORG_KEY = 'nazix_active_org'
 const GENERAL_GROUP_ID = 'grp_general'
 const SESSION_HOURS = 24
 /** Fail-open budget so splash never waits on a hung Firestore/Auth call. */
@@ -115,12 +117,30 @@ function withTimeout(promise, ms, label) {
   })
 }
 
-/** idle | ok | timeout | error | skipped */
+/** idle | ok | timeout | error | skipped | offline */
 let firestoreSyncState = 'idle'
 let realtimeAttached = false
+let activeOrgId = ''
+try { activeOrgId = localStorage.getItem(ACTIVE_ORG_KEY) || '' } catch { activeOrgId = '' }
+let orgPeek = { orgId: '', loading: false, error: '', rows: {} }
+let listenerUserId = ''
+let listenerIsAdmin = false
+const ORG_SCOPED = new Set(ORG_SCOPED_COLLECTIONS)
+const GLOBAL_LISTEN = ['xx_users', 'xx_sessions', 'xx_orgs', 'xx_org_members', 'xx_settings', 'xx_dashboard_prefs', 'xx_game_profiles', 'xx_reset_tokens']
 
 export function getFirestoreSyncState() {
   return firestoreSyncState
+}
+
+export function computeSyncStatus() {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline'
+  if (!firebaseConfigured || !db) return 'local'
+  if (firestoreSyncState === 'ok') return 'live'
+  return 'local'
+}
+
+export function getActiveOrgId() {
+  return activeOrgId
 }
 
 export function getBootHint() {
@@ -160,6 +180,8 @@ const COLLECTIONS = [
   'xx_game_profiles',
   'xx_game_scores',
   'xx_feedback',
+  'xx_orgs',
+  'xx_org_members',
 ]
 
 function emptyDb() {
@@ -167,26 +189,51 @@ function emptyDb() {
 }
 
 function loadLocal() {
+  const base = emptyDb()
   try {
     const raw = localStorage.getItem(LOCAL_KEY)
-    if (!raw) return emptyDb()
-    const parsed = JSON.parse(raw)
-    const base = emptyDb()
-    for (const c of COLLECTIONS) {
-      base[c] = parsed[c] || {}
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      for (const c of COLLECTIONS) base[c] = parsed[c] || {}
     }
-    return base
-  } catch {
-    return emptyDb()
-  }
+  } catch { /* keep empty */ }
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i) || ''
+      const match = key.match(/^nazix:([^:]+):(xx_[a-z0-9_]+)$/)
+      if (!match || !ORG_SCOPED.has(match[2])) continue
+      const parsed = JSON.parse(localStorage.getItem(key) || '{}')
+      if (parsed && typeof parsed === 'object') base[match[2]] = { ...(base[match[2]] || {}), ...parsed }
+    }
+  } catch { /* namespaced keys are optional */ }
+  return base
 }
 
 function saveLocal(data) {
+  try { localStorage.setItem(LOCAL_KEY, JSON.stringify(data)) }
+  catch (err) { console.warn('localStorage save failed:', err.message) }
   try {
-    localStorage.setItem(LOCAL_KEY, JSON.stringify(data))
-  } catch (err) {
-    console.warn('localStorage save failed:', err.message)
-  }
+    const buckets = {}
+    for (const col of ORG_SCOPED) {
+      for (const row of Object.values(data[col] || {})) {
+        if (!row?.id) continue
+        const oid = row.orgId || '_unscoped'
+        if (!buckets[oid]) buckets[oid] = {}
+        if (!buckets[oid][col]) buckets[oid][col] = {}
+        buckets[oid][col][row.id] = row
+      }
+    }
+    for (const [oid, cols] of Object.entries(buckets)) {
+      for (const [col, map] of Object.entries(cols)) localStorage.setItem(`nazix:${oid}:${col}`, JSON.stringify(map))
+    }
+  } catch (err) { console.warn('org localStorage save failed:', err.message) }
+}
+
+function applyOrgStamp(col, value) {
+  if (!value || typeof value !== 'object' || !ORG_SCOPED.has(col)) return value
+  if (value.orgId) return value
+  if (!activeOrgId) return value
+  return { ...value, orgId: activeOrgId }
 }
 
 let memory = loadLocal()
@@ -215,6 +262,9 @@ function snapshotState() {
     clone.xx_sessions[id] = rest
   }
   clone.xx_reset_tokens = {}
+  clone.activeOrgId = activeOrgId
+  clone.syncStatus = computeSyncStatus()
+  clone.orgPeek = orgPeek
   return clone
 }
 
@@ -229,6 +279,7 @@ export function getStoreSnapshot() {
 }
 
 async function persistDoc(col, id, value, { required = false, remote = true, wait = false } = {}) {
+  value = applyOrgStamp(col, value)
   if (!memory[col]) memory[col] = {}
   memory[col][id] = value
   saveLocal(memory)
@@ -856,37 +907,122 @@ async function pullCollectionsOnce() {
   notify()
 }
 
-function attachRealtimeListeners() {
-  if (!firebaseConfigured || !db || realtimeAttached) return
-  realtimeAttached = true
-  for (const col of COLLECTIONS) {
-    try {
-      onSnapshot(
-        collection(db, col),
-        (snap) => {
-          if (!memory[col]) memory[col] = {}
-          // Merge docChanges so a partial/empty snapshot cannot wipe local-only docs
-          // (admin seed, unsynced writes) the way replacing the whole map did.
-          for (const change of snap.docChanges()) {
-            const d = change.doc
-            if (change.type === 'removed') {
-              delete memory[col][d.id]
-            } else {
-              memory[col][d.id] = { id: d.id, ...d.data() }
-            }
+const listenerUnsubs = []
+
+function watchCollection(col, ref) {
+  try {
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (!memory[col]) memory[col] = {}
+        for (const change of snap.docChanges()) {
+          const d = change.doc
+          if (change.type === 'removed') {
+            const current = memory[col][d.id]
+            if (ORG_SCOPED.has(col) && activeOrgId && current?.orgId && current.orgId !== activeOrgId) continue
+            delete memory[col][d.id]
+          } else {
+            memory[col][d.id] = { id: d.id, ...d.data() }
           }
-          saveLocal(memory)
-          notify()
-          firestoreSyncState = 'ok'
-        },
-        (err) => {
-          console.warn(`Firestore listener ${col} failed:`, err.message)
-        },
-      )
-    } catch (err) {
-      console.warn(`Firestore onSnapshot ${col} failed:`, err.message)
+        }
+        saveLocal(memory)
+        firestoreSyncState = 'ok'
+        if (col === 'xx_org_members' && listenerUserId) hydrateMemberOrgs(listenerUserId)
+        notify()
+      },
+      (err) => {
+        console.warn(`Firestore listener ${col} failed:`, err.message)
+        if (firestoreSyncState !== 'ok') firestoreSyncState = 'error'
+        notify()
+      },
+    )
+    listenerUnsubs.push(unsub)
+  } catch (err) {
+    console.warn(`Firestore onSnapshot ${col} failed:`, err.message)
+  }
+}
+
+async function hydrateMemberOrgs(userId) {
+  if (!firebaseConfigured || !db || !userId) return
+  const mine = Object.values(memory.xx_org_members || {}).filter((m) => m.userId === userId && m.orgId)
+  let changed = false
+  for (const member of mine) {
+    if (memory.xx_orgs?.[member.orgId]?.name) continue
+    try {
+      const snap = await getDoc(doc(db, 'xx_orgs', member.orgId))
+      if (snap.exists()) {
+        if (!memory.xx_orgs) memory.xx_orgs = {}
+        memory.xx_orgs[member.orgId] = { id: snap.id, ...snap.data() }
+        changed = true
+      }
+    } catch (err) { console.warn('org hydrate:', err.message) }
+  }
+  if (changed) { saveLocal(memory); notify() }
+}
+
+function rebindOrgListeners() {
+  if (!firebaseConfigured || !db) return
+  while (listenerUnsubs.length) {
+    try { listenerUnsubs.pop()() } catch { /* ignore */ }
+  }
+  realtimeAttached = true
+  const globals = listenerIsAdmin
+    ? GLOBAL_LISTEN
+    : GLOBAL_LISTEN.filter((col) => !['xx_orgs', 'xx_org_members', 'xx_sessions', 'xx_reset_tokens'].includes(col))
+  for (const col of globals) {
+    if (COLLECTIONS.includes(col)) watchCollection(col, collection(db, col))
+  }
+  if (!listenerIsAdmin && listenerUserId) {
+    watchCollection('xx_org_members', query(collection(db, 'xx_org_members'), where('userId', '==', listenerUserId)))
+    hydrateMemberOrgs(listenerUserId)
+  }
+  if (listenerIsAdmin) watchCollection('xx_feedback', collection(db, 'xx_feedback'))
+  if (!activeOrgId) { notify(); return }
+  const privateCols = new Set(['xx_notifications', 'xx_ai_threads', 'xx_canvas_layout'])
+  for (const col of ORG_SCOPED) {
+    if (privateCols.has(col)) {
+      if (!listenerUserId) continue
+      watchCollection(col, query(collection(db, col), where('userId', '==', listenerUserId)))
+    } else {
+      watchCollection(col, query(collection(db, col), where('orgId', '==', activeOrgId)))
     }
   }
+}
+
+function attachRealtimeListeners() {
+  if (!firebaseConfigured || !db) return
+  rebindOrgListeners()
+}
+
+function setActiveOrgId(id) {
+  const next = id || ''
+  if (next === activeOrgId) return
+  if (!listenerIsAdmin) {
+    for (const col of ORG_SCOPED) {
+      for (const [rowId, row] of Object.entries(memory[col] || {})) {
+        if (row?.orgId && row.orgId !== next) delete memory[col][rowId]
+      }
+    }
+  }
+  activeOrgId = next
+  try {
+    if (next) localStorage.setItem(ACTIVE_ORG_KEY, next)
+    else localStorage.removeItem(ACTIVE_ORG_KEY)
+  } catch { /* ignore */ }
+  if (firebaseConfigured && db) rebindOrgListeners()
+  notify()
+}
+
+function setPeek(next) {
+  orgPeek = next
+  notify()
+}
+
+export function bindRealtimeForUser(user) {
+  listenerUserId = user?.id || ''
+  listenerIsAdmin = Boolean(user && isAdmin(user))
+  if (firebaseConfigured && db) rebindOrgListeners()
+  else notify()
 }
 
 let bootPromise = null
@@ -1639,10 +1775,16 @@ export function listPresentUserIds() {
   return [...ids]
 }
 
+function generalGroupId(orgId = activeOrgId) {
+  return orgId ? `grp_${orgId}_general` : GENERAL_GROUP_ID
+}
+function orgMemberUserIds(orgId = activeOrgId) {
+  if (!orgId) return []
+  return Object.values(memory.xx_org_members || {}).filter((m) => m.orgId === orgId && m.userId).map((m) => m.userId)
+}
 async function addUserToGeneralGroup(userId) {
-  const group =
-    memory.xx_groups[GENERAL_GROUP_ID] ||
-    Object.values(memory.xx_groups || {}).find((g) => g.isGeneral)
+  if (!activeOrgId || !userId) return null
+  const group = memory.xx_groups[generalGroupId()]
   if (!group || !userId) return group
   if ((group.memberIds || []).includes(userId)) return group
   const updated = {
@@ -1656,44 +1798,24 @@ async function addUserToGeneralGroup(userId) {
 
 export async function ensureGeneralGroup(user) {
   if (!user?.id) throw new Error('Session requise.')
-  const allIds = [...new Set([...Object.keys(memory.xx_users || {}), user.id])]
-  const existing =
-    memory.xx_groups[GENERAL_GROUP_ID] ||
-    Object.values(memory.xx_groups || {}).find((g) => g.isGeneral)
+  if (!activeOrgId) throw new Error('Aucune organisation active.')
+  const id = generalGroupId()
+  const memberIds = [...new Set([...orgMemberUserIds(), user.id])]
+  const existing = memory.xx_groups[id]
+  const now = new Date().toISOString()
   if (!existing) {
-    const now = new Date().toISOString()
-    const group = {
-      id: GENERAL_GROUP_ID,
-      name: 'Général',
-      memberIds: allIds,
-      ownerId: user.id,
-      isGeneral: true,
-      createdAt: now,
-      updatedAt: now,
-    }
-    await persistDoc('xx_groups', GENERAL_GROUP_ID, group)
+    const group = { id, name: 'Général', memberIds, ownerId: user.id, isGeneral: true, orgId: activeOrgId, createdAt: now, updatedAt: now }
+    await persistDoc('xx_groups', id, group)
     return group
   }
-  const memberIds = [...new Set([...(existing.memberIds || []), ...allIds])]
-  const same =
-    existing.isGeneral &&
-    existing.memberIds?.length === memberIds.length &&
-    memberIds.every((id) => existing.memberIds.includes(id))
-  if (same) return existing
-  const updated = {
-    ...existing,
-    memberIds,
-    isGeneral: true,
-    name: existing.name || 'Général',
-    updatedAt: new Date().toISOString(),
-  }
-  await persistDoc('xx_groups', existing.id, updated)
+  const updated = { ...existing, orgId: activeOrgId, memberIds, isGeneral: true, name: existing.name || 'Général', updatedAt: now }
+  await persistDoc('xx_groups', id, updated)
   return updated
 }
 
 export function listGroupsForUser(user) {
   return Object.values(memory.xx_groups || {})
-    .filter((g) => canReadGroup(user, g))
+    .filter((g) => g.orgId === activeOrgId && canReadGroup(user, g))
     .sort((a, b) => {
       if (a.isGeneral && !b.isGeneral) return -1
       if (!a.isGeneral && b.isGeneral) return 1
@@ -1744,7 +1866,8 @@ export async function inviteToGroup(groupId, userIds, actor) {
   const group = memory.xx_groups[groupId]
   if (!group) throw new Error('Groupe introuvable.')
   if (!canWriteGroup(actor, group)) throw new Error('Permission refusée.')
-  const incoming = (userIds || []).filter(Boolean)
+  const allowed = new Set(orgMemberUserIds(group.orgId || activeOrgId))
+  const incoming = (userIds || []).filter((id) => id && allowed.has(id))
   const memberIds = [...new Set([...(group.memberIds || []), ...incoming])]
   const updated = { ...group, memberIds, updatedAt: new Date().toISOString() }
   await persistDoc('xx_groups', groupId, updated)
@@ -1792,6 +1915,9 @@ async function upsert(col, data, user) {
     }
   } else if (!canEditEntity(user, existing)) {
     throw new Error('Permission refusée.')
+  }
+  if (ORG_SCOPED.has(col) && !existing?.orgId && !data.orgId && !activeOrgId) {
+    throw new Error('Choisissez ou créez une organisation avant d’enregistrer.')
   }
   const merged = {
     ...existing,
@@ -2849,9 +2975,11 @@ export async function saveBudgetLine(data, user) {
   if (!BUDGET_LINE_KINDS.includes(kind)) throw new Error('Type de ligne invalide.')
   const category = data.category || existing?.category || BUDGET_CATEGORIES[0]
   if (!BUDGET_CATEGORIES.includes(category)) throw new Error('Catégorie invalide.')
-  const name = String(data.name || existing?.name || '').trim()
+  const name = String(data.name || data.label || existing?.name || '').trim()
   if (!name) throw new Error('Libellé requis.')
   const amount = parseAmount(data.amount ?? existing?.amount ?? 0)
+  const flow = data.flow || existing?.flow || 'expense'
+  if (flow !== 'income' && flow !== 'expense') throw new Error('Type de ligne invalide.')
   let status = existing?.status || ''
   if (kind === 'actual') {
     status = data.status || existing?.status || 'planned'
@@ -2865,6 +2993,7 @@ export async function saveBudgetLine(data, user) {
     category,
     name,
     amount,
+    flow,
     date: data.date ?? existing?.date ?? '',
     duePeriod: kind === 'salary' ? data.duePeriod ?? existing?.duePeriod ?? '' : '',
     roleTitle: kind === 'salary' ? String(data.roleTitle ?? existing?.roleTitle ?? '').trim() : '',
@@ -3172,8 +3301,10 @@ export async function saveCanvasLayout(positions, user) {
     throw new Error('Permission refusée (rôle Lecteur : positions en lecture seule).')
   }
   const now = new Date().toISOString()
-  const id = user.id
-  const existing = memory.xx_canvas_layout[id]
+  const id = activeOrgId ? `${user.id}__${activeOrgId}` : user.id
+  const legacy = memory.xx_canvas_layout[user.id]
+  const legacyOk = legacy && (!legacy.orgId || legacy.orgId === activeOrgId)
+  const existing = memory.xx_canvas_layout[id] || (legacyOk ? legacy : null)
   const row = {
     id,
     userId: user.id,
@@ -3198,7 +3329,7 @@ function requireThreadOwner(thread, user) {
 export function listAiThreads(user) {
   if (!user) return []
   return Object.values(memory.xx_ai_threads || {})
-    .filter((t) => t.userId === user.id)
+    .filter((t) => t.userId === user.id && t.orgId === activeOrgId)
     .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
 }
 
@@ -3281,6 +3412,7 @@ function foldGameName(value) {
 }
 
 async function persistCreateOnly(col, id, value) {
+  value = applyOrgStamp(col, value)
   if (!memory[col]) memory[col] = {}
   if (memory[col][id]) throw new Error('Enregistrement déjà présent (ajout seul).')
   memory[col][id] = value
@@ -3440,5 +3572,68 @@ export async function writeFeedbackDoc(row) {
   const next = { ...(prev || {}), ...row, id }
   await persistDoc('xx_feedback', id, next)
   return next
+}
+
+async function fetchOrgCol(col, orgId) {
+  if (!firebaseConfigured || !db || !orgId) return []
+  const snap = await getDocs(query(collection(db, col), where('orgId', '==', orgId)))
+  const list = []
+  snap.forEach((d) => {
+    const data = d.data() || {}
+    list.push({ id: d.id, title: data.title || data.name || '—', orgId: data.orgId || orgId })
+  })
+  return list
+}
+
+const orgApi = createOrgLayer({
+  getMemory: () => memory,
+  persistDoc,
+  removeDoc,
+  getActiveOrgId: () => activeOrgId,
+  setActiveOrgId,
+  isAdminUser: isAdmin,
+  newId: uid,
+  now: () => new Date().toISOString(),
+  setPeek,
+  fetchOrgCol,
+})
+
+export function listAllFeedback() {
+  return Object.values(memory.xx_feedback || {})
+}
+export function listOrgMemberships(user) { return orgApi.membershipsFor(user) }
+export function orgRole(user, orgId = activeOrgId) { return orgApi.memberOf(user, orgId)?.role || '' }
+export function canManageOrg(user, orgId = activeOrgId) { return orgApi.isManager(user, orgId) }
+export function selectOrganization(orgId, user) {
+  if (!user) throw new Error('Session requise.')
+  if (!orgId) { setActiveOrgId(''); return }
+  const allowed = orgApi.membershipsFor(user).some((m) => m.orgId === orgId)
+  if (!allowed) throw new Error('Vous n’appartenez pas à cette organisation.')
+  setActiveOrgId(orgId)
+}
+export function listOrganizations() {
+  return Object.values(memory.xx_orgs || {}).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr'))
+}
+export function listMembersOfOrg(orgId) {
+  return Object.values(memory.xx_org_members || {}).filter((m) => m.orgId === orgId)
+}
+export const createOrganization = (...args) => orgApi.createOrganization(...args)
+export async function resolveOrganizations(user) {
+  const result = await orgApi.resolveOrganizations(user)
+  bindRealtimeForUser(user)
+  return result
+}
+export const placeUserInOrg = (...args) => orgApi.placeUserInOrg(...args)
+export const removeOrgMember = (...args) => orgApi.removeOrgMember(...args)
+export const deleteOrganization = (...args) => orgApi.deleteOrganization(...args)
+export const loadOrgPeek = (...args) => orgApi.loadOrgPeek(...args)
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    firestoreSyncState = firebaseConfigured && db ? 'ok' : 'skipped'
+    if (firebaseConfigured && db) rebindOrgListeners()
+    notify()
+  })
+  window.addEventListener('offline', () => { firestoreSyncState = 'offline'; notify() })
 }
 

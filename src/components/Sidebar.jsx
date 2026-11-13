@@ -20,6 +20,8 @@ import {
   BoxSelect,
   Sparkles,
   Gamepad2,
+  Star,
+  Building2,
   PanelLeftClose,
   PanelLeftOpen,
   ChevronDown,
@@ -28,6 +30,7 @@ import {
   MessageSquarePlus,
 } from 'lucide-react'
 import { getBackendMode } from '../lib/store'
+import { isAdmin } from '../lib/rbac'
 import { useI18n } from '../i18n'
 
 export const NAV_GROUPS = [
@@ -38,6 +41,7 @@ export const NAV_GROUPS = [
       { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
       { id: 'projects', label: 'Projets', icon: FolderKanban },
       { id: 'notes', label: 'Notes', icon: StickyNote },
+      { id: 'important', label: 'Notes importantes', icon: Star },
       { id: 'ideas', label: 'Kanban', icon: Lightbulb },
       { id: 'calendar', label: 'Calendrier', icon: CalendarDays },
       { id: 'todos', label: 'Tâches', icon: ListTodo },
@@ -51,6 +55,8 @@ export const NAV_GROUPS = [
     id: 'collab',
     label: 'Collaboration',
     items: [
+      { id: 'org', label: 'Organisation', icon: Building2 },
+      { id: 'orgadmin', label: 'Organisations', icon: Building2 },
       { id: 'team', label: 'Équipe', icon: Users },
       { id: 'chat', label: 'Chat', icon: MessageCircle },
       { id: 'notifications', label: 'Notifications', icon: Bell },
@@ -191,7 +197,7 @@ export function Sidebar({
                 {collapsed && <div className="hidden h-px bg-sage-600/80 lg:block" aria-hidden />}
                 {!closed && (
                   <div className="mt-1 space-y-0.5">
-                    {group.items.map((item) => {
+                    {group.items.filter((item) => item.id !== 'orgadmin' || isAdmin(user)).map((item) => {
                       const Icon = item.icon
                       const active = view === item.id
                       const label = navLabel(t, item)

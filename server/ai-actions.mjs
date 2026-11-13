@@ -3,19 +3,35 @@
 
 export const ACTION_KINDS = [
   'create_note',
+  'update_note',
   'create_subnote',
   'create_idea',
   'create_risk',
   'create_budget_line',
+  'update_budget_line',
+  'create_task',
+  'update_task',
+  'create_event',
+  'update_event',
+  'create_project',
+  'update_project',
   'draft_message',
 ]
 
 export const ACTION_LABELS = {
   create_note: 'Créer une note',
+  update_note: 'Mettre à jour une note',
   create_subnote: 'Créer une sous-note',
   create_idea: 'Créer une idée',
   create_risk: 'Créer un risque',
   create_budget_line: 'Créer une ligne budgétaire',
+  update_budget_line: 'Mettre à jour une ligne',
+  create_task: 'Créer une tâche',
+  update_task: 'Mettre à jour une tâche',
+  create_event: 'Créer un événement',
+  update_event: 'Mettre à jour un événement',
+  create_project: 'Créer un projet',
+  update_project: 'Mettre à jour un projet',
   draft_message: 'Brouillon de message',
 }
 

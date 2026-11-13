@@ -11,6 +11,8 @@ import {
   inputClass,
 } from '../components/ui'
 import { formatDate, useI18n } from '../i18n'
+import { useAutosave, useFormDraft } from '../lib/formDraft'
+import { getActiveOrgId } from '../lib/store'
 import { canWriteRole } from '../lib/rbac'
 import {
   BUCKET_ORDER,
@@ -174,6 +176,36 @@ export default function TodosView({ user, users = [], lists = [], tasks = [], fl
   const [listColor, setListColor] = useState(LIST_COLORS[0])
   const [detail, setDetail] = useState(null)
   const [draft, setDraft] = useState(null)
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+  const todoDraft = useFormDraft(
+    'todos',
+    getActiveOrgId(),
+    draft ? JSON.stringify(draft) : '',
+    (data) => {
+      if (!data || !data.title) return
+      setDraft(data)
+      setDetail(data.id ? data : { id: 'new', ...data })
+    },
+  )
+  const todoAuto = useAutosave({
+    text: draft?.description || '',
+    enabled: Boolean(draft?.title && draft?.listId),
+    storageKey: `todo:${getActiveOrgId()}:${draft?.id || 'new'}`,
+    onSave: async (text) => {
+      const current = draftRef.current
+      if (!current?.title?.trim() || !current.listId) return
+      const saved = await onSaveTask({
+        ...current,
+        description: text,
+        id: current.id && current.id !== 'new' ? current.id : undefined,
+      })
+      if (saved?.id) {
+        setDraft((cur) => (cur ? { ...cur, id: saved.id, description: text } : cur))
+        setDetail((cur) => (cur ? { ...cur, id: saved.id } : cur))
+      }
+    },
+  })
   const [subtaskDraft, setSubtaskDraft] = useState('')
   const [confirm, setConfirm] = useState(null)
   const [undo, setUndo] = useState(null)
@@ -756,6 +788,22 @@ export default function TodosView({ user, users = [], lists = [], tasks = [], fl
                 value={draft.description || ''}
                 onChange={(e) => setDraft({ ...draft, description: e.target.value })}
               />
+              <div className="mt-1 flex items-center justify-between text-xs text-sage-500">
+                <span>
+                  {todoAuto.status === 'saving'
+                    ? t('autosave.saving')
+                    : todoAuto.status === 'unsaved'
+                      ? t('autosave.unsaved')
+                      : todoAuto.status === 'saved'
+                        ? t('autosave.saved')
+                        : ''}
+                </span>
+                {todoDraft.hasDraft ? (
+                  <button type="button" className="font-semibold text-sage-700 underline" onClick={todoDraft.clear}>
+                    {t('draft.clear')}
+                  </button>
+                ) : null}
+              </div>
             </label>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-sm">
