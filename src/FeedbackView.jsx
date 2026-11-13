@@ -14,6 +14,7 @@ const FEEDBACK_MODULE_IDS = [
   'notes',
   'ideas',
   'calendar',
+  'todos',
   'files',
   'budget',
   'risks',
