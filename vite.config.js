@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig, loadEnv } from 'vite'
 import { nazixAiPlugin } from './server/ai-middleware.mjs'
+import { tasksWirePlugin } from './server/tasks-wire.mjs'
 
 /** Charge un fichier .env dans process.env sans jamais exposer la clé au client. */
 function applyDotenvFile(file) {
@@ -42,7 +43,7 @@ export default defineConfig(({ mode }) => {
   }
   return {
     appType: 'spa',
-    plugins: [react(), tailwindcss(), nazixAiPlugin(process.env)],
+    plugins: [tasksWirePlugin(), react(), tailwindcss(), nazixAiPlugin(process.env)],
     // nazixAiPlugin: GET/POST /api/ai, /api/ai/stream, /api/ai/image, /api/ai-search on dev + preview (port 3847).
     server: {
       host: '0.0.0.0',
