@@ -15,7 +15,7 @@ export const FIRST_LOGIN_STEPS = {
     {
       id: 'work',
       title: 'L’espace de travail',
-      body: 'Le menu de gauche groupe les modules : Tableau de bord, Projets, Notes, Kanban, Calendrier, Fichiers, Budget et Risques. Chaque onglet s’ouvre en haut de page.',
+      body: 'Le menu de gauche groupe les modules : Tableau de bord, Projets, Notes, Kanban, Calendrier, Tâches, Fichiers, Budget et Risques. Chaque onglet s’ouvre en haut de page.',
       target: 'projects',
     },
     {
@@ -47,7 +47,7 @@ export const FIRST_LOGIN_STEPS = {
     {
       id: 'work',
       title: 'The workspace',
-      body: 'The left menu groups modules: Dashboard, Projects, Notes, Kanban, Calendar, Files, Budget and Risks. Each tab opens at the top of the page.',
+      body: 'The left menu groups modules: Dashboard, Projects, Notes, Kanban, Calendar, Tasks, Files, Budget and Risks. Each tab opens at the top of the page.',
       target: 'projects',
     },
     {
@@ -84,6 +84,7 @@ export const MODULE_CHROME = {
   games: { emoji: '🎮' },
   assistant: { emoji: '✨' },
   calendar: { emoji: '📅' },
+  todos: { emoji: '✅' },
   team: { emoji: '👥' },
   notifications: { emoji: '🔔' },
   search: { emoji: '🔎' },
@@ -195,6 +196,15 @@ export const MODULE_GUIDES = {
         'Cliquez un jour pour lister les événements et en créer un.',
         'Les événements partagés apparaissent chez les invités.',
         'Reliez un rendez-vous à un projet depuis la fiche projet.',
+      ],
+    },
+    todos: {
+      title: 'Tâches',
+      lead: 'Listes, priorités, échéances et sous-tâches. L’onglet s’appelle Tâches dans le menu.',
+      bullets: [
+        'Ajout rapide : !haute, #étiquette, demain.',
+        'Cochez pour terminer, puis Annuler dans le message.',
+        'Le tableau de bord affiche les tâches dues aujourd’hui.',
       ],
     },
     team: {
@@ -371,6 +381,15 @@ export const MODULE_GUIDES = {
         'The floating button does not block a form: the modal comes in front.',
       ],
     },
+    todos: {
+      title: 'Tasks',
+      lead: 'Lists, priorities, due dates and subtasks. The tab is called Tasks in the menu.',
+      bullets: [
+        'Quick add: !high, #tag, tomorrow.',
+        'Check to complete, then Undo in the message.',
+        'The dashboard shows tasks due today.',
+      ],
+    },
     calendar: {
       title: 'Calendar',
       lead: 'Month (or week) grid: appointments show on their date.',
@@ -469,6 +488,7 @@ export const GUIDE_INDEX = [
   'projects',
   'notes',
   'ideas',
+  'todos',
   'files',
   'budget',
   'risks',

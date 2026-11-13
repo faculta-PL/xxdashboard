@@ -57,6 +57,7 @@ import { AssistantFab, AssistantPanel, AssistantView, AiSettingsBlock } from './
 import { EmptyState, PriorityBadge, VisibilityBadge } from './components/ui'
 import { Sidebar, NAV_FLAT, readNavCollapsed } from './components/Sidebar'
 import DashboardView from './components/DashboardView'
+import TodosView from './views/Todos'
 import FeedbackView from './FeedbackView'
 import CreateToolsView from './CreateToolsView'
 import VoiceModal from './VoiceModal'
@@ -99,6 +100,10 @@ import {
   deleteProject,
   saveEvent,
   deleteEvent,
+  saveTodoList,
+  deleteTodoList,
+  saveTodo,
+  deleteTodo,
   appendIdeaHistory,
   voteIdea,
   notifyUsers,
@@ -646,6 +651,22 @@ export default function App() {
     () =>
       db && user
         ? Object.values(db.xx_events || {}).filter((e) => canReadEntity(user, e))
+        : [],
+    [db, user],
+  )
+  const todoLists = useMemo(
+    () =>
+      db && user
+        ? Object.values(db.xx_todo_lists || {})
+            .filter((list) => canReadEntity(user, list))
+            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr'))
+        : [],
+    [db, user],
+  )
+  const todos = useMemo(
+    () =>
+      db && user
+        ? Object.values(db.xx_todos || {}).filter((task) => canReadEntity(user, task))
         : [],
     [db, user],
   )
@@ -1276,6 +1297,7 @@ export default function App() {
               chatMessages={chatMessages}
               groups={groups}
               users={users}
+              todos={todos}
               storedPrefs={dashboardPrefs}
               onQuick={(v) => setView(v)}
               onImport={() => openImport({ destination: 'notes' })}
@@ -1383,6 +1405,19 @@ export default function App() {
           )}
           {view === 'calendar' && (
             <CalendarView user={user} events={events} users={users} flash={flash} />
+          )}
+          {view === 'todos' && (
+            <TodosView
+              user={user}
+              users={users}
+              lists={todoLists}
+              tasks={todos}
+              flash={flash}
+              onSaveList={(data) => saveTodoList(data, user)}
+              onDeleteList={(id) => deleteTodoList(id, user)}
+              onSaveTask={(data) => saveTodo(data, user)}
+              onDeleteTask={(id) => deleteTodo(id, user)}
+            />
           )}
           {view === 'team' && <TeamView users={users} presentIds={presentIds} />}
           {view === 'chat' && (

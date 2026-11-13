@@ -25,6 +25,7 @@ import {
 import { ref, uploadBytesResumable, getBlob, deleteObject } from 'firebase/storage'
 import { auth, db, storage, firebaseConfigured, getFirebaseStatus, firebaseConfig } from './firebase'
 import { sha256, randomToken, randomCode6, uid } from './crypto'
+import { toIsoDate } from './calendar'
 import {
   ROLES,
   canWriteRole,
@@ -139,6 +140,8 @@ const COLLECTIONS = [
   'xx_ideas',
   'xx_projects',
   'xx_events',
+  'xx_todo_lists',
+  'xx_todos',
   'xx_notifications',
   'xx_reset_tokens',
   'xx_groups',
@@ -317,6 +320,8 @@ async function remapUserReferences(fromId, toId) {
     'xx_ideas',
     'xx_projects',
     'xx_events',
+    'xx_todo_lists',
+    'xx_todos',
     'xx_groups',
     'xx_files',
     'xx_folders',
@@ -1866,6 +1871,105 @@ export async function saveEvent(data, user) {
 export async function deleteEvent(id, user) {
   await destroy('xx_events', id, user)
   await removeLinksFor('event', id)
+}
+
+const TODO_PRIORITIES = new Set(['low', 'medium', 'high', 'urgent'])
+const TODO_STATUSES = new Set(['todo', 'doing', 'done'])
+
+function normalizeTodoTags(value) {
+  const list = Array.isArray(value) ? value : String(value || '').split(/[\s,]+/)
+  return [...new Set(list.map((tag) => String(tag || '').replace(/^#/, '').trim().toLowerCase()).filter(Boolean))].slice(0, 12)
+}
+
+function normalizeTodoSubtasks(value) {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((sub) => ({
+      id: String(sub?.id || uid('sub')).slice(0, 48),
+      title: String(sub?.title || '').trim().slice(0, 240),
+      done: Boolean(sub?.done),
+    }))
+    .filter((sub) => sub.title)
+    .slice(0, 50)
+}
+
+export async function saveTodoList(data, user) {
+  const name = String(data?.name || '').trim()
+  if (!name) throw new Error('Nom de liste requis.')
+  if (!memory.xx_todo_lists) memory.xx_todo_lists = {}
+  return upsert('xx_todo_lists', {
+    ...data,
+    name: name.slice(0, 80),
+    color: String(data.color || '#3f6b54'),
+    archived: Boolean(data.archived),
+    visibility: data.visibility || 'Privée',
+  }, user)
+}
+
+export async function deleteTodoList(id, user) {
+  const existing = memory.xx_todo_lists?.[id]
+  if (!existing) return
+  await destroy('xx_todo_lists', id, user)
+  const children = Object.values(memory.xx_todos || {}).filter((task) => task.listId === id)
+  for (const task of children) {
+    if (!user || canDeleteEntity(user, task)) await removeDoc('xx_todos', task.id)
+  }
+}
+
+export async function saveTodo(data, user) {
+  const title = String(data?.title || '').trim()
+  if (!title) throw new Error('Titre requis.')
+  if (!memory.xx_todos) memory.xx_todos = {}
+  if (!memory.xx_todo_lists) memory.xx_todo_lists = {}
+  const existing = data.id ? memory.xx_todos[data.id] : null
+  const listId = String(data.listId || existing?.listId || '')
+  if (!listId || !memory.xx_todo_lists[listId]) throw new Error('Liste introuvable.')
+  const ownerId = existing?.ownerId || user?.id
+  const assigneeId = String(data.assigneeId ?? existing?.assigneeId ?? '').trim()
+  const prevAssignee = String(existing?.assigneeId || '')
+  let shares = Array.isArray(data.shares)
+    ? data.shares.map((share) => ({ ...share }))
+    : Array.isArray(existing?.shares)
+      ? existing.shares.map((share) => ({ ...share }))
+      : []
+  if (prevAssignee && prevAssignee !== assigneeId) {
+    shares = shares.filter((share) => share.userId !== prevAssignee)
+  }
+  if (assigneeId && assigneeId !== ownerId && !shares.some((share) => share.userId === assigneeId)) {
+    const assignee = memory.xx_users?.[assigneeId]
+    shares.push({
+      userId: assigneeId,
+      email: assignee?.email || '',
+      permission: 'Édition',
+    })
+  }
+  const status = TODO_STATUSES.has(data.status) ? data.status : existing?.status || 'todo'
+  const priority = TODO_PRIORITIES.has(data.priority) ? data.priority : existing?.priority || 'medium'
+  const dueRaw = data.dueDate !== undefined ? data.dueDate : existing?.dueDate
+  const dueDate = toIsoDate(dueRaw || '')
+  let completedAt = null
+  if (status === 'done') {
+    completedAt = existing?.status === 'done' && existing.completedAt ? existing.completedAt : new Date().toISOString()
+  }
+  return upsert('xx_todos', {
+    id: data.id,
+    title: title.slice(0, 200),
+    description: String(data.description ?? existing?.description ?? '').slice(0, 8000),
+    listId,
+    priority,
+    status,
+    dueDate,
+    tags: normalizeTodoTags(data.tags !== undefined ? data.tags : existing?.tags),
+    subtasks: normalizeTodoSubtasks(data.subtasks !== undefined ? data.subtasks : existing?.subtasks),
+    assigneeId,
+    completedAt,
+    visibility: 'Privée',
+    shares,
+  }, user)
+}
+
+export async function deleteTodo(id, user) {
+  await destroy('xx_todos', id, user)
 }
 
 export async function appendIdeaHistory(ideaId, entry) {
