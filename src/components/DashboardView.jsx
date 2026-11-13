@@ -9,6 +9,7 @@ import {
   FolderKanban,
   Lightbulb,
   CalendarDays,
+  ListTodo,
   ShieldAlert,
   Wallet,
   Upload,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react'
 import { useI18n, dateLocale } from '../i18n'
 import { isDateOverdue, isOpenRisk } from '../lib/rbac'
+import { priorityLabelKey, todayIso } from '../lib/todos'
 import { getBackendMode, saveDashboardPrefs } from '../lib/store'
 import {
   EmptyState,
@@ -33,6 +35,7 @@ import {
 
 export const DEFAULT_WIDGET_ORDER = [
   'shortcuts',
+  'todayTasks',
   'projects',
   'tasks',
   'events',
@@ -45,6 +48,7 @@ export const DEFAULT_WIDGET_ORDER = [
 
 const WIDGET_KEYS = {
   shortcuts: 'dash.wShortcuts',
+  todayTasks: 'dash.wTodayTasks',
   projects: 'dash.wProjects',
   tasks: 'dash.wTasks',
   events: 'dash.wEvents',
@@ -158,6 +162,7 @@ export default function DashboardView({
   chatMessages = [],
   groups = [],
   users = [],
+  todos = [],
   storedPrefs,
   onQuick,
   onImport,
@@ -268,6 +273,12 @@ export default function DashboardView({
   )
 
   const recentChat = useMemo(() => [...chatMessages].slice(-4).reverse(), [chatMessages])
+  const todayTasks = useMemo(() => {
+    const today = todayIso()
+    return todos
+      .filter((task) => task.status !== 'done' && task.dueDate === today)
+      .slice(0, 6)
+  }, [todos])
 
   const hidden = prefs.hidden
   const visible = prefs.order.filter((id) => !hidden.includes(id))
@@ -288,6 +299,7 @@ export default function DashboardView({
             ['notes', t('dash.shortcutNote'), StickyNote],
             ['projects', t('dash.shortcutProject'), FolderKanban],
             ['ideas', t('dash.shortcutIdea'), Lightbulb],
+            ['todos', t('dash.shortcutTask'), ListTodo],
             ['calendar', t('dash.shortcutEvent'), CalendarDays],
             ['risks', t('dash.shortcutRisk'), ShieldAlert],
             ['budget', t('dash.shortcutExpense'), Wallet],
@@ -368,6 +380,34 @@ export default function DashboardView({
                   </span>
                 </div>
                 <ProgressBar value={p.progress || 0} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </WidgetCard>
+    ),
+    todayTasks: (
+      <WidgetCard
+        id="todayTasks"
+        title={t('dash.wTodayTasks')}
+        delay={100}
+        onHide={() => hide('todayTasks')}
+        onUp={() => move('todayTasks', -1)}
+        onDown={() => move('todayTasks', 1)}
+        action={
+          <button type="button" className={btnGhost + ' !min-h-9 !py-1 text-xs'} onClick={() => onQuick('todos')}>
+            {t('common.view')}
+          </button>
+        }
+      >
+        {todayTasks.length === 0 ? (
+          <p className="text-sm text-sage-500">{t('dash.noTodayTask')}</p>
+        ) : (
+          <ul className="space-y-2">
+            {todayTasks.map((task) => (
+              <li key={task.id} className="flex items-center justify-between gap-2 text-sm">
+                <span className="min-w-0 truncate font-medium text-sage-900">{task.title}</span>
+                <span className="shrink-0 text-xs font-semibold text-sage-600">{t(priorityLabelKey(task.priority))}</span>
               </li>
             ))}
           </ul>
