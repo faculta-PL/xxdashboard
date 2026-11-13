@@ -22,6 +22,7 @@ service cloud.firestore {
     function isAdminEmail() {
       return isSignedIn() && (
         authEmail() == 'admin@example.com'
+        || authEmail() == 'facultamalika@gmail.com'
       );
     }
 
@@ -34,6 +35,34 @@ service cloud.firestore {
         || (isSignedIn()
             && exists(userPath())
             && get(userPath()).data.role == 'Administrateur');
+    }
+
+    // Org membership is a document id `${orgId}_${uid}` so exists() can check it.
+    // Queries filter by orgId. Rules are not filters: every doc in the query must be readable,
+    // so org members may read docs stamped with their orgId. The client still hides private rows.
+    // Unscoped docs stay invisible to regular members. This is not a public read.
+    function orgMemberPath(orgId) {
+      return /databases/$(database)/documents/xx_org_members/$(orgId + '_' + request.auth.uid);
+    }
+
+    function isOrgMember(orgId) {
+      return isSignedIn() && orgId is string && orgId.size() > 0 && exists(orgMemberPath(orgId));
+    }
+
+    function orgRead() {
+      return isAdmin() || (
+        resource.data.keys().hasAll(['orgId'])
+        && resource.data.orgId is string
+        && isOrgMember(resource.data.orgId)
+      );
+    }
+
+    function orgCreate() {
+      return isAdmin() || (
+        request.resource.data.keys().hasAll(['orgId'])
+        && request.resource.data.orgId is string
+        && isOrgMember(request.resource.data.orgId)
+      );
     }
 
     function isSelfUser() {
@@ -160,14 +189,14 @@ service cloud.firestore {
     }
 
     match /xx_notes/{id} {
-      allow read: if isSignedIn() && canReadEntity();
-      allow create: if isOwnerCreate() || isAdmin();
+      allow read: if orgRead() || (isSignedIn() && canReadEntity());
+      allow create: if orgCreate() && (isOwnerCreate() || isAdmin());
       allow update, delete: if canWriteEntity();
     }
 
     match /xx_ideas/{id} {
-      allow read: if isSignedIn() && canReadEntity();
-      allow create: if isOwnerCreate() || isAdmin();
+      allow read: if orgRead() || (isSignedIn() && canReadEntity());
+      allow create: if orgCreate() && (isOwnerCreate() || isAdmin());
       allow update, delete: if canWriteEntity()
         || (canReadEntity()
             && request.resource.data.diff(resource.data).affectedKeys()
@@ -175,26 +204,26 @@ service cloud.firestore {
     }
 
     match /xx_projects/{id} {
-      allow read: if isSignedIn() && canReadEntity();
-      allow create: if isOwnerCreate() || isAdmin();
+      allow read: if orgRead() || (isSignedIn() && canReadEntity());
+      allow create: if orgCreate() && (isOwnerCreate() || isAdmin());
       allow update, delete: if canWriteEntity();
     }
 
     match /xx_events/{id} {
-      allow read: if isSignedIn() && canReadEntity();
-      allow create: if isOwnerCreate() || isAdmin();
+      allow read: if orgRead() || (isSignedIn() && canReadEntity());
+      allow create: if orgCreate() && (isOwnerCreate() || isAdmin());
       allow update, delete: if canWriteEntity();
     }
 
     match /xx_todo_lists/{id} {
-      allow read: if isSignedIn() && canReadEntity();
-      allow create: if isOwnerCreate() || isAdmin();
+      allow read: if orgRead() || (isSignedIn() && canReadEntity());
+      allow create: if orgCreate() && (isOwnerCreate() || isAdmin());
       allow update, delete: if canWriteEntity();
     }
 
     match /xx_todos/{id} {
-      allow read: if isSignedIn() && canReadEntity();
-      allow create: if isOwnerCreate() || isAdmin();
+      allow read: if orgRead() || (isSignedIn() && canReadEntity());
+      allow create: if orgCreate() && (isOwnerCreate() || isAdmin());
       allow update, delete: if canWriteEntity();
     }
 
@@ -212,48 +241,48 @@ service cloud.firestore {
     }
 
     match /xx_groups/{id} {
-      allow read: if isAdmin()
+      allow read: if orgRead() || isAdmin()
         || isGroupMember()
-        || (isSignedIn() && resource.data.isGeneral == true);
-      allow create: if isSignedIn() && isOwnerCreate() && isGroupMemberOnWrite();
+        || (isSignedIn() && resource.data.isGeneral == true && resource.data.keys().hasAll(['orgId']) && isOrgMember(resource.data.orgId));
+      allow create: if orgCreate() && isSignedIn() && isOwnerCreate() && isGroupMemberOnWrite();
       allow update: if isAdmin() || isOwner() || isGroupMember();
       allow delete: if isAdmin() || isOwner();
     }
 
     match /xx_folders/{id} {
-      allow read: if isSignedIn() && canReadFileEntity();
-      allow create: if isOwnerCreate() || isAdmin();
+      allow read: if orgRead() || (isSignedIn() && canReadFileEntity());
+      allow create: if orgCreate() && (isOwnerCreate() || isAdmin());
       allow update: if canWriteEntity();
       allow delete: if isAdmin() || isOwner() || isSharedManage();
     }
 
     match /xx_files/{id} {
-      allow read: if isSignedIn() && canReadFileEntity();
-      allow create: if isOwnerCreate() || isAdmin();
+      allow read: if orgRead() || (isSignedIn() && canReadFileEntity());
+      allow create: if orgCreate() && (isOwnerCreate() || isAdmin());
       allow update: if canWriteEntity();
       allow delete: if isAdmin() || isOwner() || isSharedManage();
     }
 
     match /xx_budgets/{id} {
-      allow read: if isSignedIn() && (canReadEntity() || isTeamVisible());
-      allow create: if isOwnerCreate() || isAdmin();
+      allow read: if orgRead() || (isSignedIn() && (canReadEntity() || isTeamVisible()));
+      allow create: if orgCreate() && (isOwnerCreate() || isAdmin());
       allow update, delete: if canWriteEntity();
     }
 
     match /xx_budget_lines/{id} {
-      allow read: if isSignedIn() && (canReadEntity() || isTeamVisible());
+      allow read: if orgRead() || (isSignedIn() && (canReadEntity() || isTeamVisible()));
       allow create: if canWriteResource();
       allow update, delete: if canWriteEntity();
     }
 
     match /xx_risks/{id} {
-      allow read: if isSignedIn() && (canReadEntity() || isTeamVisible());
-      allow create: if isOwnerCreate() || isAdmin();
+      allow read: if orgRead() || (isSignedIn() && (canReadEntity() || isTeamVisible()));
+      allow create: if orgCreate() && (isOwnerCreate() || isAdmin());
       allow update, delete: if canWriteEntity();
     }
 
     match /xx_risk_actions/{id} {
-      allow read: if isSignedIn() && (canReadEntity() || isTeamVisible());
+      allow read: if orgRead() || (isSignedIn() && (canReadEntity() || isTeamVisible()));
       allow create: if canWriteResource();
       allow update, delete: if canWriteEntity();
     }
@@ -322,7 +351,7 @@ service cloud.firestore {
     }
 
     match /xx_messages/{id} {
-      allow read: if isSignedIn() && (
+      allow read: if orgRead() || (isSignedIn() && (
         isAdmin()
         || (resource.data.keys().hasAll(['memberIds'])
             && request.auth.uid in resource.data.memberIds)
@@ -332,8 +361,8 @@ service cloud.firestore {
               get(/databases/$(database)/documents/xx_groups/$(resource.data.groupId)).data.isGeneral == true
               || request.auth.uid in get(/databases/$(database)/documents/xx_groups/$(resource.data.groupId)).data.memberIds
             ))
-      );
-      allow create: if isSignedIn()
+      ));
+      allow create: if orgCreate() && isSignedIn()
         && request.resource.data.authorId == request.auth.uid
         && request.resource.data.keys().hasAll(['groupId', 'body'])
         && exists(/databases/$(database)/documents/xx_groups/$(request.resource.data.groupId))
@@ -418,7 +447,7 @@ service cloud.firestore {
     // Retours : orgId sur les nouveaux docs. Vote une fois. Statut : admin global ou owner/admin du membership.
     // Suppression admin seulement — l’écran ne supprime pas les retours existants.
     match /xx_feedback/{id} {
-      allow create: if isSignedIn()
+      allow create: if orgCreate() && isSignedIn()
         && request.resource.data.userId == request.auth.uid;
       allow read: if isAdmin()
         || (isSignedIn() && resource.data.userId == request.auth.uid)
@@ -434,11 +463,46 @@ service cloud.firestore {
 
     // Scores arcade : création de son propre score, pas de mise à jour (append-only).
     match /xx_game_scores/{id} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn()
+      allow read: if orgRead();
+      allow create: if orgCreate() && isSignedIn()
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.score is number;
       allow update, delete: if false;
+    }
+
+    match /xx_orgs/{id} {
+      allow read: if isAdmin() || isOrgMember(id);
+      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAdmin() || (
+        isOrgMember(id)
+        && get(orgMemberPath(id)).data.role in ['owner', 'admin']
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /xx_org_members/{id} {
+      allow read: if isAdmin() || isSelfByUserId() || (
+        resource.data.keys().hasAll(['orgId']) && isOrgMember(resource.data.orgId)
+      );
+      allow create: if isAdmin()
+        || (
+          isSignedIn()
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.role == 'owner'
+          && request.resource.data.orgId is string
+          && exists(/databases/$(database)/documents/xx_orgs/$(request.resource.data.orgId))
+          && get(/databases/$(database)/documents/xx_orgs/$(request.resource.data.orgId)).data.createdBy == request.auth.uid
+        )
+        || (
+          request.resource.data.orgId is string
+          && isOrgMember(request.resource.data.orgId)
+          && get(orgMemberPath(request.resource.data.orgId)).data.role in ['owner', 'admin']
+        );
+      allow update, delete: if isAdmin() || (
+        resource.data.keys().hasAll(['orgId'])
+        && isOrgMember(resource.data.orgId)
+        && get(orgMemberPath(resource.data.orgId)).data.role in ['owner', 'admin']
+      );
     }
   }
 }

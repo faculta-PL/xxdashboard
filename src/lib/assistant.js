@@ -487,7 +487,7 @@ function detectIntent(query) {
 
 export function wantsWebSearch(query, webToggle) {
   if (webToggle) return true
-  return /cherche en ligne|recherche web|sur le web|google|duckduckgo/i.test(String(query || ''))
+  return /cherche|recherche|sur (le |internet|le web)|google|duckduckgo|wikipedia|what is|who is|qui est|qu['’]est-ce|définition|definition|look up|search the web|en ligne/i.test(String(query || ''))
 }
 
 export function webQueryFrom(query) {
@@ -667,18 +667,56 @@ export function parseActions(query, ctx = {}) {
       },
     })
   }
-  if (/(ligne (budg[ée]taire)?|d[ée]pense|budget)/.test(low) && /cr[ée]e|ajoute|nouvelle/.test(low)) {
+  if (/(ligne (budg[ée]taire)?|d[ée]pense|recette|revenu|budget|income|expense)/.test(low) && /cr[ée]e|ajoute|nouvelle|modifie|mets [àa] jour|update/.test(low)) {
+    const amountMatch = q.match(/(\d+(?:[.,]\d+)?)/)
+    const flow = /recette|revenu|income|entr[ée]e/.test(low) ? 'income' : 'expense'
+    const updating = /modifie|mets [àa] jour|update|change/.test(low)
+    const named = (budget?.lines || []).find((line) => title && String(line.name || '').toLowerCase() === title.toLowerCase())
     actions.push({
-      kind: 'create_budget_line',
-      label: 'Créer une ligne budgétaire',
+      kind: updating ? 'update_budget_line' : 'create_budget_line',
+      label: updating ? 'Mettre à jour une ligne' : 'Créer une ligne budgétaire',
       draft: {
-        name: title || 'Nouvelle ligne',
-        amount: 0,
+        id: named?.id || '',
+        name: title || named?.name || 'Nouvelle ligne',
+        amount: amountMatch ? Number(amountMatch[1].replace(',', '.')) : named?.amount || 0,
+        flow,
         kind: 'planned',
         budgetId: budget?.id || '',
         budgetName: budget?.name || '',
         category: 'Autres',
       },
+    })
+  }
+  if (/(t[âa]che|todo|task)/.test(low) && /cr[ée]e|ajoute|nouvelle|modifie|mets [àa] jour/.test(low)) {
+    const updating = /modifie|mets [àa] jour/.test(low)
+    actions.push({
+      kind: updating ? 'update_task' : 'create_task',
+      label: updating ? 'Mettre à jour une tâche' : 'Créer une tâche',
+      draft: { title: title || 'Nouvelle tâche', description: '', status: 'todo', priority: 'medium' },
+    })
+  }
+  if (/(rendez-vous|r[ée]union|[ée]v[ée]nement|event|meeting)/.test(low) && /cr[ée]e|ajoute|planifie|modifie|nouvelle/.test(low)) {
+    const updating = /modifie|mets [àa] jour/.test(low)
+    actions.push({
+      kind: updating ? 'update_event' : 'create_event',
+      label: updating ? 'Mettre à jour un événement' : 'Créer un événement',
+      draft: { title: title || 'Rendez-vous', description: '', date: new Date().toISOString().slice(0, 10), time: '09:00' },
+    })
+  }
+  if (/\bprojet\b|project/.test(low) && /cr[ée]e|ajoute|nouveau|nouvelle|modifie/.test(low)) {
+    const updating = /modifie|mets [àa] jour/.test(low)
+    actions.push({
+      kind: updating ? 'update_project' : 'create_project',
+      label: updating ? 'Mettre à jour un projet' : 'Créer un projet',
+      draft: { title: title || 'Nouveau projet', description: '', status: 'À préparer' },
+    })
+  }
+  if (/\bnote\b/.test(low) && /modifie|mets [àa] jour|renomme|compl[èe]te/.test(low)) {
+    const note = (ctx.notes || []).find((n) => title && String(n.title || '').toLowerCase().includes(title.toLowerCase())) || (ctx.notes || [])[0]
+    actions.push({
+      kind: 'update_note',
+      label: 'Mettre à jour une note',
+      draft: { id: note?.id || '', title: title || note?.title || '', content: '' },
     })
   }
   if (/message|pr[ée]venir|écrire à|envoi(er)? un message/.test(low) && !/e-?mail de v[ée]rification/.test(low)) {
@@ -902,12 +940,12 @@ export async function searchWeb(query, loc) {
   throw error
 }
 
-export async function generateImage({ prompt, signal, onProgress } = {}) {
+export async function generateImage({ prompt, signal, onProgress, language } = {}) {
   onProgress?.(12)
   const res = await fetch(aiEndpoint('/api/ai/image'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: String(prompt || '').trim() }),
+    body: JSON.stringify({ prompt: String(prompt || '').trim(), language: language === 'en' ? 'en' : 'fr' }),
     signal,
   })
   onProgress?.(70)
@@ -920,7 +958,8 @@ export async function generateImage({ prompt, signal, onProgress } = {}) {
 export function fileFromImagePayload(data, name = 'nazix-image.png') {
   const mime = String(data?.mime || 'image/png')
   if (data?.b64) {
-    const bin = atob(data.b64)
+    const clean = String(data.b64).replace(/^data:[^,]*,/, '').replace(/\s+/g, '')
+    const bin = atob(clean)
     const bytes = new Uint8Array(bin.length)
     for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
     return new File([bytes], name, { type: mime })

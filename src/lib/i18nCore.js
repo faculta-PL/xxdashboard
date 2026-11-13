@@ -1,4 +1,5 @@
 /** Nazix i18n — FR | EN. Persist `nazix_lang`. No secrets, no innerHTML. */
+import { extraDicts } from './i18nExtra.js'
 
 export const LANG_KEY = 'nazix_lang'
 export const LANGS = ['fr', 'en']
@@ -2518,4 +2519,19 @@ function walkKeys(tree, prefix, out) {
 export function dictKeyList(lang) {
   return walkKeys(dicts[normalizeLang(lang)], '', [])
 }
+
+function deepMergeDict(target, extra) {
+  if (!extra || typeof extra !== 'object') return
+  for (const [key, value] of Object.entries(extra)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (!target[key] || typeof target[key] !== 'object') target[key] = {}
+      deepMergeDict(target[key], value)
+    } else {
+      target[key] = value
+    }
+  }
+}
+
+deepMergeDict(dicts.fr, extraDicts.fr)
+deepMergeDict(dicts.en, extraDicts.en)
 

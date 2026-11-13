@@ -45,6 +45,11 @@ import {
   saveIdea,
   saveRisk,
   saveBudgetLine,
+  saveEvent,
+  saveProject,
+  saveTodo,
+  saveTodoList,
+  getStoreSnapshot,
   createNotification,
   sendMessage,
   ensureGeneralGroup,
@@ -136,6 +141,9 @@ function Bubble({ msg, onCopy }) {
             Nazix : {msg.sources.map((s) => `« ${s.title} »`).join(', ')}
           </p>
         )}
+        {msg.webSearchedAt && !msg.webSources?.length ? (
+          <p className="mt-2 text-[11px] text-sage-600">{t('ai.noSources')}</p>
+        ) : null}
         {msg.webSources?.length > 0 && (
           <ul className="mt-2 space-y-1 border-t border-sage-200 pt-2 text-[11px]">
             <li className="font-semibold text-sage-600">
@@ -150,6 +158,8 @@ function Bubble({ msg, onCopy }) {
                 ) : (
                   <span>{s.title}</span>
                 )}
+                {s.snippet ? <span className="block text-sage-500">{s.snippet}</span> : null}
+                {s.source ? <span className="block text-sage-400">{s.source}</span> : null}
               </li>
             ))}
           </ul>
@@ -173,7 +183,7 @@ function ActionButtons({ actions, canWrite, onPick }) {
           title={!canWrite && a.kind !== 'draft_message' ? t('ai.readOnlyActions') : ''}
           onClick={() => onPick(a)}
         >
-          {a.label}
+          {t(`ai.action.${a.kind}`) === `ai.action.${a.kind}` ? a.label : t(`ai.action.${a.kind}`)}
         </button>
       ))}
     </div>
@@ -271,7 +281,25 @@ function ConfirmAction({ action, users, projects, budgets, notes, user, onClose,
               </label>
             </>
           )}
-          {action.kind === 'create_budget_line' && (
+          {(action.kind === 'create_task' || action.kind === 'update_task' || action.kind === 'create_event' || action.kind === 'update_event' || action.kind === 'create_project' || action.kind === 'update_project' || action.kind === 'update_note') && (
+            <>
+              <label className="block text-sm">
+                <span className="mb-1 block font-medium text-sage-800">{t('notes.title')}</span>
+                <input className={inputClass} value={draft.title || ''} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block font-medium text-sage-800">{t('ai.description')}</span>
+                <textarea className={inputClass + ' min-h-20'} value={draft.description || draft.content || ''} onChange={(e) => setDraft({ ...draft, description: e.target.value, content: e.target.value })} />
+              </label>
+              {(action.kind === 'create_event' || action.kind === 'update_event') && (
+                <div className="grid grid-cols-2 gap-2">
+                  <input type="date" className={inputClass} value={draft.date || ''} onChange={(e) => setDraft({ ...draft, date: e.target.value })} />
+                  <input type="time" className={inputClass} value={draft.time || ''} onChange={(e) => setDraft({ ...draft, time: e.target.value })} />
+                </div>
+              )}
+            </>
+          )}
+          {(action.kind === 'create_budget_line' || action.kind === 'update_budget_line') && (
             <>
               <label className="block text-sm">
                 <span className="mb-1 block font-medium text-sage-800">{t('searchUi.budget')}</span>
@@ -301,6 +329,17 @@ function ConfirmAction({ action, users, projects, budgets, notes, user, onClose,
                   value={draft.amount || ''}
                   onChange={(e) => setDraft({ ...draft, amount: e.target.value })}
                 />
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block font-medium text-sage-800">{t('ai.flow')}</span>
+                <select className={inputClass} value={draft.flow || 'expense'} onChange={(e) => setDraft({ ...draft, flow: e.target.value })}>
+                  <option value="expense">{t('ai.expense')}</option>
+                  <option value="income">{t('ai.income')}</option>
+                </select>
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block font-medium text-sage-800">{t('ai.category')}</span>
+                <input className={inputClass} value={draft.category || 'Autres'} onChange={(e) => setDraft({ ...draft, category: e.target.value })} />
               </label>
             </>
           )}
@@ -495,7 +534,8 @@ function useAiChat({
           webSources = web.results || []
           webSearchedAt = web.searchedAt || nowIso()
         } catch {
-          /* section web masquée / aucun résultat — jamais de nom d’env */
+          webSearchedAt = nowIso()
+          webSources = []
         }
       }
 
@@ -688,19 +728,72 @@ function useAiChat({
           user,
         )
         flash?.(t('ai.riskCreated'))
-      } else if (action.kind === 'create_budget_line') {
-        if (!d.budgetId) throw new Error(t('ai.pickBudget'))
-        await saveBudgetLine(
+      } else if (action.kind === 'update_note') {
+        if (!d.id) throw new Error(t('ai.pickParent'))
+        await saveNote({ id: d.id, title: String(d.title || '').trim() || 'Note', content: d.content || d.description || '' }, user)
+        flash?.(t('ai.noteUpdated'))
+      } else if (action.kind === 'create_task' || action.kind === 'update_task') {
+        const snap = getStoreSnapshot()
+        const lists = Object.values(snap.xx_todo_lists || {}).filter((list) => list.orgId === snap.activeOrgId)
+        const list = lists[0] || (await saveTodoList({ name: 'Tâches', visibility: 'Équipe' }, user))
+        await saveTodo(
           {
-            budgetId: d.budgetId,
-            kind: d.kind || 'planned',
-            category: d.category || 'Autres',
-            name: String(d.name || '').trim() || 'Ligne IA',
-            amount: Number(d.amount || 0),
+            id: action.kind === 'update_task' ? d.id : undefined,
+            listId: d.listId || list.id,
+            title: String(d.title || '').trim() || 'Tâche',
+            description: d.description || '',
+            status: d.status || 'todo',
+            priority: d.priority || 'medium',
           },
           user,
         )
-        flash?.(t('ai.lineCreated'))
+        flash?.(action.kind === 'update_task' ? t('ai.taskUpdated') : t('ai.taskCreated'))
+      } else if (action.kind === 'create_event' || action.kind === 'update_event') {
+        await saveEvent(
+          {
+            id: action.kind === 'update_event' ? d.id : undefined,
+            title: String(d.title || '').trim() || 'Rendez-vous',
+            description: d.description || '',
+            date: d.date || new Date().toISOString().slice(0, 10),
+            time: d.time || '09:00',
+            visibility: 'Partagée',
+            shares: [],
+          },
+          user,
+        )
+        flash?.(action.kind === 'update_event' ? t('ai.eventUpdated') : t('ai.eventCreated'))
+      } else if (action.kind === 'create_project' || action.kind === 'update_project') {
+        await saveProject(
+          {
+            id: action.kind === 'update_project' ? d.id : undefined,
+            title: String(d.title || '').trim() || 'Projet',
+            description: d.description || '',
+            status: d.status || 'À préparer',
+            visibility: 'Partagée',
+            shares: [],
+          },
+          user,
+        )
+        flash?.(action.kind === 'update_project' ? t('ai.projectUpdated') : t('ai.projectCreated'))
+      } else if (action.kind === 'create_budget_line' || action.kind === 'update_budget_line') {
+        const budgetId = d.budgetId || budgets[0]?.id
+        if (!budgetId) throw new Error(t('ai.pickActiveBudget'))
+        const category = ['Salaires et rémunérations', 'Matériel et équipements', 'Fournitures et produits', 'Transport et déplacements', 'Marketing et communication', 'Frais administratifs', 'Prestataires et services', 'Autres'].includes(d.category)
+          ? d.category
+          : 'Autres'
+        await saveBudgetLine(
+          {
+            id: action.kind === 'update_budget_line' ? d.id : undefined,
+            budgetId,
+            kind: d.kind || 'planned',
+            category,
+            name: String(d.name || d.label || '').trim() || 'Ligne IA',
+            amount: Number(d.amount || 0),
+            flow: d.flow === 'income' ? 'income' : 'expense',
+          },
+          user,
+        )
+        flash?.(action.kind === 'update_budget_line' ? t('ai.lineUpdated') : t('ai.lineCreated'))
       } else if (action.kind === 'draft_message') {
         if (!d.userId) throw new Error(t('ai.pickRecipient'))
         const body = String(d.body || '').trim()

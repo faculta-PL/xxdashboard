@@ -223,9 +223,7 @@ Cite les titres entre « ». N’invente jamais de données privées absentes du
 Si tu manques d’information : dis-le clairement (« je n’ai pas trouvé ») plutôt que de fabuler.
 Distingue les faits Nazix des résultats web (libellé Web).
 Ne propose jamais de supprimer, de partager, ni de modifier les droits d’accès.
-Tu ne crées rien tout seul : si une création est utile (note, sous-note, idée, risque, ligne budgétaire, brouillon de message), décris-la en une ou deux phrases en français. L’interface affichera un bouton de confirmation. N’exécute jamais l’action.
-
-INTERDICTION ABSOLUE : n’inclus JAMAIS de JSON, de bloc \`\`\`json, de {"kind":...}, de function-call, ni d’appel d’outil dans ta réponse. Pas de payload, pas de code. Uniquement du texte français visible par l’utilisateur.`
+Tu ne crées rien tout seul. Si une action est utile (créer ou mettre à jour une note, une tâche, un événement, un projet, ou une ligne budgétaire avec libellé, montant, type income ou expense, catégorie), décris-la en une ou deux phrases. Termine ensuite par UN seul bloc \`\`\`json {"actions":[{"kind":"create_budget_line","label":"...","draft":{"name":"...","amount":0,"flow":"expense","category":"Autres"}}]} \`\`\`. L’interface retire ce bloc et affiche un bouton. N’exécute jamais l’action. N’écris le JSON nulle part ailleurs.`
 
 const SYSTEM_PROMPT_EN = `You are Nazix, the conversational assistant of the Nazix collaborative workspace.
 Reply in English, clearly, usefully and naturally — like ChatGPT, but grounded in Nazix.
@@ -234,9 +232,7 @@ Quote titles in « ». Never invent private data missing from the context.
 If you lack information: say so clearly (“I could not find that”) rather than guessing.
 Distinguish Nazix facts from web results (label them Web).
 Never propose deleting, sharing, or changing access rights.
-You never create anything by yourself: if a creation would help (note, sub-note, idea, risk, budget line, message draft), describe it in one or two English sentences. The UI will show a confirmation button. Never execute the action.
-
-ABSOLUTE BAN: never include JSON, a \`\`\`json block, {"kind":...}, a function-call, or a tool call in your reply. No payload, no code. Visible English text only.`
+You never create anything by yourself. If an action would help (create or update a note, task, event, project, or a budget line with label, amount, type income or expense, and category), describe it in one or two sentences. Then end with ONE \`\`\`json {"actions":[{"kind":"create_budget_line","label":"...","draft":{"name":"...","amount":0,"flow":"expense","category":"Autres"}}]} \`\`\` block. The UI strips that block and shows a confirm button. Never execute the action. Do not repeat the JSON in prose.`
 
 export function resolveAiLang(body) {
   const raw = String(body?.language || body?.lang || '').toLowerCase()
@@ -282,12 +278,38 @@ function toChatMessages(body) {
   return mapped
 }
 
-function sanitizeLlmError(prefix, errText = '') {
-  const clipped = String(errText || '')
-    .replace(/sk-[a-zA-Z0-9_-]+/g, '[redacted]')
-    .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+function publicApiMessage(errText = '') {
+  const raw = String(errText || '')
+  let message = raw
+  try {
+    const parsed = JSON.parse(raw)
+    message = parsed?.error?.message || parsed?.message || raw
+  } catch {
+    /* plain text */
+  }
+  return String(message || '')
+    .replace(/sk-[a-zA-Z0-9_-]+/g, '')
+    .replace(/Bearer\s+\S+/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
     .slice(0, 180)
+}
+
+function sanitizeLlmError(prefix, errText = '') {
+  const clipped = publicApiMessage(errText)
   return clipped ? `${prefix} — ${clipped}` : prefix
+}
+
+function imageFailure(lang, status, errText) {
+  const detail = publicApiMessage(errText)
+  if (String(lang || '').startsWith('en')) {
+    return detail
+      ? `Image generation is unavailable (${status}). ${detail}`
+      : `Image generation is unavailable (${status}). The rest of Create still works.`
+  }
+  return detail
+    ? `La génération d’image est indisponible (${status}). ${detail}`
+    : `La génération d’image est indisponible (${status}). Le reste de Création fonctionne.`
 }
 
 function combinedAbort(req, ms) {
@@ -789,18 +811,31 @@ async function fetchWiki(q) {
   return uniqueResults(items, q)
 }
 
-async function webSearchResults(q) {
-  try {
-    const instant = await fetchDdgInstant(q)
-    if (instant.length) return instant
-  } catch {
-    /* fallback */
+function isEncyclopedic(q) {
+  const text = String(q || '').trim()
+  if (/^(qui est|qu['’]est-ce|what is|who is|d[ée]finition|definition|capitale|capital of|histoire de|biographie|biography)\b/i.test(text)) {
+    return true
   }
-  const [html, wiki] = await Promise.all([
-    fetchDdgHtml(q).catch(() => []),
+  return text.split(/\s+/).filter(Boolean).length <= 3
+}
+
+async function webSearchResults(q) {
+  const encyclopedic = isEncyclopedic(q)
+  const [instant, wiki] = await Promise.all([
+    fetchDdgInstant(q).catch(() => []),
     fetchWiki(q).catch(() => []),
   ])
-  return uniqueResults([...html, ...wiki], q)
+  let items = uniqueResults([...(encyclopedic ? wiki : []), ...instant, ...(encyclopedic ? [] : wiki.slice(0, 2))], q, 8)
+  if (items.length < 4) {
+    const html = await fetchDdgHtml(q).catch(() => [])
+    items = uniqueResults([...items, ...html], q, 8)
+  }
+  return items.map((item) => ({
+    title: item.title,
+    url: item.url,
+    snippet: item.snippet,
+    source: item.source || (String(item.url || '').includes('wikipedia.org') ? 'Wikipedia' : 'Web'),
+  }))
 }
 
 async function handleSearch(req, res) {
@@ -836,13 +871,10 @@ async function handleSearch(req, res) {
 }
 
 async function tryImageModel(key, prompt, model, req) {
-  const payload = {
-    model,
-    prompt,
-    n: 1,
-    size: '1024x1024',
-  }
-  if (model === 'dall-e-3') payload.response_format = 'b64_json'
+  const payload =
+    model === 'gpt-image-1'
+      ? { model, prompt, size: '1024x1024', output_format: 'png' }
+      : { model, prompt, n: 1, size: '1024x1024', response_format: 'b64_json' }
   const resImg = await fetchWithTimeout(
     'https://api.openai.com/v1/images/generations',
     {
@@ -858,8 +890,9 @@ async function tryImageModel(key, prompt, model, req) {
   )
   const data = await resImg.json().catch(() => ({}))
   if (!resImg.ok) {
-    throw Object.assign(new Error(sanitizeLlmError(`OpenAI images ${resImg.status}`, JSON.stringify(data).slice(0, 160))), {
+    throw Object.assign(new Error(imageFailure('fr', resImg.status, JSON.stringify(data).slice(0, 500))), {
       status: resImg.status,
+      detail: publicApiMessage(JSON.stringify(data).slice(0, 500)),
     })
   }
   return data
@@ -874,28 +907,42 @@ async function handleImage(req, res, env) {
     json(res, 405, { ok: false, error: 'Méthode non autorisée.' })
     return
   }
+  const body = await readBody(req)
+  const lang = resolveAiLang(body)
   const key = env.OPENAI_API_KEY
   if (!key) {
-    json(res, 200, { ok: false, hasKey: false, error: 'OPENAI_API_KEY manquante' })
+    json(res, 200, {
+      ok: false,
+      hasKey: false,
+      error: lang === 'en'
+        ? 'Image generation is not configured on the server. No key is stored in the browser.'
+        : 'La génération d’image n’est pas configurée sur le serveur. Aucune clé n’est stockée dans le navigateur.',
+    })
     return
   }
-  const body = await readBody(req)
   const prompt = String(body.prompt || body.text || '').trim()
   if (!prompt) {
-    json(res, 400, { ok: false, error: 'Prompt requis.' })
+    json(res, 400, { ok: false, error: lang === 'en' ? 'A prompt is required.' : 'Prompt requis.' })
     return
   }
   if (prompt.length > IMAGE_PROMPT_MAX) {
-    json(res, 400, { ok: false, error: 'Prompt trop long.' })
+    json(res, 400, { ok: false, error: lang === 'en' ? 'Prompt is too long.' : 'Prompt trop long.' })
     return
   }
   let data
   let modelUsed = 'gpt-image-1'
+  let firstError = null
   try {
     data = await tryImageModel(key, prompt, 'gpt-image-1', req)
-  } catch {
+  } catch (err) {
+    firstError = err
     modelUsed = 'dall-e-3'
-    data = await tryImageModel(key, prompt, 'dall-e-3', req)
+    try {
+      data = await tryImageModel(key, prompt, 'dall-e-3', req)
+    } catch (err2) {
+      json(res, 200, { ok: false, error: imageFailure(lang, err2.status || err.status || 502, err2.detail || err2.message || firstError?.message || '') })
+      return
+    }
   }
   const item = data?.data?.[0] || {}
   let b64 = item.b64_json || ''
@@ -916,7 +963,10 @@ async function handleImage(req, res, env) {
     }
   }
   if (!b64 && !url) {
-    json(res, 502, { ok: false, error: 'Image vide.' })
+    json(res, 200, {
+      ok: false,
+      error: lang === 'en' ? 'The image service returned an empty file. The rest of Create still works.' : 'Le service d’image a renvoyé un fichier vide. Le reste de Création fonctionne.',
+    })
     return
   }
   json(res, 200, {

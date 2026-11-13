@@ -40,11 +40,33 @@ export function parseSpeechResult(event) {
   }
 }
 
-export function createRecognizer({ lang, onResult, onError, onEnd } = {}, globalObj) {
+export const DICTATION_LANG_KEY = 'nazix_dictation_lang'
+
+export function readDictationLocale() {
+  try {
+    const saved = localStorage.getItem(DICTATION_LANG_KEY)
+    if (saved === 'en-US' || saved === 'fr-FR') return saved
+  } catch {
+    /* ignore */
+  }
+  return 'fr-FR'
+}
+
+export function writeDictationLocale(locale) {
+  const next = locale === 'en-US' ? 'en-US' : 'fr-FR'
+  try {
+    localStorage.setItem(DICTATION_LANG_KEY, next)
+  } catch {
+    /* ignore */
+  }
+  return next
+}
+
+export function createRecognizer({ lang, locale, onResult, onError, onEnd } = {}, globalObj) {
   const Ctor = getSpeechRecognitionCtor(globalObj)
   if (!Ctor) return null
   const rec = new Ctor()
-  rec.lang = speechLocale(lang)
+  rec.lang = locale || speechLocale(lang)
   rec.interimResults = true
   rec.continuous = true
   rec.onresult = (event) => onResult?.(parseSpeechResult(event))

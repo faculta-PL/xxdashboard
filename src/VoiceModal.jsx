@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Mic, MicOff } from 'lucide-react'
 import { useI18n } from './i18n'
-import { createRecognizer, firstLine, speechSupported, VOICE_DESTS } from './lib/voice'
+import { createRecognizer, firstLine, readDictationLocale, speechSupported, VOICE_DESTS, writeDictationLocale } from './lib/voice'
 import { canWriteRole } from './lib/rbac'
 
 const inputClass =
@@ -25,14 +25,18 @@ export default function VoiceModal({
   const [listening, setListening] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [interim, setInterim] = useState('')
+  const [locale, setLocale] = useState(readDictationLocale)
   const [dest, setDest] = useState('note')
   const [budgetId, setBudgetId] = useState(budgets[0]?.id || '')
   const [shareIds, setShareIds] = useState([])
   const [error, setError] = useState('')
   const recRef = useRef(null)
+  const wantRef = useRef(false)
   const finalRef = useRef('')
+  const chunksRef = useRef([])
 
   const stopRec = () => {
+    wantRef.current = false
     try {
       recRef.current?.stop()
     } catch {
@@ -42,29 +46,52 @@ export default function VoiceModal({
     setListening(false)
   }
 
-  const startRec = () => {
+  const armRec = (nextLocale = locale) => {
     if (!supported) return
-    stopRec()
     const rec = createRecognizer({
+      locale: nextLocale,
       lang,
-      onResult: ({ final, interim: live, combined }) => {
-        if (final) {
+      onResult: ({ final, interim: live }) => {
+        if (final && final !== finalRef.current) {
+          const delta = final.slice(finalRef.current.length).trim()
+          if (delta) chunksRef.current = [...chunksRef.current, delta].slice(-20)
           finalRef.current = final
           setTranscript(final)
         }
         setInterim(live)
-        if (!final && combined) setTranscript((prev) => prev || combined)
       },
       onError: (evt) => {
         if (evt?.error === 'not-allowed' || evt?.error === 'service-not-allowed') {
-          setError(t('voice.unsupported'))
+          wantRef.current = false
+          setError(t('voice.noSpeech'))
+          setListening(false)
+          return
         }
+        if (evt?.error === 'no-speech' || evt?.error === 'aborted') return
         setListening(false)
       },
-      onEnd: () => setListening(false),
+      onEnd: () => {
+        if (!wantRef.current) {
+          setListening(false)
+          return
+        }
+        setListening(true)
+        try {
+          rec.start()
+        } catch {
+          window.setTimeout(() => {
+            if (!wantRef.current) return
+            try {
+              rec.start()
+            } catch {
+              setListening(false)
+            }
+          }, 80)
+        }
+      },
     })
     if (!rec) {
-      setError(t('voice.unsupported'))
+      setError(t('voice.noSpeech'))
       return
     }
     recRef.current = rec
@@ -73,7 +100,49 @@ export default function VoiceModal({
       setListening(true)
       setError('')
     } catch {
-      setError(t('voice.unsupported'))
+      setError(t('voice.noSpeech'))
+      setListening(false)
+    }
+  }
+
+  const startRec = () => {
+    if (!supported) {
+      setError(t('voice.noSpeech'))
+      return
+    }
+    wantRef.current = true
+    try {
+      recRef.current?.stop()
+    } catch {
+      /* restart below */
+    }
+    armRec(locale)
+  }
+
+  const undoChunk = () => {
+    const chunk = chunksRef.current.pop()
+    if (!chunk) {
+      setError(t('voice.undoEmpty'))
+      return
+    }
+    const next = finalRef.current.endsWith(chunk) ? finalRef.current.slice(0, -chunk.length).trim() : finalRef.current.replace(chunk, '').trim()
+    finalRef.current = next
+    setTranscript(next)
+    setInterim('')
+    setError('')
+  }
+
+  const pickLocale = (next) => {
+    const saved = writeDictationLocale(next)
+    setLocale(saved)
+    if (wantRef.current) {
+      try {
+        recRef.current?.stop()
+      } catch {
+        /* onend restarts with the new locale via arm */
+      }
+      recRef.current = null
+      armRec(saved)
     }
   }
 
@@ -88,6 +157,8 @@ export default function VoiceModal({
     setShareIds([])
     setError('')
     finalRef.current = ''
+    chunksRef.current = []
+    setLocale(readDictationLocale())
     setBudgetId(budgets[0]?.id || '')
     if (supported) {
       const id = window.setTimeout(startRec, 0)
@@ -98,7 +169,7 @@ export default function VoiceModal({
     }
     return () => stopRec()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only when the modal opens
-  }, [open, lang])
+  }, [open])
 
   if (!open) return null
   const canWrite = canWriteRole(user)
@@ -161,17 +232,37 @@ export default function VoiceModal({
         </div>
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 xx-scroll">
           {!supported && (
-            <p className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-sage-800">{t('voice.fallback')}</p>
+            <p className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-sage-800" role="status">
+              {t('voice.noSpeech')}
+            </p>
           )}
+          <div>
+            <p className="mb-2 text-sm font-medium text-sage-800">{t('voice.lang')}</p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className={locale === 'fr-FR' ? btnPrimary : btnGhost} onClick={() => pickLocale('fr-FR')}>
+                {t('voice.langFr')}
+              </button>
+              <button type="button" className={locale === 'en-US' ? btnPrimary : btnGhost} onClick={() => pickLocale('en-US')}>
+                {t('voice.langEn')}
+              </button>
+              <button type="button" className={btnGhost} onClick={undoChunk}>
+                {t('voice.undo')}
+              </button>
+            </div>
+            <p className="mt-1 text-xs text-sage-500">{listening ? t('voice.listeningState') : t('voice.paused')}</p>
+          </div>
           <label className="block text-sm font-medium text-sage-800">
             {t('voice.transcript')}
             <textarea
               className={inputClass + ' mt-1 min-h-28'}
-              value={transcript}
-              onChange={(e) => setTranscript(e.target.value)}
+              value={listening && interim ? `${transcript}${transcript ? ' ' : ''}${interim}` : transcript}
+              onChange={(e) => {
+                setTranscript(e.target.value)
+                finalRef.current = e.target.value
+                setInterim('')
+              }}
             />
           </label>
-          {interim ? <p className="text-xs italic text-sage-500">{interim}</p> : null}
           <div>
             <p className="mb-2 text-sm font-medium text-sage-800">{t('voice.destination')}</p>
             <div className="flex flex-wrap gap-1.5">

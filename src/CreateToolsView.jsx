@@ -15,7 +15,7 @@ const btnGhost =
   'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-sage-300 bg-white/70 px-3 py-2 text-sm font-medium text-sage-800 transition hover:bg-sage-100'
 
 export default function CreateToolsView({ user, flash }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const canWrite = canWriteRole(user)
   const [prompt, setPrompt] = useState('')
   const [imageBusy, setImageBusy] = useState(false)
@@ -45,6 +45,7 @@ export default function CreateToolsView({ user, flash }) {
     try {
       const data = await generateImage({
         prompt: text,
+        language: lang,
         onProgress: (n) => setProgress(n),
       })
       const file = await fileFromImageResult(data, `nazix-${Date.now()}.png`)
