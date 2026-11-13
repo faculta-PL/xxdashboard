@@ -186,6 +186,18 @@ service cloud.firestore {
       allow update, delete: if canWriteEntity();
     }
 
+    match /xx_todo_lists/{id} {
+      allow read: if isSignedIn() && canReadEntity();
+      allow create: if isOwnerCreate() || isAdmin();
+      allow update, delete: if canWriteEntity();
+    }
+
+    match /xx_todos/{id} {
+      allow read: if isSignedIn() && canReadEntity();
+      allow create: if isOwnerCreate() || isAdmin();
+      allow update, delete: if canWriteEntity();
+    }
+
     match /xx_notifications/{id} {
       allow read, update, delete: if isAdmin() || isSelfByUserId();
       allow create: if isSignedIn() && request.resource.data.keys().hasAll(['userId']);
