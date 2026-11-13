@@ -3431,3 +3431,14 @@ export async function deleteFeedback(id, user) {
   await removeDoc('xx_feedback', id)
 }
 
+/** Merge a feedback document. Does not delete it. */
+export async function writeFeedbackDoc(row) {
+  const id = String(row?.id || '').trim()
+  if (!id || id.includes('/')) throw new Error('Retour invalide.')
+  if (!memory.xx_feedback) memory.xx_feedback = {}
+  const prev = memory.xx_feedback[id] || null
+  const next = { ...(prev || {}), ...row, id }
+  await persistDoc('xx_feedback', id, next)
+  return next
+}
+
