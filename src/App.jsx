@@ -58,7 +58,8 @@ import { EmptyState, PriorityBadge, VisibilityBadge } from './components/ui'
 import { Sidebar, NAV_FLAT, readNavCollapsed } from './components/Sidebar'
 import DashboardView from './components/DashboardView'
 import TodosView from './views/Todos'
-import FeedbackView from './FeedbackView'
+import { FeedbackBoard } from './feedback'
+import { StableChatPane } from './chat'
 import CreateToolsView from './CreateToolsView'
 import VoiceModal from './VoiceModal'
 import { DocumentBody, NoteCardExcerpt, NoteLinkedFiles } from './NoteMedia'
@@ -142,8 +143,6 @@ import {
   saveRiskAction,
   deleteRiskAction,
   syncNoteLinks,
-  saveFeedback,
-  deleteFeedback,
 } from './lib/store'
 import { firebaseConfigured, missingFirebaseVars, getFirebaseStatus } from './lib/firebase'
 import {
@@ -736,13 +735,6 @@ export default function App() {
     [db, user],
   )
   const unread = notifications.filter((n) => !n.read).length
-  const feedbackItems = useMemo(
-    () =>
-      db && user
-        ? Object.values(db.xx_feedback || {}).filter((f) => isAdmin(user) || f.userId === user.id)
-        : [],
-    [db, user],
-  )
   const unreadReadyRef = useRef(false)
   const unreadPrevRef = useRef(0)
   const unreadArmedAtRef = useRef(0)
@@ -1273,14 +1265,9 @@ export default function App() {
           )}
           {view === 'create' && <CreateToolsView user={user} flash={flash} />}
           {view === 'feedback' && (
-            <FeedbackView
-              user={user}
-              users={users}
-              items={feedbackItems}
-              flash={flash}
-              onSubmit={(data) => saveFeedback(data, user)}
-              onDelete={(id) => deleteFeedback(id, user)}
-            />
+            // FEEDBACK-LAYER START
+            <FeedbackBoard user={user} users={users} flash={flash} />
+            // FEEDBACK-LAYER END
           )}
           {view === 'dashboard' && (
             <DashboardView
@@ -7166,7 +7153,7 @@ function TeamView({ users, presentIds }) {
 }
 
 function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [selectedId, setSelectedId] = useState(null)
   const [draft, setDraft] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
@@ -7174,7 +7161,6 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
   const [groupName, setGroupName] = useState('')
   const [picked, setPicked] = useState([])
   const [busy, setBusy] = useState(false)
-  const bottomRef = useRef(null)
   const onReadRef = useRef(onReadGroup)
   onReadRef.current = onReadGroup
 
@@ -7198,14 +7184,9 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
     if (selectedId) onReadRef.current(selectedId)
   }, [selectedId, thread.length])
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: 'end' })
-  }, [thread.length, selected?.id])
-
   const nameOf = (id, fallback) => users.find((u) => u.id === id)?.fullName || fallback || 'Membre'
 
-  const submitMessage = async (e) => {
-    e.preventDefault()
+  const submitMessage = async () => {
     if (!selected) return
     const text = draft.trim()
     if (!text) return
@@ -7264,9 +7245,9 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
   const outsiders = users.filter((u) => u.id !== user.id && !(selected?.memberIds || []).includes(u.id))
 
   return (
-    <div className="flex min-h-[calc(100dvh-8rem)] flex-col overflow-hidden rounded-2xl border border-sage-200 bg-white/80 lg:min-h-[72vh] lg:flex-row">
+    <div className="flex h-[calc(100dvh-8rem)] max-h-[calc(100dvh-8rem)] flex-col overflow-hidden rounded-2xl border border-sage-200 bg-white/80 lg:h-[72vh] lg:max-h-[72vh] lg:flex-row">
       <aside
-        className={`${showThread ? 'hidden lg:flex' : 'flex'} w-full min-w-0 flex-col border-sage-200 lg:w-72 lg:shrink-0 lg:border-r`}
+        className={`${showThread ? 'hidden lg:flex' : 'flex'} min-h-0 w-full min-w-0 flex-col overflow-hidden border-sage-200 lg:h-full lg:w-72 lg:shrink-0 lg:border-r`}
       >
         <div className="flex items-center justify-between gap-2 border-b border-sage-100 p-3">
           <p className="font-display text-lg text-sage-900">{t('chatUi.groups')}</p>
@@ -7288,7 +7269,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
         {groups.length === 0 ? (
           <p className="p-4 text-sm text-sage-500">{t('chatUi.none')}</p>
         ) : (
-          <ul className="flex-1 overflow-y-auto xx-scroll">
+          <ul className="min-h-0 flex-1 overflow-y-auto xx-scroll">
             {groups.map((g) => {
               const n = unreadIn(g.id)
               const active = selectedId === g.id
@@ -7315,7 +7296,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
         )}
       </aside>
 
-      <section className={`${showThread ? 'flex' : 'hidden lg:flex'} min-h-[calc(100dvh-8rem)] min-w-0 flex-1 flex-col lg:min-h-0`}>
+      <section className={`${showThread ? 'flex' : 'hidden lg:flex'} min-h-0 min-w-0 flex-1 flex-col overflow-hidden`}>
         {!selected ? (
           <div className="flex flex-1 items-center justify-center p-6">
             <EmptyState title={t('empty.chatTitle')} hint={t('empty.chatHint')} />
@@ -7349,47 +7330,38 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
                 <span className="hidden md:inline">Inviter</span>
               </button>
             </div>
-            <div className="flex-1 space-y-3 overflow-y-auto px-3 py-4 xx-scroll md:px-5">
-              {thread.length === 0 ? (
-                <p className="text-center text-sm text-sage-500">{t('chatUi.noMessages')}</p>
-              ) : (
-                thread.map((m) => {
-                  const mine = m.authorId === user.id
-                  return (
-                    <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                      <div
-                        className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm sm:max-w-[70%] ${
-                          mine ? 'bg-sage-700 text-sage-50' : 'bg-sage-100 text-sage-900'
-                        }`}
-                      >
-                        {!mine && (
-                          <p className="mb-0.5 text-[11px] font-semibold opacity-80">
-                            {nameOf(m.authorId, m.authorName)}
-                          </p>
-                        )}
-                        <p className="whitespace-pre-wrap break-words">{m.body}</p>
-                        <p className={`mt-1 text-[10px] ${mine ? 'text-sage-200' : 'text-sage-500'}`}>
-                          {m.createdAt ? new Date(m.createdAt).toLocaleString('fr-FR') : ''}
+            {/* // CHAT-LAYER START */}
+            <StableChatPane
+              threadKey={selected.id}
+              messages={thread}
+              draft={draft}
+              onDraftChange={setDraft}
+              onSend={submitMessage}
+              busy={busy}
+              renderMessage={(m) => {
+                const mine = m.authorId === user.id
+                return (
+                  <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                    <div
+                      className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm sm:max-w-[70%] ${
+                        mine ? 'bg-sage-700 text-sage-50' : 'bg-sage-100 text-sage-900'
+                      }`}
+                    >
+                      {!mine && (
+                        <p className="mb-0.5 text-[11px] font-semibold opacity-80">
+                          {nameOf(m.authorId, m.authorName)}
                         </p>
-                      </div>
+                      )}
+                      <p className="whitespace-pre-wrap break-words">{m.body}</p>
+                      <p className={`mt-1 text-[10px] ${mine ? 'text-sage-200' : 'text-sage-500'}`}>
+                        {m.createdAt ? new Date(m.createdAt).toLocaleString(dateLocale(lang)) : ''}
+                      </p>
                     </div>
-                  )
-                })
-              )}
-              <div ref={bottomRef} />
-            </div>
-            <form onSubmit={submitMessage} className="flex gap-2 border-t border-sage-100 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-              <input
-                className={inputClass + ' min-w-0'}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder={t('chat.placeholder')}
-                maxLength={4000}
-              />
-              <button type="submit" className={btnPrimary + ' min-w-11 shrink-0 !px-4'} disabled={busy || !draft.trim()} aria-label={t('chat.send')}>
-                <Send size={16} />
-              </button>
-            </form>
+                  </div>
+                )
+              }}
+            />
+            {/* // CHAT-LAYER END */}
           </>
         )}
       </section>
