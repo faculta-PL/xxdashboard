@@ -63,7 +63,13 @@ import { FeedbackBoard } from './feedback'
 import { StableChatPane } from './chat'
 import MiniApp, { isMiniRequest } from './MiniApp'
 import { useAutosave, useFormDraft } from './lib/formDraft'
-import { InstallBanner, OrgAdmin, OrgGate, OrgHome, OrgSwitcher, SyncBadge } from './org/OrgScreens'
+import { InstallBanner, OrgAdmin, OrgHome, SyncBadge } from './org/OrgScreens'
+// SPACES-LAYER START
+import { PersonalHome } from './spaces/PersonalHome.jsx'
+import { SpacesScreen } from './spaces/SpacesScreen.jsx'
+import { WorkspaceSwitcher } from './spaces/WorkspaceSwitcher.jsx'
+import { canSeeGroupContent, canSeeItem } from './spaces/permissions.js'
+// SPACES-LAYER END
 import CreateToolsView from './CreateToolsView'
 import VoiceModal from './VoiceModal'
 import { DocumentBody, NoteCardExcerpt, NoteLinkedFiles } from './NoteMedia'
@@ -158,7 +164,6 @@ import {
   canEditEntity,
   canDeleteEntity,
   canWriteRole,
-  canReadGroup,
   isAdmin,
   ROLES,
   canReadFileOrFolder,
@@ -634,6 +639,9 @@ export default function App() {
 
   const orgId = db?.activeOrgId || ''
   const inOrg = (row) => Boolean(orgId) && row?.orgId === orgId
+  // SPACES-LAYER START — guests and private-group rows stay out of the open workspace.
+  const inSpace = (row) => inOrg(row) && canSeeItem(db, user, row)
+  // SPACES-LAYER END
   const allUsers = useMemo(() => (db ? listUsers() : []), [db])
   const users = useMemo(() => {
     if (!db || !user) return []
@@ -648,28 +656,28 @@ export default function App() {
   const notes = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_notes || {}).filter((n) => inOrg(n) && canReadEntity(user, n))
+        ? Object.values(db.xx_notes || {}).filter((n) => inSpace(n) && canReadEntity(user, n))
         : [],
     [db, user, orgId],
   )
   const ideas = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_ideas || {}).filter((i) => inOrg(i) && canReadEntity(user, i))
+        ? Object.values(db.xx_ideas || {}).filter((i) => inSpace(i) && canReadEntity(user, i))
         : [],
     [db, user, orgId],
   )
   const projects = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_projects || {}).filter((p) => inOrg(p) && canReadEntity(user, p))
+        ? Object.values(db.xx_projects || {}).filter((p) => inSpace(p) && canReadEntity(user, p))
         : [],
     [db, user, orgId],
   )
   const events = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_events || {}).filter((e) => inOrg(e) && canReadEntity(user, e))
+        ? Object.values(db.xx_events || {}).filter((e) => inSpace(e) && canReadEntity(user, e))
         : [],
     [db, user, orgId],
   )
@@ -677,7 +685,7 @@ export default function App() {
     () =>
       db && user
         ? Object.values(db.xx_todo_lists || {})
-            .filter((list) => inOrg(list) && canReadEntity(user, list))
+            .filter((list) => inSpace(list) && canReadEntity(user, list))
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr'))
         : [],
     [db, user],
@@ -685,7 +693,7 @@ export default function App() {
   const todos = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_todos || {}).filter((task) => inOrg(task) && canReadEntity(user, task))
+        ? Object.values(db.xx_todos || {}).filter((task) => inSpace(task) && canReadEntity(user, task))
         : [],
     [db, user, orgId],
   )
@@ -696,14 +704,14 @@ export default function App() {
   const folders = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_folders || {}).filter((f) => inOrg(f) && canReadFileOrFolder(user, f, fileCtx))
+        ? Object.values(db.xx_folders || {}).filter((f) => inSpace(f) && canReadFileOrFolder(user, f, fileCtx))
         : [],
     [db, user, fileCtx, orgId],
   )
   const files = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_files || {}).filter((f) => inOrg(f) && canReadFileOrFolder(user, f, fileCtx))
+        ? Object.values(db.xx_files || {}).filter((f) => inSpace(f) && canReadFileOrFolder(user, f, fileCtx))
         : [],
     [db, user, fileCtx, orgId],
   )
@@ -715,7 +723,7 @@ export default function App() {
     () =>
       db && user
         ? Object.values(db.xx_budgets || {})
-            .filter((b) => inOrg(b) && canReadEntity(user, b))
+            .filter((b) => inSpace(b) && canReadEntity(user, b))
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr'))
         : [],
     [db, user],
@@ -732,7 +740,7 @@ export default function App() {
     () =>
       db && user
         ? Object.values(db.xx_risks || {})
-            .filter((r) => inOrg(r) && canReadEntity(user, r))
+            .filter((r) => inSpace(r) && canReadEntity(user, r))
             .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
         : [],
     [db, user],
@@ -768,14 +776,19 @@ export default function App() {
         ? Object.values(db.xx_messages || {})
             .filter((m) => {
               const group = db.xx_groups?.[m.groupId]
-              return group && canReadGroup(user, group)
+              // SPACES-LAYER START
+              return Boolean(group) && group.orgId === orgId && canSeeGroupContent(db, user, group)
+              // SPACES-LAYER END
             })
             .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
         : [],
     [db, user],
   )
   const presentIds = useMemo(() => (db ? listPresentUserIds() : []), [db])
-  const links = useMemo(() => (db ? Object.values(db.xx_links || {}).filter((row) => inOrg(row)) : []), [db, orgId])
+  const links = useMemo(
+    () => (db && user ? Object.values(db.xx_links || {}).filter((row) => inSpace(row)) : []),
+    [db, user, orgId],
+  )
   const canvasLayout = useMemo(
     () => (db && user ? db.xx_canvas_layout?.[orgId ? `${user.id}__${orgId}` : user.id] || null : null),
     [db, user, orgId],
@@ -1171,7 +1184,9 @@ export default function App() {
   if (!orgId) {
     return (
       <>
-        <OrgGate user={user} memberships={memberships} onLogout={handleLogout} />
+        {/* SPACES-LAYER START */}
+        <PersonalHome user={user} db={db} onLogout={handleLogout} />
+        {/* SPACES-LAYER END */}
         {toast && <Toast toast={toast} />}
       </>
     )
@@ -1277,7 +1292,9 @@ export default function App() {
               <p className="mt-0.5 truncate text-xs text-sage-600">{t(`chrome.${view}`)}</p>
             ) : null}
           </div>
-          <OrgSwitcher user={user} activeOrgId={orgId} onSwitch={(id) => selectOrganization(id, user)} />
+          {/* SPACES-LAYER START */}
+          <WorkspaceSwitcher db={db} user={user} activeOrgId={orgId} onSwitch={(id) => selectOrganization(id, user)} />
+          {/* SPACES-LAYER END */}
           <SyncBadge status={db?.syncStatus || 'local'} />
           <button
             type="button"
@@ -1374,6 +1391,9 @@ export default function App() {
             />
           )}
           {view === 'org' && <OrgHome user={user} activeOrgId={orgId} flash={flash} />}
+          {/* SPACES-LAYER START */}
+          {view === 'spaces' && <SpacesScreen user={user} db={db} orgId={orgId} users={users} flash={flash} />}
+          {/* SPACES-LAYER END */}
           {view === 'orgadmin' && isAdmin(user) && <OrgAdmin user={user} flash={flash} peek={db?.orgPeek} />}
           {view === 'dashboard' && (
             <DashboardView

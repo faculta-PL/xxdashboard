@@ -12,6 +12,9 @@ import {
   selectOrganization,
   sendMessage,
 } from './lib/store'
+// SPACES-LAYER START
+import { showInSwitcher } from './spaces/permissions.js'
+// SPACES-LAYER END
 import { createRecognizer, speechSupported } from './lib/voice'
 import { todayIso } from './lib/todos'
 
@@ -46,7 +49,9 @@ export default function MiniApp({
   const [listening, setListening] = useState(false)
   const [interim, setInterim] = useState('')
   const [error, setError] = useState('')
-  const orgs = listOrganizations().filter((org) => listMembersOfOrg(org.id).some((m) => m.userId === user.id))
+  const orgs = listOrganizations().filter((org) =>
+    listMembersOfOrg(org.id).some((member) => member.userId === user.id && showInSwitcher(org, member)),
+  )
   const org = orgs.find((item) => item.id === orgId)
 
   const auto = useAutosave({
