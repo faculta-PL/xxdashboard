@@ -7,6 +7,8 @@ import {
   parseActionsFromAssistant,
   budgetMath,
   wantsWebSearch,
+  webQueryFrom,
+  formatSearchError,
   openAiUnavailable,
   webSearchUrls,
   isLocalAiHost,
@@ -162,5 +164,13 @@ assert(!WEB_EMPTY_MESSAGE.includes('VITE_'), 'no env names')
 assert(wantsWebSearch('cherche en ligne React', false) === true, 'web intent')
 assert(wantsWebSearch('résume', false) === false, 'no web')
 assert(wantsWebSearch('résume', true) === true, 'toggle web')
+assert(wantsWebSearch('Regarde sur internet', false) === true, 'regarde sur internet')
+assert(webQueryFrom("C'est quoi la tour eiffel ?") === 'tour eiffel', 'encyclopedic query')
+assert(
+  webQueryFrom('Regarde sur internet', [{ role: 'user', content: "C'est quoi la tour eiffel ?" }]) === 'tour eiffel',
+  'follow-up query',
+)
+assert(formatSearchError({ status: 502 }, 'fr') === 'La recherche web a échoué (HTTP 502).', 'search error fr')
+assert(formatSearchError(new Error('Web search failed (network).'), 'en') === 'Web search failed (network).', 'search error en')
 
 console.log('assistant tests ok')

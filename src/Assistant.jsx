@@ -29,6 +29,8 @@ import {
   askExternalStream,
   searchWeb,
   formatWebBlock,
+  formatSearchError,
+  answerFromSources,
   fetchAiStatus,
   writeExternalPref,
   writeWebPref,
@@ -533,15 +535,31 @@ function useAiChat({
       let webPayload = null
       let webSources = []
       let webSearchedAt = ''
+      let searchFailed = false
       if (wantWeb) {
         try {
-          const web = await searchWeb(webQueryFrom(text))
+          const web = await searchWeb(webQueryFrom(text, history))
           webPayload = web
           webSources = web.results || []
           webSearchedAt = web.searchedAt || nowIso()
-        } catch {
-          webSearchedAt = nowIso()
+        } catch (err) {
+          searchFailed = true
+          webPayload = null
           webSources = []
+          webSearchedAt = ''
+          setError(formatSearchError(err, lang))
+        }
+      }
+
+      const takeServerWeb = (ext) => {
+        const results = ext?.web?.results
+        if (!Array.isArray(results)) return
+        webPayload = ext.web
+        webSources = results
+        webSearchedAt = ext.web.searchedAt || webSearchedAt || nowIso()
+        if (results.length) {
+          searchFailed = false
+          setError('')
         }
       }
 
@@ -562,10 +580,12 @@ function useAiChat({
             messages: history.filter((m) => m.role === 'user' || m.role === 'assistant'),
             context,
             web: webPayload,
+            webSearch: wantWeb,
             signal: ctrl.signal,
             onDelta,
             language: lang,
           })
+          takeServerWeb(ext)
           if (ext.ok && (ext.content || ext.text)) {
             answerText = ext.content || ext.text
             usedExternal = true
@@ -581,15 +601,23 @@ function useAiChat({
             setStreamText('')
             abortRef.current = null
             return
+          } else if (err?.searchError && !webSources.length) {
+            searchFailed = true
+            const msg = formatSearchError(err, lang)
+            setError(msg)
+            answerText = msg
+            usedExternal = true
           } else {
             try {
               const ext = await askExternal({
                 messages: history.filter((m) => m.role === 'user' || m.role === 'assistant'),
                 context,
                 web: webPayload,
+                webSearch: wantWeb,
                 signal: ctrl.signal,
                 language: lang,
               })
+              takeServerWeb(ext)
               if (ext.ok && (ext.content || ext.text)) {
                 answerText = ext.content || ext.text
                 usedExternal = true
@@ -598,27 +626,40 @@ function useAiChat({
                 setStreamText(visibleStreamContent(answerText))
               }
             } catch (err2) {
-              const reason = err2?.message || err?.message || 'erreur inconnue'
-              const msg = openAiUnavailable(reason)
-              setError(msg)
-              flash?.(msg, 'warn')
+              if (err2?.searchError && !webSources.length) {
+                searchFailed = true
+                const msg = formatSearchError(err2, lang)
+                setError(msg)
+                answerText = msg
+                usedExternal = true
+              } else {
+                const reason = err2?.message || err?.message || 'erreur inconnue'
+                const msg = openAiUnavailable(reason)
+                setError(msg)
+                flash?.(msg, 'warn')
+              }
             }
           }
         }
-      } else {
+      } else if (!searchFailed) {
         setError(openAiUnavailable(openaiError || 'OPENAI_API_KEY manquante'))
       }
 
-      if (!answerText) {
-        const local = localAnswer(style ? `${style}: ${text}` : text, context, style)
-        answerText = local.text
-        sources = local.sources
-        fallback = true
-      } else {
+      if (!answerText && !searchFailed) {
+        if (webSources.length) {
+          answerText = answerFromSources(webSources, lang)
+          sources = []
+        } else {
+          const local = localAnswer(style ? `${style}: ${text}` : text, context, style)
+          answerText = local.text
+          sources = local.sources
+          fallback = true
+        }
+      } else if (answerText) {
         sources = localAnswer(text, context).sources
       }
 
-      if (webPayload && !usedExternal) {
+      if (webPayload && !usedExternal && !webSources.length) {
         answerText += formatWebBlock(webPayload)
       }
 

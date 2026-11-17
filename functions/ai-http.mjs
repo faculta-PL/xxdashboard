@@ -8,6 +8,13 @@ import {
   displayAiContent,
   splitDisplayAndActions,
 } from './ai-actions.mjs'
+import {
+  ensureSourceReply,
+  isEncyclopedicQuery,
+  resolveWebQuery,
+  searchFailureMessage,
+  userAskedForWeb,
+} from './web-query.mjs'
 
 const MAX_BODY = 256 * 1024
 const LLM_TIMEOUT_MS = 30000
@@ -239,14 +246,52 @@ export function resolveAiLang(body) {
   return raw.startsWith('en') ? 'en' : 'fr'
 }
 
-export function systemPromptFor(lang) {
-  return resolveAiLang({ language: lang }) === 'en' ? SYSTEM_PROMPT_EN : SYSTEM_PROMPT_FR
+const WEB_OVERRIDE_FR = `La recherche web est activée. Tu PEUX et tu DOIS utiliser les sources publiques fournies pour répondre aux questions générales. Réponds dans la langue de l’utilisateur, à partir de ces sources, puis liste les liens sous ta réponse. Ne dis jamais que tu n’as pas accès à Internet lorsque la recherche web est activée.`
+
+const WEB_OVERRIDE_EN = `Web search is enabled. You MAY and MUST use the public sources provided to answer general questions. Answer in the user's language from those sources, then list the links under your answer. Never say you have no internet access when web search is enabled.`
+
+export function systemPromptFor(lang, opts = {}) {
+  const en = resolveAiLang({ language: lang }) === 'en'
+  let base = en ? SYSTEM_PROMPT_EN : SYSTEM_PROMPT_FR
+  if (!opts.web) return base
+  if (en) {
+    base = base.replace(
+      'Use only the provided context (notes, ideas, projects, budget, risks, files, calendar the user can already read).',
+      'Use Nazix context for private workspace data. When public web sources are provided, you MAY and MUST answer from them.',
+    )
+    return `${base}\n${WEB_OVERRIDE_EN}`
+  }
+  base = base.replace(
+    'Utilise uniquement le contexte fourni (notes, idées, projets, budget, risques, fichiers, calendrier auxquels l’utilisateur a accès).',
+    'Utilise le contexte Nazix pour les données privées de l’espace. Lorsque des sources web publiques sont fournies, tu PEUX et tu DOIS t’en servir pour répondre.',
+  )
+  return `${base}\n${WEB_OVERRIDE_FR}`
 }
 
 const IMAGE_TIMEOUT_MS = 55000
 const IMAGE_PROMPT_MAX = 4000
 
-function toChatMessages(body) {
+function formatWebContext(web, lang) {
+  const results = Array.isArray(web?.results) ? web.results.filter((item) => item && (item.title || item.url)) : []
+  const en = lang === 'en'
+  if (!results.length) {
+    return en
+      ? 'Web search ran and returned no public source. Say that clearly. Do not claim you have no internet access.'
+      : 'La recherche web a été exécutée et n’a renvoyé aucune source publique. Dis-le clairement. Ne prétends pas que tu n’as pas accès à Internet.'
+  }
+  const lines = results.slice(0, 6).map((item) => {
+    const title = String(item.title || '').slice(0, 180)
+    const url = String(item.url || '')
+    const snippet = String(item.snippet || '').slice(0, 500)
+    return `- ${title}\n  url: ${url}\n  extrait: ${snippet}`
+  })
+  const head = en
+    ? 'Public web sources you MAY use (not private Nazix facts). Answer from them in the user\'s language and list the links:'
+    : 'Sources web publiques que tu PEUX utiliser (ce ne sont pas des faits privés Nazix). Réponds à partir d’elles, dans la langue de l’utilisateur, et liste les liens :'
+  return `${head}\n${lines.join('\n')}`.slice(0, 8000)
+}
+
+function toChatMessages(body, lang = 'fr') {
   const incoming = Array.isArray(body.messages) ? body.messages : []
   const mapped = incoming
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && m.content)
@@ -257,22 +302,25 @@ function toChatMessages(body) {
     }))
   const context = body.context && typeof body.context === 'object' ? body.context : {}
   const contextText = JSON.stringify(context).slice(0, 24000)
+  const webOn = Boolean(body.webSearch || (body.web && typeof body.web === 'object'))
   const parts = []
   if (contextText && contextText !== '{}') {
     parts.push(`Contexte Nazix (uniquement des éléments déjà lisibles par l’utilisateur) :\n${contextText}`)
   }
-  if (body.web && typeof body.web === 'object') {
-    parts.push(`Résultats web (DuckDuckGo, ce ne sont pas des faits Nazix) :\n${JSON.stringify(body.web).slice(0, 8000)}`)
-  }
+  if (webOn) parts.push(formatWebContext(body.web, lang))
   if (parts.length) {
+    const ack = webOn
+      ? lang === 'en'
+        ? 'I have the Nazix context and the public web sources. I may use those sources, answer in the user\'s language, and I will list the links.'
+        : 'J’ai le contexte Nazix et les sources web publiques. Je peux m’en servir, répondre dans la langue de l’utilisateur, et je listerai les liens.'
+      : 'J’ai bien le contexte. Je m’appuierai uniquement sur ces éléments, je citerai les titres, et je distinguerai le web le cas échéant.'
     mapped.unshift({
       role: 'user',
       content: parts.join('\n\n'),
     })
     mapped.splice(1, 0, {
       role: 'assistant',
-      content:
-        'J’ai bien le contexte. Je m’appuierai uniquement sur ces éléments, je citerai les titres, et je distinguerai le web le cas échéant.',
+      content: ack,
     })
   }
   return mapped
@@ -335,11 +383,11 @@ async function fetchWithTimeout(url, options, ms, req) {
   }
 }
 
-function openaiMessages(messages, lang = 'fr') {
-  return [{ role: 'system', content: systemPromptFor(lang) }, ...messages]
+function openaiMessages(messages, lang = 'fr', web = false) {
+  return [{ role: 'system', content: systemPromptFor(lang, { web }) }, ...messages]
 }
 
-async function callOpenAI(key, messages, req, lang = 'fr') {
+async function callOpenAI(key, messages, req, lang = 'fr', web = false) {
   const res = await fetchWithTimeout(
     'https://api.openai.com/v1/chat/completions',
     {
@@ -352,7 +400,7 @@ async function callOpenAI(key, messages, req, lang = 'fr') {
         model: 'gpt-4o-mini',
         temperature: 0.4,
         max_tokens: 1400,
-        messages: openaiMessages(messages, lang),
+        messages: openaiMessages(messages, lang, web),
       }),
     },
     LLM_TIMEOUT_MS,
@@ -368,7 +416,7 @@ async function callOpenAI(key, messages, req, lang = 'fr') {
   return String(text)
 }
 
-async function callAnthropic(key, messages, req, lang = 'fr') {
+async function callAnthropic(key, messages, req, lang = 'fr', web = false) {
   const res = await fetchWithTimeout(
     'https://api.anthropic.com/v1/messages',
     {
@@ -381,7 +429,7 @@ async function callAnthropic(key, messages, req, lang = 'fr') {
       body: JSON.stringify({
         model: 'claude-3-5-haiku-latest',
         max_tokens: 1400,
-        system: systemPromptFor(lang),
+        system: systemPromptFor(lang, { web }),
         messages,
       }),
     },
@@ -401,7 +449,7 @@ async function callAnthropic(key, messages, req, lang = 'fr') {
   return text
 }
 
-async function callGrok(key, messages, req, lang = 'fr') {
+async function callGrok(key, messages, req, lang = 'fr', web = false) {
   const res = await fetchWithTimeout(
     'https://api.x.ai/v1/chat/completions',
     {
@@ -414,7 +462,7 @@ async function callGrok(key, messages, req, lang = 'fr') {
         model: 'grok-2-latest',
         temperature: 0.4,
         max_tokens: 1400,
-        messages: openaiMessages(messages, lang),
+        messages: openaiMessages(messages, lang, web),
       }),
     },
     LLM_TIMEOUT_MS,
@@ -430,10 +478,10 @@ async function callGrok(key, messages, req, lang = 'fr') {
   return String(text)
 }
 
-async function callLlm(provider, messages, req, lang = 'fr') {
-  if (provider.name === 'openai') return callOpenAI(provider.key, messages, req, lang)
-  if (provider.name === 'anthropic') return callAnthropic(provider.key, messages, req, lang)
-  return callGrok(provider.key, messages, req, lang)
+async function callLlm(provider, messages, req, lang = 'fr', web = false) {
+  if (provider.name === 'openai') return callOpenAI(provider.key, messages, req, lang, web)
+  if (provider.name === 'anthropic') return callAnthropic(provider.key, messages, req, lang, web)
+  return callGrok(provider.key, messages, req, lang, web)
 }
 
 function startSse(res) {
@@ -449,7 +497,7 @@ function sseWrite(res, obj) {
   res.write(`data: ${JSON.stringify(obj)}\n\n`)
 }
 
-async function streamOpenAI(key, messages, req, res, lang = 'fr') {
+async function streamOpenAI(key, messages, req, res, lang = 'fr', web = false) {
   const openaiRes = await fetchWithTimeout(
     'https://api.openai.com/v1/chat/completions',
     {
@@ -464,7 +512,7 @@ async function streamOpenAI(key, messages, req, res, lang = 'fr') {
         temperature: 0.4,
         max_tokens: 1400,
         stream: true,
-        messages: openaiMessages(messages, lang),
+        messages: openaiMessages(messages, lang, web),
       }),
     },
     LLM_TIMEOUT_MS,
@@ -531,6 +579,74 @@ async function streamOpenAI(key, messages, req, res, lang = 'fr') {
   return finished.content
 }
 
+function userTurns(body) {
+  return (Array.isArray(body?.messages) ? body.messages : [])
+    .filter((m) => m && m.role === 'user' && m.content)
+    .map((m) => String(m.content))
+}
+
+function shouldSearchWeb(body) {
+  if (body?.webSearch === true || body?.searchWeb === true) return true
+  if (body?.web && typeof body.web === 'object') return true
+  return userTurns(body).some((text) => userAskedForWeb(text))
+}
+
+function clientWebResults(body) {
+  const results = Array.isArray(body?.web?.results) ? body.web.results : []
+  return results.filter((item) => item && (item.url || item.title))
+}
+
+async function prepareChatBody(body) {
+  const lang = resolveAiLang(body)
+  if (!shouldSearchWeb(body)) return { body, lang, web: null }
+  const turns = userTurns(body)
+  const latest = turns[turns.length - 1] || String(body?.q || body?.query || '')
+  const query = resolveWebQuery(latest, turns.slice(0, -1))
+  const searchedAt = new Date().toISOString()
+  if (!query) {
+    const web = { enabled: true, ok: true, query: '', results: [], searchedAt, sourceLabel: 'Web' }
+    return { body: { ...body, web, webSearch: true }, lang, web }
+  }
+  try {
+    const results = await webSearchResults(query, { lang })
+    const web = { enabled: true, ok: true, query, results, searchedAt, sourceLabel: 'Web' }
+    return { body: { ...body, web, webSearch: true }, lang, web }
+  } catch (err) {
+    const fallback = clientWebResults(body)
+    console.error(`[ai-search] status=${Number(err?.status || 0)} host=${err?.host || 'unknown'}`)
+    if (fallback.length) {
+      const web = {
+        enabled: true,
+        ok: true,
+        query,
+        results: fallback,
+        searchedAt: body.web?.searchedAt || searchedAt,
+        sourceLabel: 'Web',
+      }
+      return { body: { ...body, web, webSearch: true }, lang, web }
+    }
+    const error = new Error(searchFailureMessage(lang, err))
+    error.status = Number(err?.status || 0)
+    error.host = err?.host || ''
+    error.searchError = true
+    throw error
+  }
+}
+
+function replySearchError(res, err, started) {
+  const payload = { ok: false, error: err.message || searchFailureMessage('fr', err), searchError: true }
+  if (!started) {
+    json(res, 200, payload)
+    return
+  }
+  try {
+    sseWrite(res, payload)
+    res.end()
+  } catch {
+    /* headers may already be closed */
+  }
+}
+
 async function handleAi(req, res, env) {
   if (req.method === 'GET') {
     json(res, 200, statusPayload(env))
@@ -551,17 +667,29 @@ async function handleAi(req, res, env) {
     return
   }
   const body = await readBody(req)
-  const lang = resolveAiLang(body)
-  const messages = toChatMessages(body)
-  const raw = await callLlm(provider, messages, req, lang)
-  const { content, actions } = splitDisplayAndActions(raw)
+  let prepared
+  try {
+    prepared = await prepareChatBody(body)
+  } catch (err) {
+    if (err?.searchError) {
+      replySearchError(res, err, false)
+      return
+    }
+    throw err
+  }
+  const { lang, web } = prepared
+  const messages = toChatMessages(prepared.body, lang)
+  const raw = await callLlm(provider, messages, req, lang, Boolean(web))
+  const split = splitDisplayAndActions(raw)
+  const content = ensureSourceReply(split.content, web?.results, lang)
   json(res, 200, {
     ok: true,
     mode: 'external',
     provider: provider.name,
     text: content,
     content,
-    actions,
+    actions: split.actions,
+    web: web || undefined,
   })
 }
 
@@ -585,15 +713,44 @@ async function handleAiStream(req, res, env) {
     return
   }
   const body = await readBody(req)
-  const lang = resolveAiLang(body)
-  const messages = toChatMessages(body)
-  startSse(res)
+  let prepared
   try {
-    if (provider.name === 'openai') {
-      await streamOpenAI(provider.key, messages, req, res, lang)
+    prepared = await prepareChatBody(body)
+  } catch (err) {
+    if (err?.searchError) {
+      replySearchError(res, err, false)
       return
     }
-    const raw = await callLlm(provider, messages, req, lang)
+    throw err
+  }
+  const { lang, web } = prepared
+  const messages = toChatMessages(prepared.body, lang)
+  const webOn = Boolean(web)
+  startSse(res)
+  try {
+    if (web?.results?.length) {
+      const raw = await callLlm(provider, messages, req, lang, true)
+      const split = splitDisplayAndActions(raw)
+      const content = ensureSourceReply(split.content, web.results, lang)
+      if (content) sseWrite(res, { delta: content })
+      sseWrite(res, {
+        done: true,
+        text: content,
+        content,
+        actions: split.actions,
+        provider: provider.name,
+        web,
+        replace: true,
+        ok: true,
+      })
+      res.end()
+      return
+    }
+    if (provider.name === 'openai') {
+      await streamOpenAI(provider.key, messages, req, res, lang, webOn)
+      return
+    }
+    const raw = await callLlm(provider, messages, req, lang, webOn)
     const { content, actions } = splitDisplayAndActions(raw)
     if (content) sseWrite(res, { delta: content })
     sseWrite(res, {
@@ -602,6 +759,7 @@ async function handleAiStream(req, res, env) {
       content,
       actions,
       provider: provider.name,
+      web: web || undefined,
       ok: true,
     })
     res.end()
@@ -762,20 +920,52 @@ function assertApprovedSearchUrl(url) {
 }
 // MODULES-LAYER END
 
-async function fetchDdgInstant(q) {
-  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_redirect=1&no_html=1&skip_disambig=1`
+const WIKI_UA = 'NazixSearch/1.0 (Nazix workspace; +https://github.com/faculta-PL/xxdashboard)'
+
+function searchHost(url) {
+  try {
+    return new URL(url).host
+  } catch {
+    return ''
+  }
+}
+
+function noteSearchFailure(bag, status, url) {
+  const host = searchHost(url)
+  console.error(`[ai-search] status=${Number(status || 0)} host=${host || 'unknown'}`)
+  bag.failures.push({ status: Number(status || 0), host })
+}
+
+async function fetchApproved(url, options, bag) {
   assertApprovedSearchUrl(url)
-  const ddg = await fetchWithTimeout(
+  let res
+  try {
+    res = await fetchWithTimeout(url, options, SEARCH_TIMEOUT_MS)
+  } catch {
+    noteSearchFailure(bag, 0, url)
+    return null
+  }
+  if (!res.ok) {
+    noteSearchFailure(bag, res.status, url)
+    return null
+  }
+  bag.ok += 1
+  return res
+}
+
+async function fetchDdgInstant(q, bag) {
+  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_redirect=1&no_html=1&skip_disambig=1`
+  const ddg = await fetchApproved(
     url,
     { headers: { Accept: 'application/json', 'User-Agent': SEARCH_UA } },
-    SEARCH_TIMEOUT_MS,
+    bag,
   )
-  if (!ddg.ok) return []
+  if (!ddg) return []
   const data = await ddg.json().catch(() => ({}))
   return collectDdgResults(data || {}, q)
 }
 
-async function fetchDdgHtml(q) {
+async function fetchDdgHtml(q, bag) {
   const headers = {
     'User-Agent': SEARCH_UA,
     Accept: 'text/html,application/xhtml+xml',
@@ -791,81 +981,138 @@ async function fetchDdgHtml(q) {
     { url: `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}`, method: 'GET', headers },
   ]
   for (const att of attempts) {
-    try {
-      assertApprovedSearchUrl(att.url)
-      const res = await fetchWithTimeout(
-        att.url,
-        { method: att.method, headers: att.headers, body: att.body, redirect: 'follow' },
-        SEARCH_TIMEOUT_MS,
-      )
-      if (!res.ok) continue
-      const html = await res.text()
-      const items = parseDdgHtml(html, q)
-      if (items.length) return items
-    } catch {
-      /* try next source */
-    }
+    const res = await fetchApproved(
+      att.url,
+      { method: att.method, headers: att.headers, body: att.body, redirect: 'follow' },
+      bag,
+    )
+    if (!res) continue
+    const html = await res.text()
+    const items = parseDdgHtml(html, q)
+    if (items.length) return items
   }
   return []
 }
 
-async function fetchWiki(q) {
+function wikiTitleUrl(lang, title) {
+  const slug = String(title || '').trim().replace(/ /g, '_')
+  if (!slug) return ''
+  return `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(slug)}`
+}
+
+function clipSnippet(text, n = 420) {
+  const s = decodeHtml(text)
+  if (s.length <= n) return s
+  const cut = s.slice(0, n)
+  const sp = cut.lastIndexOf(' ')
+  return `${(sp > 80 ? cut.slice(0, sp) : cut).trim()}…`
+}
+
+async function fetchWikiLang(lang, q, bag) {
+  const headers = { Accept: 'application/json', 'User-Agent': WIKI_UA }
   const items = []
-  for (const lang of ['fr', 'en']) {
-    try {
-      const url = `https://${lang}.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(q)}&limit=8&namespace=0&format=json`
-      assertApprovedSearchUrl(url)
-      const res = await fetchWithTimeout(
-        url,
-        { headers: { Accept: 'application/json', 'User-Agent': SEARCH_UA } },
-        SEARCH_TIMEOUT_MS,
-      )
-      if (!res.ok) continue
-      const data = await res.json().catch(() => [])
-      const titles = data[1] || []
-      const descs = data[2] || []
-      const urls = data[3] || []
-      for (let i = 0; i < titles.length; i++) {
+  const openUrl = `https://${lang}.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(q)}&limit=5&namespace=0&format=json&origin=*`
+  const opened = await fetchApproved(openUrl, { headers }, bag)
+  if (opened) {
+    const data = await opened.json().catch(() => [])
+    const titles = data[1] || []
+    const descs = data[2] || []
+    const urls = data[3] || []
+    for (let i = 0; i < titles.length; i += 1) {
+      items.push({
+        title: titles[i],
+        snippet: descs[i] || '',
+        url: urls[i] || wikiTitleUrl(lang, titles[i]),
+        source: 'Wikipedia',
+      })
+    }
+  }
+  if (!items.length) {
+    const listUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&srlimit=5&utf8=1&format=json&origin=*`
+    const listed = await fetchApproved(listUrl, { headers }, bag)
+    if (listed) {
+      const data = await listed.json().catch(() => ({}))
+      for (const hit of data?.query?.search || []) {
+        const title = hit?.title || ''
+        if (!title) continue
         items.push({
-          title: titles[i],
-          snippet: descs[i] || '',
-          url: urls[i] || '',
+          title,
+          snippet: clipSnippet(hit.snippet || ''),
+          url: wikiTitleUrl(lang, title),
           source: 'Wikipedia',
         })
       }
-      if (items.length) break
-    } catch {
-      /* next language */
+    }
+  }
+  const top = items[0]
+  if (top?.title && String(top.snippet || '').trim().length < 80) {
+    const exUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=1&explaintext=1&redirects=1&titles=${encodeURIComponent(top.title)}&format=json&origin=*`
+    const extracted = await fetchApproved(exUrl, { headers }, bag)
+    if (extracted) {
+      const data = await extracted.json().catch(() => ({}))
+      const pages = Object.values(data?.query?.pages || {})
+      const page = pages.find((p) => p && p.extract && !p.missing) || null
+      if (page?.extract) {
+        top.snippet = clipSnippet(page.extract)
+        if (page.title) {
+          top.title = page.title
+          top.url = wikiTitleUrl(lang, page.title)
+        }
+      }
+    }
+  }
+  return items
+}
+
+async function fetchWiki(q, bag) {
+  let items = []
+  for (const lang of ['fr', 'en']) {
+    const found = await fetchWikiLang(lang, q, bag)
+    if (found.length) {
+      items = found
+      break
     }
   }
   return uniqueResults(items, q)
 }
 
-function isEncyclopedic(q) {
-  const text = String(q || '').trim()
-  if (/^(qui est|qu['’]est-ce|what is|who is|d[ée]finition|definition|capitale|capital of|histoire de|biographie|biography)\b/i.test(text)) {
-    return true
-  }
-  return text.split(/\s+/).filter(Boolean).length <= 3
-}
-
-async function webSearchResults(q) {
-  const encyclopedic = isEncyclopedic(q)
-  const [instant, wiki] = await Promise.all([
-    fetchDdgInstant(q).catch(() => []),
-    fetchWiki(q).catch(() => []),
-  ])
-  let items = uniqueResults([...(encyclopedic ? wiki : []), ...instant, ...(encyclopedic ? [] : wiki.slice(0, 2))], q, 8)
-  if (items.length < 4) {
-    const html = await fetchDdgHtml(q).catch(() => [])
-    items = uniqueResults([...items, ...html], q, 8)
-  }
-  return items.map((item) => ({
+function publicResult(item) {
+  return {
     title: item.title,
     url: item.url,
     snippet: item.snippet,
     source: item.source || (String(item.url || '').includes('wikipedia.org') ? 'Wikipedia' : 'Web'),
-  }))
+  }
+}
+
+export async function webSearchResults(q, opts = {}) {
+  const raw = String(q || '').trim()
+  const query = String(opts.query || resolveWebQuery(raw, opts.prior || []) || raw).trim()
+  if (!query) return []
+  const encyclopedic = isEncyclopedicQuery(raw) || isEncyclopedicQuery(query)
+  const bag = { ok: 0, failures: [] }
+  const lang = opts.lang === 'en' ? 'en' : 'fr'
+  const wiki = await fetchWiki(query, bag)
+  let instant = []
+  if (!encyclopedic || !wiki.length) instant = await fetchDdgInstant(query, bag)
+  let items = uniqueResults(encyclopedic ? [...wiki, ...instant] : [...instant, ...wiki], query, 8)
+  if (!items.length) {
+    const html = await fetchDdgHtml(query, bag)
+    items = uniqueResults([...wiki, ...instant, ...html], query, 8)
+  }
+  if (!items.length && query !== raw) {
+    const wikiRaw = await fetchWiki(raw, bag)
+    items = uniqueResults(wikiRaw, raw, 8)
+  }
+  if (!items.length && !bag.ok && bag.failures.length) {
+    const last = bag.failures[bag.failures.length - 1]
+    const err = new Error(searchFailureMessage(lang, last))
+    err.status = last.status
+    err.host = last.host
+    err.searchError = true
+    throw err
+  }
+  return items.map(publicResult)
 }
 
 async function handleSearch(req, res) {
@@ -885,7 +1132,9 @@ async function handleSearch(req, res) {
     delete body.secret
   }
   // MODULES-LAYER END
-  const q = searchQueryFromReq(req, body)
+  const raw = searchQueryFromReq(req, body)
+  const lang = resolveAiLang(body)
+  const q = resolveWebQuery(raw)
   const searchedAt = new Date().toISOString()
   if (!q) {
     json(res, 200, {
@@ -898,21 +1147,26 @@ async function handleSearch(req, res) {
     })
     return
   }
-  const results = (await webSearchResults(q)).map((item) => ({
-    title: item.title,
-    url: item.url,
-    snippet: item.snippet,
-    source: item.source,
-  }))
-  json(res, 200, {
-    ok: true,
-    mode: 'web',
-    origin: 'web',
-    query: q,
-    results,
-    searchedAt,
-    sourceLabel: 'Web',
-  })
+  try {
+    const results = await webSearchResults(q, { lang, query: q })
+    json(res, 200, {
+      ok: true,
+      mode: 'web',
+      origin: 'web',
+      query: q,
+      results,
+      searchedAt,
+      sourceLabel: 'Web',
+    })
+  } catch (err) {
+    console.error(`[ai-search] status=${Number(err?.status || 0)} host=${err?.host || 'unknown'}`)
+    json(res, 502, {
+      ok: false,
+      searchError: true,
+      error: err.searchError ? err.message : searchFailureMessage(lang, err),
+      status: Number(err?.status || 0),
+    })
+  }
 }
 
 async function tryImageModel(key, prompt, model, req) {
@@ -1024,7 +1278,14 @@ async function handleImage(req, res, env) {
 }
 
 /** Returns a Promise if the path is an AI route, otherwise null (caller should next()). */
+// Synced with src/platform/plans.js — launch mode never paywalls this route.
+const LAUNCH_FREE_MODE = true
+
 export function dispatchAiRequest(req, res, env = process.env, pathOverride) {
+  if (LAUNCH_FREE_MODE !== true) {
+    json(res, 402, { ok: false, error: 'Plan requis.' })
+    return Promise.resolve()
+  }
   const path = pathOverride ? normalizeApiPath(pathOverride) : requestPath(req)
   if (!isAiPath(path)) return null
   const run =

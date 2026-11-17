@@ -11,6 +11,13 @@ import {
 // MODULES-LAYER START
 import { sanitizeSearchResults, stripClientSecrets } from '../billing/searchPolicy.js'
 // MODULES-LAYER END
+import {
+  answerFromSources,
+  ensureSourceReply,
+  resolveWebQuery,
+  searchFailureMessage,
+  userAskedForWeb,
+} from '../../server/web-query.mjs'
 
 export {
   displayAiContent,
@@ -490,14 +497,29 @@ function detectIntent(query) {
 
 export function wantsWebSearch(query, webToggle) {
   if (webToggle) return true
-  return /cherche|recherche|sur (le |internet|le web)|google|duckduckgo|wikipedia|what is|who is|qui est|qu['’]est-ce|définition|definition|look up|search the web|en ligne/i.test(String(query || ''))
+  return userAskedForWeb(query)
 }
 
-export function webQueryFrom(query) {
-  return String(query || '')
-    .replace(/cherche en ligne|recherche web|sur le web|en ligne/gi, '')
-    .trim() || String(query || '').trim()
+export function webQueryFrom(query, history = []) {
+  const prior = []
+  const current = String(query || '').trim()
+  for (const message of history || []) {
+    if (!message || message.role !== 'user' || !message.content) continue
+    const text = String(message.content).trim()
+    if (!text || text === current) continue
+    prior.push(text)
+  }
+  return resolveWebQuery(current, prior)
 }
+
+export function formatSearchError(err, lang = 'fr') {
+  const msg = String(err?.message || err || '').trim()
+  if (/recherche web a échoué|Web search failed/i.test(msg)) return msg
+  const status = Number(err?.status || 0) || Number((msg.match(/HTTP\s+(\d+)/i) || [])[1] || 0)
+  return searchFailureMessage(lang, { status })
+}
+
+export { answerFromSources, ensureSourceReply }
 
 function applyStyle(text, style) {
   if (style === 'short') {
@@ -805,7 +827,14 @@ function normalizeAiResponse(data, rawText = '') {
   }
 }
 
-export async function askExternal({ messages, context, web, signal, language }) {
+function markAiError(data, status) {
+  const error = new Error(data?.error || `HTTP ${status}`)
+  error.status = Number(data?.status || status || 0)
+  error.searchError = Boolean(data?.searchError) || /recherche web a échoué|Web search failed/i.test(error.message)
+  return error
+}
+
+export async function askExternal({ messages, context, web, webSearch, signal, language }) {
   const res = await fetch(aiEndpoint('/api/ai'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -813,13 +842,13 @@ export async function askExternal({ messages, context, web, signal, language }) 
       messages: slimMessages(messages),
       context,
       web: web || undefined,
+      webSearch: Boolean(webSearch),
       language: language === 'en' ? 'en' : 'fr',
     }),
     signal,
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
-  if (!data.ok) throw new Error(data.error || 'OPENAI_API_KEY manquante')
+  if (!res.ok || data.ok === false) throw markAiError(data, res.status)
   return normalizeAiResponse(data)
 }
 
@@ -840,7 +869,7 @@ function parseSseBuffer(buffer, onEvent) {
   return rest
 }
 
-export async function askExternalStream({ messages, context, web, signal, onDelta, language }) {
+export async function askExternalStream({ messages, context, web, webSearch, signal, onDelta, language }) {
   const res = await fetch(aiEndpoint('/api/ai/stream'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
@@ -848,6 +877,7 @@ export async function askExternalStream({ messages, context, web, signal, onDelt
       messages: slimMessages(messages),
       context,
       web: web || undefined,
+      webSearch: Boolean(webSearch),
       language: language === 'en' ? 'en' : 'fr',
     }),
     signal,
@@ -855,7 +885,7 @@ export async function askExternalStream({ messages, context, web, signal, onDelt
   const ct = res.headers.get('content-type') || ''
   if (!ct.includes('text/event-stream')) {
     const data = await res.json().catch(() => ({}))
-    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    if (!res.ok || !data.ok) throw markAiError(data, res.status)
     const normalized = normalizeAiResponse(data)
     if (normalized.content && onDelta) onDelta(normalized.content, normalized.content)
     return normalized
@@ -871,12 +901,14 @@ export async function askExternalStream({ messages, context, web, signal, onDelt
   let full = ''
   let provider = 'openai'
   let streamActions = []
+  let serverWeb = web || null
   const emitVisible = (raw) => {
     if (onDelta) onDelta(visibleStreamContent(raw), raw)
   }
   const onEvent = (evt) => {
-    if (evt.error) throw new Error(evt.error)
+    if (evt.error) throw markAiError(evt, 502)
     if (evt.provider) provider = evt.provider
+    if (evt.web && typeof evt.web === 'object') serverWeb = evt.web
     if (Array.isArray(evt.actions)) streamActions = evt.actions
     if (evt.delta) {
       full += evt.delta
@@ -888,7 +920,7 @@ export async function askExternalStream({ messages, context, web, signal, onDelt
     }
     if (evt.done) {
       const doneText = evt.content || evt.text
-      if (doneText && (!full || full.length < String(doneText).length)) {
+      if (doneText && (evt.replace || !full || full.length < String(doneText).length)) {
         full = doneText
         emitVisible(full)
       }
@@ -903,9 +935,17 @@ export async function askExternalStream({ messages, context, web, signal, onDelt
   if (buffer.trim()) parseSseBuffer(`${buffer}\n\n`, onEvent)
   if (!full) throw new Error('Réponse OpenAI vide.')
   return normalizeAiResponse(
-    { ok: true, text: full, content: full, actions: streamActions, provider, mode: 'external' },
+    { ok: true, text: full, content: full, actions: streamActions, provider, mode: 'external', web: serverWeb },
     full,
   )
+}
+
+function asSearchError(data, status, fallback) {
+  const message = data?.error || fallback || `HTTP ${status || 0}`
+  const error = new Error(typeof message === 'string' ? message : 'search failed')
+  error.status = Number(data?.status || status || 0)
+  error.searchError = true
+  return error
 }
 
 export async function searchWeb(query, loc) {
@@ -922,9 +962,10 @@ export async function searchWeb(query, loc) {
       // MODULES-LAYER START
       if (res.ok && data && Array.isArray(data.results)) return sanitizeSearchResults(data)
       // MODULES-LAYER END
-      lastError = data?.error || `HTTP ${res.status}`
+      lastError = asSearchError(data, res.status)
+      if (data?.searchError) continue
     } catch (err) {
-      lastError = err
+      lastError = err?.searchError ? err : asSearchError(null, 0, err?.message)
     }
     try {
       const path = url.split('?')[0]
@@ -937,12 +978,12 @@ export async function searchWeb(query, loc) {
       // MODULES-LAYER START
       if (res.ok && data && Array.isArray(data.results)) return sanitizeSearchResults(data)
       // MODULES-LAYER END
-      lastError = data?.error || `HTTP ${res.status}`
+      lastError = asSearchError(data, res.status)
     } catch (err) {
-      lastError = err
+      lastError = err?.searchError ? err : asSearchError(null, 0, err?.message)
     }
   }
-  const error = new Error(typeof lastError === 'string' ? lastError : 'search failed')
+  const error = lastError?.searchError ? lastError : asSearchError(null, 0, lastError?.message || lastError)
   error.offline = typeof navigator !== 'undefined' && navigator.onLine === false
   throw error
 }

@@ -213,6 +213,7 @@ import {
   buildContextPayload,
   searchWeb,
   WEB_EMPTY_MESSAGE,
+  formatSearchError,
 } from './lib/assistant'
 import {
   MAX_FILE_BYTES,
@@ -7251,7 +7252,7 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
         setWebHidden(true)
         setExtErr('')
       } else {
-        setExtErr(WEB_EMPTY_MESSAGE)
+        setExtErr(formatSearchError(err, lang))
       }
     } finally {
       setExtBusy(false)
