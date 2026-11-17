@@ -323,7 +323,7 @@ function GroupsPane({ groups, directory, users, user, orgId, db, busy, run, t, l
           </form>
         ) : null}
         {groups.length === 0 ? <p className="text-sm text-sage-500">{t('emptyGroups')}</p> : null}
-        <ul className="space-y-1">
+        <ul className="max-h-[min(32rem,calc(100dvh-14rem))] space-y-1 overflow-y-auto overscroll-contain xx-scroll [overflow-anchor:none]">
           {groups.map((group) => (
             <li key={group.id}>
               <button
@@ -491,7 +491,7 @@ function GroupDesk({ group, directory, users, user, db, busy, run, t, lang }) {
               <p className="mt-2 text-sm text-sage-500">{t('observerHint')}</p>
             )}
           </section>
-          <section className="rounded-2xl border border-sage-200 bg-white/80 p-2">
+          <section className="rounded-2xl border border-sage-200 bg-white/80 p-2 [overflow-anchor:none]">
             <h3 className="px-2 pt-2 font-display text-lg text-sage-900">{t('chat')}</h3>
             <StableChatPane
               threadKey={group.id}

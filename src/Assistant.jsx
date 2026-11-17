@@ -57,6 +57,7 @@ import {
   toUserMessage,
 } from './lib/store'
 import { canWriteRole } from './lib/rbac'
+import { useStickToBottom } from './chat/stick.js'
 
 const inputClass =
   'w-full min-h-11 rounded-xl border border-sage-300 bg-white px-3 py-2.5 text-sage-900 outline-none ring-sage-400 placeholder:text-sage-400 focus:ring-2'
@@ -67,6 +68,16 @@ const btnGhost =
 
 function nowIso() {
   return new Date().toISOString()
+}
+
+function messageId() {
+  return `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function messageKey(message, index) {
+  if (message?.id) return message.id
+  if (message?.at) return `${message.role || 'm'}-${message.at}`
+  return `idx-${index}`
 }
 
 export function AssistantFab({ view, open, onOpen }) {
@@ -87,17 +98,17 @@ export function AssistantFab({ view, open, onOpen }) {
 
 function OpenAiBanner({ openaiOk, openaiError }) {
   const { t } = useI18n()
-  if (openaiOk) {
-    return (
-      <div className="rounded-xl border border-sage-300 bg-sage-100/80 px-3 py-2 text-xs text-sage-800">
-        <p className="font-semibold">{t('ai.bannerOk')}</p>
-      </div>
-    )
-  }
+  const tone = openaiOk
+    ? 'border-sage-300 bg-sage-100/80 text-sage-800'
+    : 'border-warn/40 bg-warn/10 text-sage-800'
   return (
-    <div className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-sage-800">
-      <p className="font-semibold">{openAiUnavailable(openaiError || t('errors.openaiMissing'))}</p>
-      <p className="mt-0.5 text-sage-600">{t('ai.bannerHint')}</p>
+    <div className={`overflow-hidden rounded-xl border px-3 py-2 text-xs leading-snug ${tone}`} style={{ height: '3.5rem' }}>
+      <p className="line-clamp-1 font-semibold" title={openaiOk ? t('ai.bannerOk') : openAiUnavailable(openaiError || t('errors.openaiMissing'))}>
+        {openaiOk ? t('ai.bannerOk') : openAiUnavailable(openaiError || t('errors.openaiMissing'))}
+      </p>
+      <p className={`line-clamp-1 ${openaiOk ? 'text-transparent' : 'text-sage-600'}`} aria-hidden={openaiOk || undefined} title={openaiOk ? undefined : t('ai.bannerHint')}>
+        {openaiOk ? '\u00a0' : t('ai.bannerHint')}
+      </p>
     </div>
   )
 }
@@ -427,7 +438,6 @@ function useAiChat({
   const [streamText, setStreamText] = useState('')
   const [pendingAction, setPendingAction] = useState(null)
   const [actionBusy, setActionBusy] = useState(false)
-  const bottomRef = useRef(null)
   const abortRef = useRef(null)
   const streamRef = useRef('')
 
@@ -448,10 +458,6 @@ function useAiChat({
       })
       .finally(() => setStatusReady(true))
   }, [])
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages.length, busy, streamText, pendingUser])
 
   const persist = async (id, patch) => {
     const saved = await saveAiThread({ id, section, contextLabel: context.contextLabel, ...patch }, user)
@@ -497,7 +503,7 @@ function useAiChat({
     setError('')
     streamRef.current = ''
     setStreamText('')
-    const userMsg = { role: 'user', content: text, at: nowIso() }
+    const userMsg = { id: messageId(), role: 'user', content: text, at: nowIso() }
     setPendingUser(userMsg)
     let id = threadId
     let history = messages
@@ -626,6 +632,7 @@ function useAiChat({
       )
 
       const aiMsg = {
+        id: messageId(),
         role: 'assistant',
         content: answerText,
         sources,
@@ -669,10 +676,10 @@ function useAiChat({
   }
 
   const onComposerKey = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      send(e)
-    }
+    if (e.key !== 'Enter' || e.shiftKey) return
+    if (e.nativeEvent?.isComposing || e.keyCode === 229) return
+    e.preventDefault()
+    send(e)
   }
 
   const followUp = (style, label) => runTurn(label, style)
@@ -846,7 +853,6 @@ function useAiChat({
     pendingAction,
     setPendingAction,
     actionBusy,
-    bottomRef,
     startNew,
     send,
     runTurn,
@@ -885,104 +891,133 @@ function ChatPane({
 }) {
   const { t } = useI18n()
   const canWrite = canWriteRole(user)
+  const scrollerRef = useRef(null)
   const lastAi = [...chat.messages].reverse().find((m) => m.role === 'assistant')
-  const pendingAlreadySaved = chat.pendingUser && chat.messages.some((m) => m.at === chat.pendingUser.at)
+  const pendingAlreadySaved = chat.pendingUser && chat.messages.some((m) => m.id ? m.id === chat.pendingUser.id : m.at === chat.pendingUser.at)
+  const visible = pendingAlreadySaved || !chat.pendingUser ? chat.messages : [...chat.messages, chat.pendingUser]
+  const last = visible[visible.length - 1]
+  const revision = [
+    visible.length,
+    last ? messageKey(last, visible.length - 1) : '',
+    last?.content?.length || 0,
+    chat.streamText.length,
+    chat.busy ? 1 : 0,
+  ].join(':')
+  const onScroll = useStickToBottom(scrollerRef, { threadKey: chat.threadId || 'new', revision })
+  const showTyping = chat.busy && chat.messages[chat.messages.length - 1]?.role !== 'assistant'
+  const quickClass = btnGhost + ' !h-8 !min-h-0 shrink-0 !px-2 !py-0 !text-xs'
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3 xx-scroll">
+    <div className="flex min-h-0 w-full flex-1 basis-0 flex-col overflow-hidden [overflow-anchor:none]">
+      <div className="shrink-0 space-y-1 px-3 pt-3">
         <OpenAiBanner openaiOk={chat.openaiOk} openaiError={chat.openaiError} />
-        <p className="text-[11px] font-medium text-sage-600">{context.contextLabel}</p>
-        {chat.messages.length === 0 && !chat.pendingUser && (
-          <p className="text-sm text-sage-600">
-            {t('ai.emptyHint')}
-          </p>
-        )}
-        {chat.messages.map((m, i) => (
-          <div key={`${m.at}-${i}`} className="space-y-1.5">
-            <Bubble msg={m} onCopy={chat.copy} />
-            {m.role === 'assistant' && (
-              <ActionButtons
-                actions={
-                  m.actions?.length
-                    ? m.actions
-                    : parseActionsFromAssistant(m.content, context)
-                }
-                canWrite={canWrite}
-                onPick={chat.setPendingAction}
-              />
-            )}
-          </div>
-        ))}
-        {chat.pendingUser && !pendingAlreadySaved && <Bubble msg={chat.pendingUser} onCopy={chat.copy} />}
-        {chat.busy && chat.messages[chat.messages.length - 1]?.role !== 'assistant' && (
-          <Bubble
-            msg={{
-              role: 'assistant',
-              content: chat.streamText || (chat.openaiOk ? t('ai.thinking') : t('ai.localThinking')),
-              streaming: true,
-            }}
-            onCopy={chat.copy}
-          />
-        )}
-        {chat.error && (
-          <div className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
-            {chat.error}
-            <button type="button" className="ml-2 underline" onClick={() => chat.setError('')}>
-              {t('common.close')}
-            </button>
-          </div>
-        )}
-        {lastAi && !chat.busy && (
-          <div className="flex flex-wrap gap-1">
-            <button type="button" className={btnGhost + ' !min-h-8 !px-2 !py-1 !text-xs'} onClick={() => chat.followUp('short', t('ai.shorter'))}>
-              <AlignLeft size={12} /> {t('ai.shorter')}
-            </button>
-            <button type="button" className={btnGhost + ' !min-h-8 !px-2 !py-1 !text-xs'} onClick={() => chat.followUp('detailed', t('ai.detailed'))}>
-              <Rows3 size={12} /> {t('ai.detailed')}
-            </button>
-            <button type="button" className={btnGhost + ' !min-h-8 !px-2 !py-1 !text-xs'} onClick={() => chat.followUp('list', t('ai.list'))}>
-              <List size={12} /> {t('ai.list')}
-            </button>
-          </div>
-        )}
-        <div ref={chat.bottomRef} />
+        <p className="h-4 truncate text-[11px] font-medium leading-4 text-sage-600">{context.contextLabel || ' '}</p>
       </div>
-      <form onSubmit={chat.send} className="border-t border-sage-200 p-3">
-        <div className="mb-2 flex flex-wrap gap-3 text-[11px] text-sage-700">
-          <label className="flex items-center gap-1.5">
+      <div
+        ref={scrollerRef}
+        onScroll={onScroll}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 xx-scroll [overflow-anchor:none]"
+      >
+        <div className="space-y-3">
+          {visible.length === 0 && (
+            <p className="text-sm text-sage-600">{t('ai.emptyHint')}</p>
+          )}
+          {visible.map((m, i) => (
+            <div key={messageKey(m, i)} className="space-y-1.5 [overflow-anchor:none]">
+              <Bubble msg={m} onCopy={chat.copy} />
+              {m.role === 'assistant' && (
+                <ActionButtons
+                  actions={
+                    m.actions?.length
+                      ? m.actions
+                      : parseActionsFromAssistant(m.content, context)
+                  }
+                  canWrite={canWrite}
+                  onPick={chat.setPendingAction}
+                />
+              )}
+            </div>
+          ))}
+          <div className="[overflow-anchor:none]" style={{ minHeight: '4.5rem' }} aria-live="polite">
+            {showTyping ? (
+              <Bubble
+                msg={{
+                  id: 'typing',
+                  role: 'assistant',
+                  content: chat.streamText || (chat.openaiOk ? t('ai.thinking') : t('ai.localThinking')),
+                  streaming: true,
+                }}
+                onCopy={chat.copy}
+              />
+            ) : null}
+          </div>
+          {chat.error ? (
+            <div className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+              {chat.error}
+              <button type="button" className="ml-2 underline" onClick={() => chat.setError('')}>
+                {t('common.close')}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div className="flex h-10 shrink-0 items-center gap-1 overflow-x-auto overflow-y-hidden px-3 [overflow-anchor:none]">
+        <button type="button" className={quickClass + (lastAi ? '' : ' invisible')} disabled={!lastAi || chat.busy} onClick={() => chat.followUp('short', t('ai.shorter'))}>
+          <AlignLeft size={12} /> {t('ai.shorter')}
+        </button>
+        <button type="button" className={quickClass + (lastAi ? '' : ' invisible')} disabled={!lastAi || chat.busy} onClick={() => chat.followUp('detailed', t('ai.detailed'))}>
+          <Rows3 size={12} /> {t('ai.detailed')}
+        </button>
+        <button type="button" className={quickClass + (lastAi ? '' : ' invisible')} disabled={!lastAi || chat.busy} onClick={() => chat.followUp('list', t('ai.list'))}>
+          <List size={12} /> {t('ai.list')}
+        </button>
+      </div>
+      <form
+        onSubmit={chat.send}
+        className="shrink-0 border-t border-sage-200 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+      >
+        <div className="mb-2 flex h-6 items-center overflow-hidden text-[11px] text-sage-700">
+          <label className="flex items-center gap-1.5 whitespace-nowrap">
             <input
               type="checkbox"
-              className="h-3.5 w-3.5 accent-sage-700"
+              className="h-3.5 w-3.5 shrink-0 accent-sage-700"
               checked={chat.webSearch}
               onChange={(e) => chat.persistWeb(e.target.checked)}
             />
-            <Globe size={12} />             {t('ai.webSearch')}
+            <Globe size={12} />
+            {t('ai.webSearch')}
           </label>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           {onDictate && (
-            <button type="button" className={btnGhost + ' !px-3'} onClick={onDictate} aria-label={t('voice.dictate')}>
+            <button
+              type="button"
+              className={btnGhost + ' shrink-0 !p-0'}
+              style={{ width: '2.75rem', height: '2.75rem', minWidth: '2.75rem', minHeight: '2.75rem' }}
+              onClick={onDictate}
+              aria-label={t('voice.dictate')}
+            >
               <Mic size={16} />
             </button>
           )}
           <textarea
-            className={inputClass + ' min-h-11 max-h-32 resize-none'}
+            className={inputClass + ' min-w-0 flex-1 resize-none overflow-y-auto'}
+            style={{ height: '2.75rem', minHeight: '2.75rem', maxHeight: '2.75rem' }}
             rows={1}
             placeholder={compact ? t('ai.placeholderShort') : t('ai.placeholder')}
             value={chat.draft}
             onChange={(e) => chat.setDraft(e.target.value)}
             onKeyDown={chat.onComposerKey}
-            disabled={false}
           />
-          {chat.busy ? (
-            <button type="button" className={btnPrimary + ' !px-3'} onClick={chat.stop} aria-label={t('ai.stop')}>
-              <Square size={14} />
-            </button>
-          ) : (
-            <button type="submit" className={btnPrimary + ' !px-3'} disabled={!chat.draft.trim()} aria-label={t('ai.send')}>
-              <Send size={16} />
-            </button>
-          )}
+          <button
+            type={chat.busy ? 'button' : 'submit'}
+            className={btnPrimary + ' shrink-0 !p-0'}
+            style={{ width: '2.75rem', height: '2.75rem', minWidth: '2.75rem', minHeight: '2.75rem' }}
+            disabled={!chat.busy && !chat.draft.trim()}
+            aria-label={chat.busy ? t('ai.stop') : t('ai.send')}
+            onClick={chat.busy ? chat.stop : undefined}
+          >
+            {chat.busy ? <Square size={14} /> : <Send size={16} />}
+          </button>
         </div>
       </form>
       {chat.pendingAction && (
@@ -1056,8 +1091,8 @@ export function AssistantPanel({
   }
 
   return (
-    <aside className="fixed inset-0 z-30 flex flex-col bg-cream-green shadow-xl lg:inset-y-0 lg:left-auto lg:right-0 lg:w-[360px] lg:border-l lg:border-sage-200">
-      <header className="flex items-center gap-2 border-b border-sage-200 px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
+    <aside className="fixed inset-0 z-30 flex h-dvh max-h-dvh flex-col overflow-hidden bg-cream-green shadow-xl lg:inset-y-0 lg:left-auto lg:right-0 lg:h-dvh lg:w-[360px] lg:border-l lg:border-sage-200">
+      <header className="flex shrink-0 items-center gap-2 border-b border-sage-200 px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
         <Sparkles size={16} className="text-sage-700" />
         <h2 className="min-w-0 flex-1 truncate font-display text-base text-sage-900">{t('ai.title')}</h2>
         <button type="button" className="rounded-lg p-2 text-sage-600 hover:bg-sage-200" onClick={() => chat.startNew()} aria-label={t('ai.newThread')}>
@@ -1120,10 +1155,11 @@ export function AssistantView({
   })
   const [mobileThread, setMobileThread] = useState(false)
 
+  const frame = 'h-[min(32rem,calc(100dvh-14rem))] max-h-[min(32rem,calc(100dvh-14rem))]'
   return (
-    <div className="flex min-h-[calc(100dvh-8rem)] flex-col gap-3 lg:flex-row">
-      <aside className={`${mobileThread ? 'hidden lg:flex' : 'flex'} w-full flex-col rounded-2xl border border-sage-200 bg-white/80 lg:w-72`}>
-        <div className="flex items-center justify-between gap-2 border-b border-sage-200 px-3 py-2">
+    <div className="flex items-start gap-3 [overflow-anchor:none] lg:flex-row">
+      <aside className={`${mobileThread ? 'hidden lg:flex' : 'flex'} ${frame} w-full shrink-0 flex-col overflow-hidden rounded-2xl border border-sage-200 bg-white/80 lg:w-72`}>
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-sage-200 px-3 py-2">
           <p className="font-display text-sage-900">{t('ai.conversations')}</p>
           <button
             type="button"
@@ -1136,12 +1172,12 @@ export function AssistantView({
             <Plus size={14} /> {t('ai.new')}
           </button>
         </div>
-        <ul className="flex-1 overflow-y-auto xx-scroll p-2">
+        <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain xx-scroll p-2 [overflow-anchor:none]">
           {threads.length === 0 && <li className="px-2 py-6 text-center text-sm text-sage-500">{t('ai.none')}</li>}
           {threads.map((thread) => (
-            <li key={thread.id}>
+            <li key={thread.id} className="[overflow-anchor:none]">
               <div
-                className={`mb-1 flex items-center gap-1 rounded-xl px-2 py-2 ${
+                className={`mb-1 flex min-h-[3.25rem] items-center gap-1 rounded-xl px-2 py-2 ${
                   chat.threadId === thread.id ? 'bg-sage-200' : 'hover:bg-sage-100'
                 }`}
               >
@@ -1158,7 +1194,7 @@ export function AssistantView({
                 </button>
                 <button
                   type="button"
-                  className="rounded p-1.5 text-sage-500 hover:bg-white hover:text-danger"
+                  className="shrink-0 rounded p-1.5 text-sage-500 hover:bg-white hover:text-danger"
                   onClick={() => chat.remove(thread.id)}
                   aria-label={t('ai.deleteThread')}
                 >
@@ -1169,8 +1205,8 @@ export function AssistantView({
           ))}
         </ul>
       </aside>
-      <section className={`${mobileThread ? 'flex' : 'hidden lg:flex'} min-w-0 flex-1 flex-col rounded-2xl border border-sage-200 bg-white/70`}>
-        <div className="flex items-center gap-2 border-b border-sage-200 px-3 py-2 lg:hidden">
+      <section className={`${mobileThread ? 'flex' : 'hidden lg:flex'} ${frame} min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-sage-200 bg-white/70`}>
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-sage-200 px-3 lg:hidden">
           <button type="button" className={btnGhost + ' !min-h-9'} onClick={() => setMobileThread(false)}>
             <ChevronRight size={14} className="rotate-180" /> Liste
           </button>

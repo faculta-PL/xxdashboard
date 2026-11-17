@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Building2, CalendarDays, ListTodo, MessageCircle, Mic, Star, StickyNote } from 'lucide-react'
 import { useI18n, dateLocale } from './i18n'
 import { useAutosave } from './lib/formDraft'
@@ -17,6 +17,7 @@ import { showInSwitcher } from './spaces/permissions.js'
 // SPACES-LAYER END
 import { createRecognizer, speechSupported } from './lib/voice'
 import { todayIso } from './lib/todos'
+import { useStickToBottom } from './chat/stick.js'
 
 const btn =
   'inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-sage-700 px-4 text-base font-semibold text-white disabled:opacity-50'
@@ -29,6 +30,48 @@ function readDictationLang() {
   } catch {
     return 'fr-FR'
   }
+}
+
+function MiniChat({ thread, chat, setChat, busy, onSend, orgName, t }) {
+  const scrollerRef = useRef(null)
+  const last = thread[thread.length - 1]
+  const revision = last ? `${last.id || thread.length}:${String(last.body || '').length}:${thread.length}` : '0'
+  const onScroll = useStickToBottom(scrollerRef, { threadKey: 'mini', revision })
+  return (
+    <section className="flex h-72 shrink-0 flex-col overflow-hidden rounded-3xl border border-sage-200 bg-white p-4 [overflow-anchor:none]">
+      <h2 className="flex shrink-0 items-center gap-2 font-display text-xl text-sage-900">
+        <MessageCircle size={18} /> {t('mini.chat')}
+      </h2>
+      <p className="h-4 shrink-0 truncate text-xs leading-4 text-sage-500">{orgName || ' '}</p>
+      <div
+        ref={scrollerRef}
+        onScroll={onScroll}
+        className="mt-2 min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-2xl bg-sage-50 p-2 [overflow-anchor:none]"
+      >
+        {thread.length === 0 ? (
+          <p className="text-sm text-sage-500">{t('mini.noChat')}</p>
+        ) : (
+          thread.map((msg, index) => (
+            <p key={msg.id || msg.createdAt || `idx-${index}`} className="mb-2 rounded-xl bg-white px-3 py-2 text-sm text-sage-900 [overflow-anchor:none]">
+              <span className="font-semibold">{msg.authorName || '—'}: </span>
+              {msg.body}
+            </p>
+          ))
+        )}
+      </div>
+      <form onSubmit={onSend} className="mt-2 flex shrink-0 items-center gap-2">
+        <input
+          className={field + ' min-w-0 flex-1'}
+          value={chat}
+          placeholder={t('mini.chatPh')}
+          onChange={(e) => setChat(e.target.value)}
+        />
+        <button className={btn + ' h-12 w-28 shrink-0 px-0'} disabled={busy || !chat.trim()} type="submit">
+          {t('mini.send')}
+        </button>
+      </form>
+    </section>
+  )
 }
 
 export default function MiniApp({
@@ -247,30 +290,7 @@ export default function MiniApp({
         )}
       </section>
 
-      <section className="rounded-3xl border border-sage-200 bg-white p-4">
-        <h2 className="flex items-center gap-2 font-display text-xl text-sage-900">
-          <MessageCircle size={18} /> {t('mini.chat')}
-        </h2>
-        <p className="text-xs text-sage-500">{org?.name}</p>
-        <div className="mt-2 h-48 space-y-2 overflow-y-auto rounded-2xl bg-sage-50 p-2">
-          {thread.length === 0 ? (
-            <p className="text-sm text-sage-500">{t('mini.noChat')}</p>
-          ) : (
-            thread.map((msg) => (
-              <p key={msg.id} className="rounded-xl bg-white px-3 py-2 text-sm text-sage-900">
-                <span className="font-semibold">{msg.authorName || '—'}: </span>
-                {msg.body}
-              </p>
-            ))
-          )}
-        </div>
-        <form onSubmit={send} className="mt-2 flex gap-2">
-          <input className={field} value={chat} placeholder={t('mini.chatPh')} onChange={(e) => setChat(e.target.value)} />
-          <button className={btn} disabled={busy || !chat.trim()}>
-            {t('mini.send')}
-          </button>
-        </form>
-      </section>
+      <MiniChat thread={thread} chat={chat} setChat={setChat} busy={busy} onSend={send} orgName={org?.name} t={t} />
 
       <p className="text-center text-xs text-sage-500">{new Date().toLocaleString(dateLocale(lang))}</p>
       <div className="flex gap-2">

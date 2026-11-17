@@ -1,10 +1,9 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useRef } from 'react'
 import { Send } from 'lucide-react'
 import { btnPrimary, inputClass } from '../components/ui'
 import { useI18n } from '../i18n'
 import { chatT } from './i18n.js'
-
-const NEAR_BOTTOM_PX = 48
+import { useStickToBottom } from './stick.js'
 
 /**
  * Message list stays in a fixed-height scroller. The composer is pinned to the
@@ -24,34 +23,23 @@ export function StableChatPane({
   sendLabel,
   emptyLabel,
   hint,
+  fill = false,
 }) {
   const { lang } = useI18n()
   const scrollerRef = useRef(null)
-  const stickRef = useRef(true)
   const text = typeof draft === 'string' ? draft : ''
   const placeholderText = placeholder || chatT(lang, 'placeholder')
   const sendText = sendLabel || chatT(lang, 'send')
   const emptyText = emptyLabel || chatT(lang, 'empty')
   const hintText = hint || chatT(lang, 'hint')
-  const tail = messages.length ? messages[messages.length - 1]?.id || messages.length : 0
-
-  const rememberStick = () => {
-    const el = scrollerRef.current
-    if (!el) return
-    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX
-  }
-
-  useLayoutEffect(() => {
-    stickRef.current = true
-    const el = scrollerRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [threadKey])
-
-  useLayoutEffect(() => {
-    const el = scrollerRef.current
-    if (!el || !stickRef.current) return
-    el.scrollTop = el.scrollHeight
-  }, [tail, messages.length, threadKey])
+  const last = messages.length ? messages[messages.length - 1] : null
+  const revision = last
+    ? `${last.id || last.createdAt || messages.length}:${String(last.body || '').length}:${messages.length}`
+    : '0'
+  const onScroll = useStickToBottom(scrollerRef, { threadKey, revision })
+  const frame = fill
+    ? 'h-auto min-h-0 flex-1'
+    : 'h-[min(32rem,calc(100dvh-14rem))] shrink-0'
 
   const send = () => {
     if (busy || disabled || !text.trim()) return
@@ -66,10 +54,10 @@ export function StableChatPane({
   }
 
   return (
-    <div className="flex h-[min(32rem,calc(100dvh-14rem))] w-full shrink-0 flex-col overflow-hidden [overflow-anchor:none]">
+    <div className={`flex w-full flex-col overflow-hidden [overflow-anchor:none] ${frame}`}>
       <div
         ref={scrollerRef}
-        onScroll={rememberStick}
+        onScroll={onScroll}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4 xx-scroll [overflow-anchor:none] md:px-5"
       >
         {messages.length === 0 ? (
@@ -77,7 +65,7 @@ export function StableChatPane({
         ) : (
           <div className="space-y-3">
             {messages.map((message, index) => (
-              <div key={message?.id || index}>
+              <div key={message?.id || message?.createdAt || `idx-${index}`} className="[overflow-anchor:none]">
                 {renderMessage ? renderMessage(message, index) : <p className="whitespace-pre-wrap text-sm">{message?.body}</p>}
               </div>
             ))}
@@ -93,7 +81,8 @@ export function StableChatPane({
       >
         <div className="flex items-end gap-2">
           <textarea
-            className={inputClass + ' max-h-24 min-h-11 min-w-0 flex-1 resize-none overflow-y-auto'}
+            className={inputClass + ' min-w-0 flex-1 resize-none overflow-y-auto'}
+            style={{ height: '4rem', minHeight: '4rem', maxHeight: '4rem' }}
             rows={2}
             value={text}
             onChange={(event) => onDraftChange?.(event.target.value)}
@@ -105,7 +94,8 @@ export function StableChatPane({
           />
           <button
             type="submit"
-            className={btnPrimary + ' min-w-11 shrink-0 !px-4'}
+            className={btnPrimary + ' shrink-0 !p-0'}
+            style={{ width: '2.75rem', height: '2.75rem', minWidth: '2.75rem', minHeight: '2.75rem' }}
             disabled={busy || disabled || !text.trim()}
             aria-label={sendText}
           >

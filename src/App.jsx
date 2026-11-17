@@ -853,7 +853,12 @@ export default function App() {
       db && user
         ? Object.values(db.xx_ai_threads || {})
             .filter((thread) => thread.userId === user.id && inOrg(thread))
-            .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
+            .sort((a, b) => {
+              // createdAt keeps the active row in place when a reply updates updatedAt.
+              const delta = new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+              if (delta) return delta
+              return String(a.id || '').localeCompare(String(b.id || ''))
+            })
         : [],
     [db, user, orgId],
   )
@@ -7949,9 +7954,9 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
   const outsiders = users.filter((u) => u.id !== user.id && !(selected?.memberIds || []).includes(u.id))
 
   return (
-    <div className="flex h-[calc(100dvh-8rem)] max-h-[calc(100dvh-8rem)] flex-col overflow-hidden rounded-2xl border border-sage-200 bg-white/80 lg:h-[72vh] lg:max-h-[72vh] lg:flex-row">
+    <div className="flex h-[min(32rem,calc(100dvh-14rem))] shrink-0 flex-col overflow-hidden rounded-2xl border border-sage-200 bg-white/80 [overflow-anchor:none] lg:flex-row">
       <aside
-        className={`${showThread ? 'hidden lg:flex' : 'flex'} min-h-0 w-full min-w-0 flex-col overflow-hidden border-sage-200 lg:h-full lg:w-72 lg:shrink-0 lg:border-r`}
+        className={`${showThread ? 'hidden lg:flex' : 'flex'} h-full min-h-0 w-full min-w-0 flex-col overflow-hidden border-sage-200 lg:w-72 lg:shrink-0 lg:border-r`}
       >
         <div className="flex items-center justify-between gap-2 border-b border-sage-100 p-3">
           <p className="font-display text-lg text-sage-900">{t('chatUi.groups')}</p>
@@ -7973,7 +7978,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
         {groups.length === 0 ? (
           <p className="p-4 text-sm text-sage-500">{t('chatUi.none')}</p>
         ) : (
-          <ul className="min-h-0 flex-1 overflow-y-auto xx-scroll">
+          <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain xx-scroll [overflow-anchor:none]">
             {groups.map((g) => {
               const n = unreadIn(g.id)
               const active = selectedId === g.id
@@ -8005,7 +8010,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
         )}
       </aside>
 
-      <section className={`${showThread ? 'flex' : 'hidden lg:flex'} min-h-0 min-w-0 flex-1 flex-col overflow-hidden`}>
+      <section className={`${showThread ? 'flex' : 'hidden lg:flex'} h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden`}>
         {!selected ? (
           <div className="flex flex-1 items-center justify-center p-6">
             <EmptyState title={t('empty.chatTitle')} hint={t('empty.chatHint')} />
@@ -8041,6 +8046,7 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
             </div>
             {/* // CHAT-LAYER START */}
             <StableChatPane
+              fill
               threadKey={selected.id}
               messages={thread}
               draft={draft}
