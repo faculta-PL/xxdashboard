@@ -81,6 +81,17 @@ import {
   RESET_EMAIL,
   firebaseUnavailableLine,
 } from './lib/emailCopy'
+// IDENTITY-LAYER START
+import {
+  EmailVerifyBanner,
+  IdentityProfileCard,
+  IdentitySignupFields,
+  InvitationDesk,
+  InviteAcceptGate,
+  identityT,
+  validateSignupForm,
+} from './identity'
+// IDENTITY-LAYER END
 import {
   bootStore,
   subscribeStore,
@@ -510,7 +521,7 @@ function FileShareBlock({ users, user, shares, teamWide, onShares, onTeamWide })
 }
 
 export default function App() {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [booting, setBooting] = useState(true)
   const [db, setDb] = useState(null)
   const [session, setSession] = useState(null)
@@ -526,6 +537,11 @@ export default function App() {
     password: '',
     resetToken: '',
     newPassword: '',
+    // IDENTITY-LAYER START
+    handle: '',
+    confirm: '',
+    terms: false,
+    // IDENTITY-LAYER END
   })
   const [authBusy, setAuthBusy] = useState(false)
   const [authError, setAuthError] = useState('')
@@ -1020,6 +1036,14 @@ export default function App() {
         fields.newPassword = t('auth.passwordMin', { n: minLen })
       }
     }
+    // IDENTITY-LAYER START
+    if (authMode === 'register') {
+      const signup = validateSignupForm(authForm, { users: listUsers(), minPassword: minLen })
+      if (signup.errors.handle) fields.handle = identityT(lang, `err_${signup.errors.handle}`)
+      if (signup.errors.confirm) fields.confirm = identityT(lang, 'err_confirm')
+      if (signup.errors.terms) fields.terms = identityT(lang, 'err_terms')
+    }
+    // IDENTITY-LAYER END
     if (Object.keys(fields).length) {
       setAuthFieldErrors(fields)
       const first = Object.values(fields)[0]
@@ -1048,8 +1072,26 @@ export default function App() {
       } else if (authMode === 'register') {
         const created = await registerUser(authForm)
         const logged = await loginUser(authForm.email, authForm.password)
-        setUser(logged.user)
+        // IDENTITY-LAYER START
+        let sessionUser = logged.user
+        try {
+          const signup = validateSignupForm(authForm, { users: listUsers(), minPassword: minLen })
+          if (signup.handle) {
+            sessionUser = await updateProfile(logged.user.id, {
+              handle: signup.handle,
+              discoverable: false,
+              bio: '',
+              title: '',
+              website: '',
+              termsAcceptedAt: new Date().toISOString(),
+            })
+          }
+        } catch (profileErr) {
+          console.warn('identity profile:', profileErr?.message || profileErr)
+        }
+        setUser(sessionUser)
         setSession(logged.session)
+        // IDENTITY-LAYER END
         const notice = {
           kind: 'verify',
           email: String(authForm.email || '').trim().toLowerCase(),
@@ -1131,6 +1173,23 @@ export default function App() {
     )
   }
 
+  // IDENTITY-LAYER START
+  const identityBanner = <EmailVerifyBanner user={user} onUserUpdated={refreshUser} />
+  const identityAccept = (
+    <InviteAcceptGate user={user} onUserUpdated={refreshUser} flash={flash} />
+  )
+  const identityDesk = (
+    <InvitationDesk
+      user={user}
+      orgId={orgId}
+      groups={groups}
+      directory={allUsers}
+      flash={flash}
+      onUserUpdated={refreshUser}
+    />
+  )
+  // IDENTITY-LAYER END
+
   const openFullNazix = () => {
     const url = new URL(window.location.href)
     url.searchParams.delete('mini')
@@ -1153,6 +1212,7 @@ export default function App() {
           authError={authError}
           authFieldErrors={authFieldErrors}
           emailNotice={emailNotice}
+          directory={allUsers}
         />
         {toast && <Toast toast={toast} />}
         <EmailNoticeModal notice={emailNotice} onClose={() => setEmailNotice(null)} />
@@ -1172,6 +1232,12 @@ export default function App() {
     return (
       <>
         <OrgGate user={user} memberships={memberships} onLogout={handleLogout} />
+        {/* IDENTITY-LAYER START */}
+        <div className="mx-auto max-w-3xl px-4 pt-4">
+          {identityBanner}
+          {identityAccept}
+        </div>
+        {/* IDENTITY-LAYER END */}
         {toast && <Toast toast={toast} />}
       </>
     )
@@ -1179,23 +1245,33 @@ export default function App() {
 
   if (isMiniRequest()) {
     return (
-      <MiniApp
-        user={user}
-        orgId={orgId}
-        notes={notes}
-        todos={todos}
-        events={events}
-        messages={chatMessages}
-        syncStatus={db?.syncStatus || 'local'}
-        onOpenFull={openFullNazix}
-        onLogout={handleLogout}
-      />
+      <>
+        {/* IDENTITY-LAYER START */}
+        {identityBanner}
+        {identityAccept}
+        {/* IDENTITY-LAYER END */}
+        <MiniApp
+          user={user}
+          orgId={orgId}
+          notes={notes}
+          todos={todos}
+          events={events}
+          messages={chatMessages}
+          syncStatus={db?.syncStatus || 'local'}
+          onOpenFull={openFullNazix}
+          onLogout={handleLogout}
+        />
+      </>
     )
   }
 
   if (view === 'games') {
     return (
       <>
+        {/* IDENTITY-LAYER START */}
+        {identityBanner}
+        {identityAccept}
+        {/* IDENTITY-LAYER END */}
         <Suspense
           fallback={
             <div className="flex min-h-[100dvh] items-center justify-center bg-cream-green">
@@ -1310,6 +1386,11 @@ export default function App() {
           id="nazix-main"
           className={`min-w-0 ${view === 'chat' ? 'p-2 md:p-4' : 'p-4 md:p-6'} pb-[max(1.25rem,env(safe-area-inset-bottom))]`}
         >
+          {/* IDENTITY-LAYER START */}
+          {identityBanner}
+          {identityAccept}
+          {view === 'invitations' ? identityDesk : null}
+          {/* IDENTITY-LAYER END */}
           {view !== 'guide' && (
             <ModuleIntro
               view={view}
@@ -1629,6 +1710,7 @@ function LandingPage({
   authError,
   authFieldErrors,
   emailNotice = null,
+  directory = [],
 }) {
   const { t, lang } = useI18n()
   const [authOpen, setAuthOpen] = useState(false)
@@ -1668,6 +1750,10 @@ function LandingPage({
     setAuthOpen(true)
     setMobileOpen(false)
   }
+
+  // IDENTITY-LAYER START
+  const identityGuest = <InviteAcceptGate user={null} onRequestAuth={(mode) => openAuth(mode)} />
+  // IDENTITY-LAYER END
 
   const goSection = (id) => {
     setMobileOpen(false)
@@ -1748,6 +1834,10 @@ function LandingPage({
           </div>
         )}
       </header>
+
+      {/* IDENTITY-LAYER START */}
+      <div className="mx-auto max-w-6xl px-4 pt-4 sm:px-6">{identityGuest}</div>
+      {/* IDENTITY-LAYER END */}
 
       <section className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-6 pt-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-8 lg:pb-4 lg:pt-12">
         <div className="max-w-xl animate-fade-up">
@@ -2025,6 +2115,7 @@ function LandingPage({
         authError={authError}
         authFieldErrors={authFieldErrors}
         emailNotice={emailNotice}
+        directory={directory}
       />
     </div>
   )
@@ -2142,6 +2233,7 @@ function AuthModal({
   authError,
   authFieldErrors = {},
   emailNotice = null,
+  directory = [],
 }) {
   const { t } = useI18n()
   useEffect(() => {
@@ -2233,6 +2325,17 @@ function AuthModal({
                 />
               </Field>
             )}
+            {/* IDENTITY-LAYER START */}
+            {authMode === 'register' && (
+              <IdentitySignupFields
+                section="handle"
+                form={authForm}
+                setForm={setAuthForm}
+                directory={directory}
+                errors={authFieldErrors}
+              />
+            )}
+            {/* IDENTITY-LAYER END */}
             {(authMode === 'login' || authMode === 'register') && (
               <Field label={t('auth.password')} error={authFieldErrors.password}>
                 <div className="relative">
@@ -2254,6 +2357,17 @@ function AuthModal({
                 </div>
               </Field>
             )}
+            {/* IDENTITY-LAYER START */}
+            {authMode === 'register' && (
+              <IdentitySignupFields
+                section="confirm"
+                form={authForm}
+                setForm={setAuthForm}
+                directory={directory}
+                errors={authFieldErrors}
+              />
+            )}
+            {/* IDENTITY-LAYER END */}
             {authMode === 'forgot' && (
               <div className="mb-3 rounded-xl border border-sage-200 bg-white/80 px-3 py-3 text-sm text-sage-700">
                 <p className="font-medium text-sage-900">{RESET_EMAIL.subject}</p>
@@ -7189,6 +7303,12 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
         >
           {t('settingsUi.saveProfile')}
         </button>
+
+        {/* IDENTITY-LAYER START */}
+        <div className="mt-4">
+          <IdentityProfileCard user={user} directory={users} onUserUpdated={onUserUpdated} flash={flash} />
+        </div>
+        {/* IDENTITY-LAYER END */}
 
         {!user.emailVerified && (
           <div className="mt-4 rounded-xl border border-warn/30 bg-warn/10 p-3">

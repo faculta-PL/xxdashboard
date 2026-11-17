@@ -9,6 +9,7 @@
     "build": "vite build",
     "test": "node --test src/platform/platform.test.js src/i18n.test.mjs",
     "lint": "oxlint",
+    "test": "node --test",
     "preview": "vite preview"
   },
   "dependencies": {
