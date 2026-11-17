@@ -67,10 +67,10 @@ export const INVITE_STATUSES = Object.freeze(['pending', 'accepted', 'declined',
  */
 export function validateHandle(raw) {
   const handle = String(raw ?? '').trim().toLowerCase()
-  if (!handle) return { ok: false, handle: '', error: 'required' }
-  if (!HANDLE_RE.test(handle)) return { ok: false, handle, error: 'invalid' }
-  if (RESERVED.has(handle)) return { ok: false, handle, error: 'reserved' }
-  return { ok: true, handle, error: null }
+  if (!handle) return { ok: false, handle: '', error: 'required', reason: 'format' }
+  if (!HANDLE_RE.test(handle)) return { ok: false, handle, error: 'invalid', reason: 'format' }
+  if (RESERVED.has(handle)) return { ok: false, handle, error: 'reserved', reason: 'reserved' }
+  return { ok: true, handle, error: null, reason: 'ok' }
 }
 
 function rotr(n, x) {

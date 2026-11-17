@@ -239,6 +239,11 @@ import {
   weekDates,
 } from './lib/calendar'
 import { bindNotifAudioUnlock, playNotifBeep, readSoundPref, writeSoundPref } from './lib/notifSound'
+// MODULES-LAYER START
+import { billingT } from './billing/i18n.js'
+import { MODULE_VISIBILITY, filterReadableRows, sharesForVisibility } from './billing/access.js'
+import { canAccessConversation } from './billing/messaging.js'
+// MODULES-LAYER END
 
 const GamesHub = lazy(() => import('./games/GamesHub.jsx'))
 
@@ -672,7 +677,7 @@ export default function App() {
   const notes = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_notes || {}).filter((n) => inSpace(n) && canReadEntity(user, n))
+        ? Object.values(db.xx_notes || {}).filter((n) => inSpace(n) && canReadEntity(user, n, { groups: db.xx_groups || {} }))
         : [],
     [db, user, orgId],
   )
@@ -686,14 +691,14 @@ export default function App() {
   const projects = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_projects || {}).filter((p) => inSpace(p) && canReadEntity(user, p))
+        ? Object.values(db.xx_projects || {}).filter((p) => inSpace(p) && canReadEntity(user, p, { groups: db.xx_groups || {} }))
         : [],
     [db, user, orgId],
   )
   const events = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_events || {}).filter((e) => inSpace(e) && canReadEntity(user, e))
+        ? Object.values(db.xx_events || {}).filter((e) => inSpace(e) && canReadEntity(user, e, { groups: db.xx_groups || {} }))
         : [],
     [db, user, orgId],
   )
@@ -792,9 +797,7 @@ export default function App() {
         ? Object.values(db.xx_messages || {})
             .filter((m) => {
               const group = db.xx_groups?.[m.groupId]
-              // SPACES-LAYER START
               return Boolean(group) && group.orgId === orgId && canSeeGroupContent(db, user, group)
-              // SPACES-LAYER END
             })
             .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
         : [],
@@ -1244,15 +1247,11 @@ export default function App() {
   if (!orgId) {
     return (
       <>
-        {/* IDENTITY-LAYER START */}
         <div className="mx-auto max-w-xl px-4 pt-6">
           {identityBanner}
           {identityAccept}
         </div>
-        {/* IDENTITY-LAYER END */}
-        {/* SPACES-LAYER START */}
         <PersonalHome user={user} db={db} onLogout={handleLogout} />
-        {/* SPACES-LAYER END */}
         {toast && <Toast toast={toast} />}
       </>
     )
@@ -1456,6 +1455,7 @@ export default function App() {
               user={user}
               notes={notes.filter((n) => n.important)}
               users={users}
+              groups={groups}
               projects={projects}
               files={files}
               ideas={ideas}
@@ -1472,10 +1472,8 @@ export default function App() {
             />
           )}
           {view === 'org' && <OrgHome user={user} activeOrgId={orgId} flash={flash} />}
-          {/* SPACES-LAYER START */}
           {view === 'spaces' && <SpacesScreen user={user} db={db} orgId={orgId} users={users} flash={flash} />}
-          {/* SPACES-LAYER END */}
-          {view === 'orgadmin' && isAdmin(user) && <OrgAdmin user={user} flash={flash} peek={db?.orgPeek} />}
+          {view === 'orgadmin' && isAdmin(user) && <OrgAdmin user={user} flash={flash} peek={db?.orgPeek} activeOrgId={orgId} />}
           {view === 'dashboard' && (
             <DashboardView
               user={user}
@@ -1523,6 +1521,7 @@ export default function App() {
               user={user}
               notes={notes}
               users={users}
+              groups={groups}
               projects={projects}
               files={files}
               ideas={ideas}
@@ -1545,6 +1544,7 @@ export default function App() {
             <ProjectsView
               user={user}
               projects={projects}
+              groups={groups}
               notes={notes}
               ideas={ideas}
               files={files}
@@ -1598,7 +1598,15 @@ export default function App() {
             />
           )}
           {view === 'calendar' && (
-            <CalendarView user={user} events={events} users={users} flash={flash} />
+            <CalendarView
+              user={user}
+              events={events}
+              users={users}
+              projects={projects}
+              workspaceId={orgId}
+              workspaceName={db?.xx_orgs?.[orgId]?.name || ''}
+              flash={flash}
+            />
           )}
           {view === 'todos' && (
             <TodosView
@@ -1637,7 +1645,7 @@ export default function App() {
             />
           )}
           {view === 'export' && (
-            <ExportView notes={notes} ideas={ideas} projects={projects} events={events} flash={flash} />
+            <ExportView user={user} notes={notes} ideas={ideas} projects={projects} events={events} groups={db?.xx_groups || {}} flash={flash} />
           )}
           {view === 'notifications' && (
             <NotificationsView notifications={notifications} flash={flash} user={user} />
@@ -4001,6 +4009,7 @@ function NotesView({
   user,
   notes,
   users,
+  groups = [],
   projects,
   files = [],
   ideas = [],
@@ -4052,7 +4061,8 @@ function NotesView({
             .map((part) => part.trim())
             .filter(Boolean),
           visibility: current.visibility,
-          shares: current.visibility === 'Privée' ? [] : current.shares || [],
+          shares: sharesForVisibility(current.visibility, current.shares),
+          groupId: current.groupId || null,
           projectId: current.projectId || null,
           parentId: current.parentId || null,
           important: Boolean(editingRef.current?.important),
@@ -4075,6 +4085,7 @@ function NotesView({
       tags: '',
       visibility: 'Privée',
       shares: [],
+      groupId: '',
       projectId: '',
       parentId: '',
       linkFileIds: [],
@@ -4123,6 +4134,7 @@ function NotesView({
       tags: (n.tags || []).join(', '),
       visibility: n.visibility || 'Privée',
       shares: n.shares || [],
+      groupId: n.groupId || '',
       projectId: n.projectId || '',
       parentId: n.parentId || '',
       linkFileIds: related.filter((r) => r.type === 'file').map((r) => r.id),
@@ -4155,7 +4167,8 @@ function NotesView({
           .map((t) => t.trim())
           .filter(Boolean),
         visibility: form.visibility,
-        shares: form.visibility === 'Privée' ? [] : form.shares,
+        shares: sharesForVisibility(form.visibility, form.shares),
+        groupId: form.groupId || null,
         projectId: form.projectId || null,
         parentId: form.parentId || null,
         imageUrl: String(form.imageUrl || '').trim(),
@@ -4455,9 +4468,32 @@ function NotesView({
                     {valueLabel(lang, v)}
                   </option>
                 ))}
+                {/* MODULES-LAYER START */}
+                {MODULE_VISIBILITY.map((v) => (
+                  <option key={v} value={v}>
+                    {billingT(lang, `vis.${v}`)}
+                  </option>
+                ))}
+                {/* MODULES-LAYER END */}
               </select>
             </Field>
           </div>
+          {/* MODULES-LAYER START */}
+          <Field label={billingT(lang, 'modules.group')}>
+            <select
+              className={inputClass}
+              value={form.groupId || ''}
+              onChange={(e) => setForm({ ...form, groupId: e.target.value })}
+            >
+              <option value="">{billingT(lang, 'modules.groupNone')}</option>
+              {groups.map((group) => (
+                <option key={group.id} value={group.id}>
+                  {group.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {/* MODULES-LAYER END */}
           <Field label={t('notes.tags')}>
             <input
               className={inputClass}
@@ -6086,6 +6122,7 @@ function ProjectDetailBody({ detail, notes, ideas, files, events, budgets, risks
 function ProjectsView({
   user,
   projects,
+  groups = [],
   notes,
   ideas,
   files = [],
@@ -6113,6 +6150,7 @@ function ProjectsView({
     dueDate: '',
     visibility: 'Partagée',
     shares: [],
+    groupId: '',
   })
   const projectFormRef = useRef(form)
   const projectEditingRef = useRef(editing)
@@ -6165,6 +6203,7 @@ function ProjectsView({
       dueDate: '',
       visibility: 'Partagée',
       shares: [],
+      groupId: '',
     })
     setOpen(true)
   }
@@ -6274,6 +6313,7 @@ function ProjectsView({
                             dueDate: p.dueDate || '',
                             visibility: p.visibility || 'Partagée',
                             shares: p.shares || [],
+                            groupId: p.groupId || '',
                           })
                           setOpen(true)
                         }}
@@ -6404,10 +6444,29 @@ function ProjectsView({
               onChange={(e) => setForm({ ...form, visibility: e.target.value })}
             >
               {VISIBILITIES.map((v) => (
-                <option key={v}>{v}</option>
+                <option key={v} value={v}>{v}</option>
+              ))}
+              {/* MODULES-LAYER START */}
+              {MODULE_VISIBILITY.map((v) => (
+                <option key={v} value={v}>{billingT(lang, `vis.${v}`)}</option>
+              ))}
+              {/* MODULES-LAYER END */}
+            </select>
+          </Field>
+          {/* MODULES-LAYER START */}
+          <Field label={billingT(lang, 'modules.group')}>
+            <select
+              className={inputClass}
+              value={form.groupId || ''}
+              onChange={(e) => setForm({ ...form, groupId: e.target.value })}
+            >
+              <option value="">{billingT(lang, 'modules.groupNone')}</option>
+              {groups.map((group) => (
+                <option key={group.id} value={group.id}>{group.name}</option>
               ))}
             </select>
           </Field>
+          {/* MODULES-LAYER END */}
           <Field label={t('projectsUi.startDate')}>
             <input
               type="date"
@@ -6494,7 +6553,7 @@ function ProjectsView({
   )
 }
 
-function CalendarView({ user, events, users, flash }) {
+function CalendarView({ user, events, users, projects = [], workspaceId = '', workspaceName = '', flash }) {
   const { t, lang } = useI18n()
   const cal = calendarLabels(lang)
   const [todayIso] = useState(() => toIsoDate(new Date()))
@@ -6513,6 +6572,9 @@ function CalendarView({ user, events, users, flash }) {
     participantIds: [],
     visibility: 'Partagée',
     shares: [],
+    projectId: '',
+    workspaceId: workspaceId || '',
+    workspaceName: workspaceName || '',
   })
   const eventFormRef = useRef(form)
   const eventCreated = useRef('')
@@ -6556,6 +6618,9 @@ function CalendarView({ user, events, users, flash }) {
     participantIds: [],
     visibility: 'Partagée',
     shares: [],
+    projectId: '',
+    workspaceId: workspaceId || '',
+    workspaceName: workspaceName || '',
   })
 
   const openCreate = (date) => {
@@ -6867,6 +6932,10 @@ function CalendarView({ user, events, users, flash }) {
                 <p className="font-display text-lg text-sage-900">{ev.title}</p>
                 <p className="text-sm text-sage-600">
                   {ev.date} · {ev.time}
+                  {/* MODULES-LAYER START */}
+                  {ev.workspaceName || ev.workspaceId ? ` · ${ev.workspaceName || ev.workspaceId}` : ''}
+                  {ev.projectId ? ` · ${projects.find((p) => p.id === ev.projectId)?.title || ''}` : ''}
+                  {/* MODULES-LAYER END */}
                 </p>
                 <p className="mt-2 text-sm text-sage-700">{ev.description}</p>
                 <p className="mt-2 text-xs text-sage-500">
@@ -6938,6 +7007,25 @@ function CalendarView({ user, events, users, flash }) {
               />
             </Field>
           </div>
+          {/* MODULES-LAYER START */}
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <Field label={billingT(lang, 'modules.workspace')}>
+              <input className={inputClass} value={form.workspaceName || form.workspaceId || workspaceName || workspaceId || ''} readOnly />
+            </Field>
+            <Field label={billingT(lang, 'modules.project')}>
+              <select
+                className={inputClass}
+                value={form.projectId || ''}
+                onChange={(e) => setForm({ ...form, projectId: e.target.value })}
+              >
+                <option value="">{billingT(lang, 'modules.projectNone')}</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>{project.title}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          {/* MODULES-LAYER END */}
           <Field label={t('calendar.participants')}>
             <div className="flex flex-wrap gap-2 rounded-xl border border-sage-200 bg-white p-3">
               {users
@@ -7175,25 +7263,30 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
   )
 }
 
-function ExportView({ notes, ideas, projects, events, flash }) {
+function ExportView({ user, notes, ideas, projects, events, groups = {}, flash }) {
   const { t } = useI18n()
-  const rows = buildExportRows({ notes, ideas, projects, events })
+  // MODULES-LAYER START
+  const readable = {
+    notes: filterReadableRows(notes, user, { groups, canRead: (person, row) => canReadEntity(person, row, { groups }) }),
+    ideas: filterReadableRows(ideas, user, { groups, canRead: (person, row) => canReadEntity(person, row, { groups }) }),
+    projects: filterReadableRows(projects, user, { groups, canRead: (person, row) => canReadEntity(person, row, { groups }) }),
+    events: filterReadableRows(events, user, { groups, canRead: (person, row) => canReadEntity(person, row, { groups }) }),
+  }
+  const rows = buildExportRows(readable)
   const bundle = {
     exportedAt: new Date().toISOString(),
-    notes,
-    ideas,
-    projects,
-    events,
+    ...readable,
   }
+  // MODULES-LAYER END
 
   const run = async (kind) => {
     try {
       if (kind === 'csv') exportCSV(rows)
       if (kind === 'xlsx') exportXLSX(rows)
       if (kind === 'json') exportJSON(bundle)
-      if (kind === 'docx') await exportDOCX(buildDocSections({ notes, ideas, projects, events }))
+      if (kind === 'docx') await exportDOCX(buildDocSections(readable))
       if (kind === 'pdf')
-        exportPDF('Export Nazix', buildPdfTables({ notes, ideas, projects, events }))
+        exportPDF('Export Nazix', buildPdfTables(readable))
       flash(t('exportUi.downloaded', { kind: kind.toUpperCase() }))
     } catch (err) {
       flash(err.message || t('exportUi.failed'), 'err')
@@ -7795,7 +7888,12 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
                     }`}
                     onClick={() => setSelectedId(g.id)}
                   >
-                    <span className="min-w-0 flex-1 truncate font-medium text-sage-900">{g.name}</span>
+                    <span className="min-w-0 flex-1 truncate font-medium text-sage-900">
+                      {g.name}
+                      {/* MODULES-LAYER START */}
+                      {g.projectId ? <span className="ml-1 text-[11px] font-normal text-sage-500">{billingT(lang, 'modules.projectChat')}</span> : null}
+                      {/* MODULES-LAYER END */}
+                    </span>
                     {n > 0 && (
                       <span className="rounded-full bg-sage-700 px-2 py-0.5 text-[11px] font-bold text-white">
                         {n}

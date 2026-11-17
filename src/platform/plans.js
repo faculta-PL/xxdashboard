@@ -35,7 +35,9 @@
  * The migration inserts these rows with ON CONFLICT DO NOTHING.
  */
 
-import { PRODUCT_FEATURES } from './flags.js'
+import { LAUNCH_FREE_MODE, PRODUCT_FEATURES } from './flags.js'
+
+export { LAUNCH_FREE_MODE }
 
 const FILE_BYTES = 20 * 1024 * 1024
 
@@ -160,6 +162,28 @@ export const PLAN_SEED = Object.freeze([
 ])
 
 export const PLAN_CODES = Object.freeze(PLAN_SEED.map((plan) => plan.code))
+
+export const PLAN_ORDER = PLAN_CODES
+
+export const PLAN_LIMITS = Object.freeze(
+  Object.fromEntries(
+    PLAN_SEED.map((plan) => {
+      const bytes = plan.limits.storageBytes
+      return [
+        plan.code,
+        Object.freeze({
+          ...plan.limits,
+          storageMb: bytes < 0 ? null : Math.round(bytes / (1024 * 1024)),
+        }),
+      ]
+    }),
+  ),
+)
+
+/** Launch mode never paywalls a feature. Empty calls stay open for the billing guard. */
+export function featureAllowed() {
+  return LAUNCH_FREE_MODE === true
+}
 
 export const PLANS = Object.freeze(
   Object.fromEntries(PLAN_SEED.map((plan) => [plan.code, plan])),

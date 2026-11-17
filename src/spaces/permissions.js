@@ -84,7 +84,11 @@ export function canSeeGroupContent(db, user, group) {
   const gRole = groupRole(db, group, user.id)
   if (group.status === 'archived') return gRole === 'lead'
   const kind = groupKind(group)
-  if (kind === 'private') return Boolean(gRole)
+  if (kind === 'private') {
+    if (gRole) return true
+    if (group.sealed) return false
+    return wRole === 'owner'
+  }
   if (gRole) return true
   if (wRole === 'guest') return false
   return kind === 'internal' || kind === 'project'

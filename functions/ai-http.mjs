@@ -735,8 +735,36 @@ function searchQueryFromReq(req, body = {}) {
   return String(body.q || body.query || '').trim()
 }
 
+// MODULES-LAYER START
+function assertApprovedSearchUrl(url) {
+  let host = ''
+  try {
+    host = new URL(url).hostname.toLowerCase()
+  } catch {
+    throw new Error('Source de recherche non autorisée.')
+  }
+  if (
+    host === 'google.com' ||
+    host.endsWith('.google.com') ||
+    host.includes('google.') ||
+    host === 'instagram.com' ||
+    host.endsWith('.instagram.com')
+  ) {
+    throw new Error('Source de recherche non autorisée.')
+  }
+  const ok =
+    host === 'duckduckgo.com' ||
+    host.endsWith('.duckduckgo.com') ||
+    host === 'wikipedia.org' ||
+    host.endsWith('.wikipedia.org')
+  if (!ok) throw new Error('Source de recherche non autorisée.')
+  return url
+}
+// MODULES-LAYER END
+
 async function fetchDdgInstant(q) {
   const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_redirect=1&no_html=1&skip_disambig=1`
+  assertApprovedSearchUrl(url)
   const ddg = await fetchWithTimeout(
     url,
     { headers: { Accept: 'application/json', 'User-Agent': SEARCH_UA } },
@@ -764,6 +792,7 @@ async function fetchDdgHtml(q) {
   ]
   for (const att of attempts) {
     try {
+      assertApprovedSearchUrl(att.url)
       const res = await fetchWithTimeout(
         att.url,
         { method: att.method, headers: att.headers, body: att.body, redirect: 'follow' },
@@ -785,6 +814,7 @@ async function fetchWiki(q) {
   for (const lang of ['fr', 'en']) {
     try {
       const url = `https://${lang}.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(q)}&limit=8&namespace=0&format=json`
+      assertApprovedSearchUrl(url)
       const res = await fetchWithTimeout(
         url,
         { headers: { Accept: 'application/json', 'User-Agent': SEARCH_UA } },
@@ -845,6 +875,16 @@ async function handleSearch(req, res) {
   }
   let body = {}
   if (req.method === 'POST') body = await readBody(req)
+  // MODULES-LAYER START
+  if (body && typeof body === 'object') {
+    delete body.apiKey
+    delete body.api_key
+    delete body.key
+    delete body.token
+    delete body.authorization
+    delete body.secret
+  }
+  // MODULES-LAYER END
   const q = searchQueryFromReq(req, body)
   const searchedAt = new Date().toISOString()
   if (!q) {
@@ -858,7 +898,12 @@ async function handleSearch(req, res) {
     })
     return
   }
-  const results = await webSearchResults(q)
+  const results = (await webSearchResults(q)).map((item) => ({
+    title: item.title,
+    url: item.url,
+    snippet: item.snippet,
+    source: item.source,
+  }))
   json(res, 200, {
     ok: true,
     mode: 'web',

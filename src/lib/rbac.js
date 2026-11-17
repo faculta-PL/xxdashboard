@@ -1,3 +1,7 @@
+// MODULES-LAYER START
+import { moduleReadDecision } from '../billing/access.js'
+// MODULES-LAYER END
+
 export const ROLES = {
   ADMIN: 'Administrateur',
   PROJECT_LEAD: 'Responsable de projet',
@@ -50,8 +54,13 @@ export function canWriteRole(user) {
 }
 
 /** Entity visibility / share checks */
-export function canReadEntity(user, entity) {
+export function canReadEntity(user, entity, ctx) {
   if (!user || !entity) return false
+  // MODULES-LAYER START
+  const moduleDecision = moduleReadDecision(user, entity, ctx)
+  if (moduleDecision === false) return false
+  if (moduleDecision === true) return true
+  // MODULES-LAYER END
   if (isAdmin(user)) return true
   if (entity.ownerId === user.id) return true
   if (entity.visibility === 'Publique' || entity.visibility === 'Équipe') return true
@@ -62,8 +71,11 @@ export function canReadEntity(user, entity) {
   return Boolean(entity.shares?.some((s) => s.userId === user.id))
 }
 
-export function canEditEntity(user, entity) {
+export function canEditEntity(user, entity, ctx) {
   if (!user || !entity) return false
+  // MODULES-LAYER START
+  if (moduleReadDecision(user, entity, ctx) === false) return false
+  // MODULES-LAYER END
   if (isAdmin(user)) return true
   if (entity.ownerId === user.id) return true
   if (!canWriteRole(user)) return false
@@ -71,8 +83,11 @@ export function canEditEntity(user, entity) {
   return share?.permission === 'Édition'
 }
 
-export function canDeleteEntity(user, entity) {
+export function canDeleteEntity(user, entity, ctx) {
   if (!user || !entity) return false
+  // MODULES-LAYER START
+  if (moduleReadDecision(user, entity, ctx) === false) return false
+  // MODULES-LAYER END
   if (isAdmin(user)) return true
   return entity.ownerId === user.id
 }

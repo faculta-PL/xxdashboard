@@ -354,6 +354,7 @@ export function createSpacesEngine(io) {
       ownerId: actor.id,
       leadUserId: actor.id,
       memberIds: [actor.id],
+      sealed: type === 'private' && input.sealed === true,
       createdAt: now,
       updatedAt: now,
     }

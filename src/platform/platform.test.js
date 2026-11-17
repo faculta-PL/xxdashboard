@@ -94,10 +94,10 @@ test('contract exports the shared surface', () => {
 })
 
 test('handles are normalized, reserved names are rejected', () => {
-  assert.deepEqual(validateHandle('  Ab_1 '), { ok: true, handle: 'ab_1', error: null })
+  assert.deepEqual(validateHandle('  Ab_1 '), { ok: true, handle: 'ab_1', error: null, reason: 'ok' })
   assert.equal(validateHandle('ada').ok, true)
-  assert.deepEqual(validateHandle(''), { ok: false, handle: '', error: 'required' })
-  assert.deepEqual(validateHandle('   '), { ok: false, handle: '', error: 'required' })
+  assert.deepEqual(validateHandle(''), { ok: false, handle: '', error: 'required', reason: 'format' })
+  assert.deepEqual(validateHandle('   '), { ok: false, handle: '', error: 'required', reason: 'format' })
   assert.equal(validateHandle('ab').error, 'invalid')
   assert.equal(validateHandle('bad-name').error, 'invalid')
   assert.equal(validateHandle('a'.repeat(21)).error, 'invalid')

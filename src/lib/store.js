@@ -64,11 +64,18 @@ import {
 } from './files'
 import { VERIFY_EMAIL, RESET_EMAIL, firebaseUnavailableLine } from './emailCopy'
 import { ORG_SCOPED_COLLECTIONS, createOrgLayer } from './orgLayer'
-// SPACES-LAYER START
 import { readMirroredActiveId, writeActiveMirror } from '../spaces/active.js'
 import { createSpacesEngine } from '../spaces/engine.js'
 import { canPostInGroup, canSeeGroupContent, enterBlock } from '../spaces/permissions.js'
-// SPACES-LAYER END
+import { setGroupsProvider, stampModuleItem } from '../billing/access.js'
+import {
+  mentionUserIds,
+  messageAuditEntry,
+  projectConversationId,
+  projectMemberIds,
+} from '../billing/messaging.js'
+import { billingLang, billingT } from '../billing/i18n.js'
+import { readWorkspaceId, FREE_SUBSCRIPTION } from '../billing/subscription.js'
 
 function viteEnv(key) {
   try {
@@ -125,9 +132,7 @@ function withTimeout(promise, ms, label) {
 let firestoreSyncState = 'idle'
 let realtimeAttached = false
 let activeOrgId = ''
-// SPACES-LAYER START
-try { activeOrgId = readMirroredActiveId(localStorage) } catch { activeOrgId = '' }
-// SPACES-LAYER END
+try { activeOrgId = readMirroredActiveId(localStorage) || readWorkspaceId() || '' } catch { activeOrgId = '' }
 let orgPeek = { orgId: '', loading: false, error: '', rows: {} }
 let listenerUserId = ''
 let listenerIsAdmin = false
@@ -172,6 +177,7 @@ const COLLECTIONS = [
   'xx_reset_tokens',
   'xx_groups',
   'xx_messages',
+  'xx_audit',
   'xx_files',
   'xx_folders',
   'xx_budgets',
@@ -246,6 +252,9 @@ function applyOrgStamp(col, value) {
 }
 
 let memory = loadLocal()
+// MODULES-LAYER START
+setGroupsProvider(() => memory.xx_groups || {})
+// MODULES-LAYER END
 const listeners = new Set()
 
 function publicUser(user) {
@@ -1042,11 +1051,7 @@ function setActiveOrgId(id) {
   }
   activeOrgId = next
   try {
-    // SPACES-LAYER START
     writeActiveMirror(localStorage, next)
-    // SPACES-LAYER END
-    if (next) localStorage.setItem(ACTIVE_ORG_KEY, next)
-    else localStorage.removeItem(ACTIVE_ORG_KEY)
   } catch { /* ignore */ }
   if (firebaseConfigured && db) rebindOrgListeners()
   notify()
@@ -1892,9 +1897,7 @@ export function listGroupsForUser(user) {
 
 export function listMessagesForGroup(groupId, user) {
   const group = memory.xx_groups[groupId]
-  // SPACES-LAYER START
   if (!canSeeGroupContent(memory, user, group)) return []
-  // SPACES-LAYER END
   return Object.values(memory.xx_messages || {})
     .filter((m) => m.groupId === groupId)
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
@@ -1940,23 +1943,25 @@ export async function inviteToGroup(groupId, userIds, actor) {
   const memberIds = [...new Set([...(group.memberIds || []), ...incoming])]
   const updated = { ...group, memberIds, updatedAt: new Date().toISOString() }
   await persistDoc('xx_groups', groupId, updated)
+  // MODULES-LAYER START
+  const lang = billingLang()
   await notifyUsers(
     incoming.filter((id) => id !== actor.id),
     {
       type: 'group_invite',
-      title: 'Invitation groupe',
-      body: `${actor.fullName} vous a ajouté au groupe « ${group.name} ».`,
+      title: billingT(lang, 'notif.inviteTitle'),
+      body: billingT(lang, 'notif.inviteBody', { name: actor.fullName || '', place: group.name || '' }),
       meta: { groupId },
     },
   )
+  await writeAudit({ type: 'group_invite', groupId, actorId: actor.id, userIds: incoming, orgId: group.orgId || activeOrgId })
+  // MODULES-LAYER END
   return updated
 }
 
 export async function sendMessage(groupId, body, user) {
   const group = memory.xx_groups[groupId]
-  // SPACES-LAYER START
   if (!canPostInGroup(memory, user, group)) throw new Error('Permission refusée.')
-  // SPACES-LAYER END
   const text = String(body || '').trim()
   if (!text) throw new Error('Message vide.')
   if (text.length > 4000) throw new Error('Message trop long.')
@@ -1971,6 +1976,35 @@ export async function sendMessage(groupId, body, user) {
     memberIds: group.memberIds || [],
   }
   await persistDoc('xx_messages', id, msg)
+  // MODULES-LAYER START
+  const lang = billingLang()
+  const members = (group.memberIds || []).filter((memberId) => memberId && memberId !== user.id)
+  const mentioned = mentionUserIds(text, Object.values(memory.xx_users || {})).filter((memberId) => members.includes(memberId))
+  const mentionedSet = new Set(mentioned)
+  const place = group.name || ''
+  if (mentioned.length) {
+    await notifyUsers(mentioned, {
+      type: 'mention',
+      title: billingT(lang, 'notif.mentionTitle'),
+      body: billingT(lang, 'notif.mentionBody', { name: user.fullName || '', place }),
+      meta: { groupId, messageId: id },
+    })
+  }
+  await notifyUsers(members.filter((memberId) => !mentionedSet.has(memberId)), {
+    type: 'message',
+    title: billingT(lang, 'notif.messageTitle'),
+    body: billingT(lang, 'notif.messageBody', { name: user.fullName || '', place }),
+    meta: { groupId, messageId: id },
+  })
+  await writeAudit(messageAuditEntry({
+    groupId,
+    authorId: user.id,
+    messageId: id,
+    orgId: group.orgId || activeOrgId,
+    mentioned,
+    body: text,
+  }))
+  // MODULES-LAYER END
   return msg
 }
 
@@ -2028,7 +2062,9 @@ export async function saveNote(data, user) {
       throw new Error('Lien parent invalide.')
     }
   }
-  return upsert('xx_notes', { ...data, parentId }, user)
+  // MODULES-LAYER START
+  return upsert('xx_notes', stampModuleItem({ ...data, parentId }, { workspaceId: activeOrgId || readWorkspaceId() }), user)
+  // MODULES-LAYER END
 }
 export async function deleteNote(id, user) {
   const existing = memory.xx_notes[id]
@@ -2051,7 +2087,10 @@ export async function deleteIdea(id, user) {
 }
 export async function saveProject(data, user) {
   const prev = data.id ? memory.xx_projects[data.id] : null
-  const saved = await upsert('xx_projects', data, user)
+  // MODULES-LAYER START
+  const saved = await upsert('xx_projects', stampModuleItem(data, { workspaceId: activeOrgId || readWorkspaceId() }), user)
+  await ensureProjectConversation(saved, user)
+  // MODULES-LAYER END
   if (prev && prev.leadId !== saved.leadId) {
     await refreshProjectFilesAccess(saved.id)
     await refreshProjectScopedAccess(saved.id)
@@ -2061,9 +2100,23 @@ export async function saveProject(data, user) {
 export async function deleteProject(id, user) {
   await destroy('xx_projects', id, user)
   await removeLinksFor('project', id)
+  // MODULES-LAYER START
+  const convId = projectConversationId(id)
+  if (memory.xx_groups?.[convId]) await removeDoc('xx_groups', convId)
+  // MODULES-LAYER END
 }
 export async function saveEvent(data, user) {
-  return upsert('xx_events', data, user)
+  // MODULES-LAYER START
+  const workspaceId = data.workspaceId || data.orgId || activeOrgId || readWorkspaceId() || ''
+  const workspaceName = data.workspaceName || memory.xx_orgs?.[workspaceId]?.name || ''
+  return upsert('xx_events', {
+    ...data,
+    workspaceId: workspaceId || null,
+    workspaceName,
+    projectId: data.projectId || null,
+    orgId: data.orgId || workspaceId || undefined,
+  }, user)
+  // MODULES-LAYER END
 }
 export async function deleteEvent(id, user) {
   await destroy('xx_events', id, user)
@@ -2200,6 +2253,61 @@ export async function voteIdea(ideaId, userId) {
   })
   return memory.xx_ideas[ideaId]
 }
+
+// MODULES-LAYER START
+async function ensureProjectConversation(project, user) {
+  if (!project?.id || !user?.id) return null
+  const id = projectConversationId(project.id)
+  const existing = memory.xx_groups?.[id]
+  const now = new Date().toISOString()
+  const group = {
+    ...(existing || {}),
+    id,
+    name: project.title || existing?.name || 'Projet',
+    memberIds: projectMemberIds(project, [user.id]),
+    ownerId: existing?.ownerId || project.ownerId || user.id,
+    projectId: project.id,
+    kind: 'project',
+    isGeneral: false,
+    orgId: project.orgId || activeOrgId,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  }
+  await persistDoc('xx_groups', id, group)
+  return group
+}
+
+export async function writeAudit(entry) {
+  const safe = messageAuditEntry(entry || {})
+  const id = safe.id || uid('aud')
+  const row = {
+    ...safe,
+    id,
+    type: safe.type || 'event',
+    orgId: safe.orgId || activeOrgId || '',
+    createdAt: safe.createdAt || new Date().toISOString(),
+  }
+  delete row.body
+  delete row.text
+  delete row.content
+  delete row.message
+  if (!memory.xx_audit) memory.xx_audit = {}
+  await persistDoc('xx_audit', id, row)
+  return memory.xx_audit[id]
+}
+
+export async function ensureFreeSubscriptions(user) {
+  if (!isAdmin(user)) return []
+  const saved = []
+  for (const org of Object.values(memory.xx_orgs || {})) {
+    if (!org?.id || org.subscription?.planId) continue
+    const subscription = { planId: FREE_SUBSCRIPTION.planId, status: FREE_SUBSCRIPTION.status }
+    await persistDoc('xx_orgs', org.id, { ...org, subscription })
+    saved.push(org.id)
+  }
+  return saved
+}
+// MODULES-LAYER END
 
 export async function createNotification(payload) {
   const id = uid('notif')
@@ -3651,7 +3759,7 @@ async function fetchOrgCol(col, orgId) {
   const list = []
   snap.forEach((d) => {
     const data = d.data() || {}
-    list.push({ id: d.id, title: data.title || data.name || '—', orgId: data.orgId || orgId })
+    list.push({ id: d.id, orgId: data.orgId || orgId })
   })
   return list
 }

@@ -24,14 +24,11 @@ export const ORG_SCOPED_COLLECTIONS = [
   'xx_ai_threads',
   'xx_game_scores',
   'xx_feedback',
-  // SPACES-LAYER START
   'xx_group_members',
-  // SPACES-LAYER END
+  'xx_audit',
 ]
 
-// SPACES-LAYER START
 export const ORG_ROLES = ['owner', 'admin', 'member', 'guest']
-// SPACES-LAYER END
 
 export function orgMemberId(orgId, userId) {
   return `${orgId}_${userId}`
@@ -142,23 +139,25 @@ export function createOrgLayer(ctx) {
   }
 
   async function createOrganization(name, user) {
-    const label = String(name || '').trim()
+    const input = name && typeof name === 'object' ? name : { name }
+    const label = String(input.name || '').trim()
     if (!user) throw new Error('Session requise.')
     if (label.length < 2) throw new Error('Nom d’organisation trop court.')
     const id = ctx.newId('org')
     const now = ctx.now()
+    const mark = String(input.emoji || input.logo || '').trim().slice(0, 4)
     await ctx.persistDoc('xx_orgs', id, {
       id,
       name: label,
-      createdAt: now,
-      createdBy: user.id,
-      // SPACES-LAYER START
       slug: uniqueSlug(rows(mem(), 'xx_orgs'), slugify(label), id),
-      description: '',
+      description: String(input.description || '').trim(),
       ownerId: user.id,
       status: 'active',
-      emoji: '',
-      // SPACES-LAYER END
+      emoji: mark,
+      logo: mark,
+      createdAt: now,
+      createdBy: user.id,
+      subscription: { planId: 'free', status: 'free' },
     })
     const memberId = orgMemberId(id, user.id)
     await ctx.persistDoc('xx_org_members', memberId, {
@@ -227,6 +226,11 @@ export function createOrgLayer(ctx) {
     if (nextRole === 'owner' && actorMember?.role !== 'owner' && !ctx.isAdminUser(actor)) {
       throw new Error('Seul un propriétaire peut nommer un propriétaire.')
     }
+    const existingPreview = userId ? mem().xx_org_members?.[orgMemberId(orgId, userId)] : null
+    if (existingPreview?.role === 'owner' && nextRole !== 'owner') {
+      const owners = rows(mem(), 'xx_org_members').filter((m) => m.orgId === orgId && m.role === 'owner')
+      if (owners.length <= 1) throw new Error('Impossible de retirer le dernier propriétaire.')
+    }
     const wanted = String(email || '').trim().toLowerCase()
     const target =
       (userId && mem().xx_users?.[userId]) ||
@@ -272,7 +276,7 @@ export function createOrgLayer(ctx) {
     for (const col of cols) {
       out[col] = rows(mem(), col)
         .filter((row) => row.orgId === orgId)
-        .map((row) => ({ id: row.id, title: row.title || row.name || '—', orgId: row.orgId }))
+        .map((row) => ({ id: row.id, orgId: row.orgId }))
     }
     if (ctx.fetchOrgCol) {
       for (const col of cols) {
