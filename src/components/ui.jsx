@@ -2,6 +2,9 @@
 import { createPortal } from 'react-dom'
 import { Globe, Lock, Share2, Users } from 'lucide-react'
 import { useI18n, valueLabel } from '../i18n'
+// MODULES-LAYER START
+import { billingT } from '../billing/i18n.js'
+// MODULES-LAYER END
 
 export const inputClass =
   'w-full min-h-11 rounded-xl border border-sage-300 bg-white px-3 py-2.5 text-sage-900 outline-none ring-sage-400 placeholder:text-sage-400 focus:ring-2'
@@ -102,10 +105,34 @@ const VIS_META = {
     className: 'bg-sage-100 text-sage-700',
     hintKey: 'shareUi.hintPublic',
   },
+  // MODULES-LAYER START
+  personal: { Icon: Lock, className: 'bg-sage-200 text-sage-900' },
+  workspace: { Icon: Users, className: 'bg-ok/15 text-ok' },
+  group: { Icon: Users, className: 'bg-sage-100 text-sage-800' },
+  shared: { Icon: Share2, className: 'bg-sage-100 text-sage-800' },
+  // MODULES-LAYER END
 }
 
 export function VisibilityBadge({ value, className = '' }) {
   const { t, lang } = useI18n()
+  // MODULES-LAYER START
+  if (value === 'personal' || value === 'workspace' || value === 'group' || value === 'shared') {
+    const meta = VIS_META[value]
+    const Icon = meta.Icon
+    const label = billingT(lang, `vis.${value}`)
+    const hint = billingT(lang, `vis.${value}Hint`)
+    return (
+      <span
+        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.className} ${className}`}
+        title={hint}
+        aria-label={`${label}. ${hint}`}
+      >
+        <Icon size={12} className="shrink-0" aria-hidden="true" />
+        {label}
+      </span>
+    )
+  }
+  // MODULES-LAYER END
   const key = VIS_META[value] ? value : 'Privée'
   const meta = VIS_META[key]
   const Icon = meta.Icon

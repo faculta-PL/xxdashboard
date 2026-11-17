@@ -28,6 +28,7 @@ import {
   BookOpen,
   Wand2,
   MessageSquarePlus,
+  UserPlus,
 } from 'lucide-react'
 import { getBackendMode } from '../lib/store'
 import { isAdmin } from '../lib/rbac'
@@ -58,6 +59,7 @@ export const NAV_GROUPS = [
       { id: 'org', label: 'Organisation', icon: Building2 },
       { id: 'orgadmin', label: 'Organisations', icon: Building2 },
       { id: 'team', label: 'Équipe', icon: Users },
+      { id: 'invitations', label: 'Invitations', icon: UserPlus },
       { id: 'chat', label: 'Chat', icon: MessageCircle },
       { id: 'notifications', label: 'Notifications', icon: Bell },
       { id: 'feedback', label: 'Feedback', icon: MessageSquarePlus },

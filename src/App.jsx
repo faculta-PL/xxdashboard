@@ -81,6 +81,17 @@ import {
   RESET_EMAIL,
   firebaseUnavailableLine,
 } from './lib/emailCopy'
+// IDENTITY-LAYER START
+import {
+  EmailVerifyBanner,
+  IdentityProfileCard,
+  IdentitySignupFields,
+  InvitationDesk,
+  InviteAcceptGate,
+  identityT,
+  validateSignupForm,
+} from './identity'
+// IDENTITY-LAYER END
 import {
   bootStore,
   subscribeStore,
@@ -158,7 +169,6 @@ import {
   canEditEntity,
   canDeleteEntity,
   canWriteRole,
-  canReadGroup,
   isAdmin,
   ROLES,
   canReadFileOrFolder,
@@ -223,6 +233,11 @@ import {
   weekDates,
 } from './lib/calendar'
 import { bindNotifAudioUnlock, playNotifBeep, readSoundPref, writeSoundPref } from './lib/notifSound'
+// MODULES-LAYER START
+import { billingT } from './billing/i18n.js'
+import { MODULE_VISIBILITY, filterReadableRows, sharesForVisibility } from './billing/access.js'
+import { canAccessConversation } from './billing/messaging.js'
+// MODULES-LAYER END
 
 const GamesHub = lazy(() => import('./games/GamesHub.jsx'))
 
@@ -510,7 +525,7 @@ function FileShareBlock({ users, user, shares, teamWide, onShares, onTeamWide })
 }
 
 export default function App() {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [booting, setBooting] = useState(true)
   const [db, setDb] = useState(null)
   const [session, setSession] = useState(null)
@@ -526,6 +541,11 @@ export default function App() {
     password: '',
     resetToken: '',
     newPassword: '',
+    // IDENTITY-LAYER START
+    handle: '',
+    confirm: '',
+    terms: false,
+    // IDENTITY-LAYER END
   })
   const [authBusy, setAuthBusy] = useState(false)
   const [authError, setAuthError] = useState('')
@@ -648,7 +668,7 @@ export default function App() {
   const notes = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_notes || {}).filter((n) => inOrg(n) && canReadEntity(user, n))
+        ? Object.values(db.xx_notes || {}).filter((n) => inOrg(n) && canReadEntity(user, n, { groups: db.xx_groups || {} }))
         : [],
     [db, user, orgId],
   )
@@ -662,14 +682,14 @@ export default function App() {
   const projects = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_projects || {}).filter((p) => inOrg(p) && canReadEntity(user, p))
+        ? Object.values(db.xx_projects || {}).filter((p) => inOrg(p) && canReadEntity(user, p, { groups: db.xx_groups || {} }))
         : [],
     [db, user, orgId],
   )
   const events = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_events || {}).filter((e) => inOrg(e) && canReadEntity(user, e))
+        ? Object.values(db.xx_events || {}).filter((e) => inOrg(e) && canReadEntity(user, e, { groups: db.xx_groups || {} }))
         : [],
     [db, user, orgId],
   )
@@ -768,7 +788,13 @@ export default function App() {
         ? Object.values(db.xx_messages || {})
             .filter((m) => {
               const group = db.xx_groups?.[m.groupId]
-              return group && canReadGroup(user, group)
+              // MODULES-LAYER START
+              return group && canAccessConversation(user, group, {
+                project: group.projectId ? db.xx_projects?.[group.projectId] : null,
+                projects: db.xx_projects,
+                orgMemberIds: Object.values(db.xx_org_members || {}).filter((member) => member.orgId === group.orgId && member.userId).map((member) => member.userId),
+              })
+              // MODULES-LAYER END
             })
             .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
         : [],
@@ -1020,6 +1046,14 @@ export default function App() {
         fields.newPassword = t('auth.passwordMin', { n: minLen })
       }
     }
+    // IDENTITY-LAYER START
+    if (authMode === 'register') {
+      const signup = validateSignupForm(authForm, { users: listUsers(), minPassword: minLen })
+      if (signup.errors.handle) fields.handle = identityT(lang, `err_${signup.errors.handle}`)
+      if (signup.errors.confirm) fields.confirm = identityT(lang, 'err_confirm')
+      if (signup.errors.terms) fields.terms = identityT(lang, 'err_terms')
+    }
+    // IDENTITY-LAYER END
     if (Object.keys(fields).length) {
       setAuthFieldErrors(fields)
       const first = Object.values(fields)[0]
@@ -1048,8 +1082,26 @@ export default function App() {
       } else if (authMode === 'register') {
         const created = await registerUser(authForm)
         const logged = await loginUser(authForm.email, authForm.password)
-        setUser(logged.user)
+        // IDENTITY-LAYER START
+        let sessionUser = logged.user
+        try {
+          const signup = validateSignupForm(authForm, { users: listUsers(), minPassword: minLen })
+          if (signup.handle) {
+            sessionUser = await updateProfile(logged.user.id, {
+              handle: signup.handle,
+              discoverable: false,
+              bio: '',
+              title: '',
+              website: '',
+              termsAcceptedAt: new Date().toISOString(),
+            })
+          }
+        } catch (profileErr) {
+          console.warn('identity profile:', profileErr?.message || profileErr)
+        }
+        setUser(sessionUser)
         setSession(logged.session)
+        // IDENTITY-LAYER END
         const notice = {
           kind: 'verify',
           email: String(authForm.email || '').trim().toLowerCase(),
@@ -1131,6 +1183,23 @@ export default function App() {
     )
   }
 
+  // IDENTITY-LAYER START
+  const identityBanner = <EmailVerifyBanner user={user} onUserUpdated={refreshUser} />
+  const identityAccept = (
+    <InviteAcceptGate user={user} onUserUpdated={refreshUser} flash={flash} />
+  )
+  const identityDesk = (
+    <InvitationDesk
+      user={user}
+      orgId={orgId}
+      groups={groups}
+      directory={allUsers}
+      flash={flash}
+      onUserUpdated={refreshUser}
+    />
+  )
+  // IDENTITY-LAYER END
+
   const openFullNazix = () => {
     const url = new URL(window.location.href)
     url.searchParams.delete('mini')
@@ -1153,6 +1222,7 @@ export default function App() {
           authError={authError}
           authFieldErrors={authFieldErrors}
           emailNotice={emailNotice}
+          directory={allUsers}
         />
         {toast && <Toast toast={toast} />}
         <EmailNoticeModal notice={emailNotice} onClose={() => setEmailNotice(null)} />
@@ -1172,6 +1242,12 @@ export default function App() {
     return (
       <>
         <OrgGate user={user} memberships={memberships} onLogout={handleLogout} />
+        {/* IDENTITY-LAYER START */}
+        <div className="mx-auto max-w-3xl px-4 pt-4">
+          {identityBanner}
+          {identityAccept}
+        </div>
+        {/* IDENTITY-LAYER END */}
         {toast && <Toast toast={toast} />}
       </>
     )
@@ -1179,23 +1255,33 @@ export default function App() {
 
   if (isMiniRequest()) {
     return (
-      <MiniApp
-        user={user}
-        orgId={orgId}
-        notes={notes}
-        todos={todos}
-        events={events}
-        messages={chatMessages}
-        syncStatus={db?.syncStatus || 'local'}
-        onOpenFull={openFullNazix}
-        onLogout={handleLogout}
-      />
+      <>
+        {/* IDENTITY-LAYER START */}
+        {identityBanner}
+        {identityAccept}
+        {/* IDENTITY-LAYER END */}
+        <MiniApp
+          user={user}
+          orgId={orgId}
+          notes={notes}
+          todos={todos}
+          events={events}
+          messages={chatMessages}
+          syncStatus={db?.syncStatus || 'local'}
+          onOpenFull={openFullNazix}
+          onLogout={handleLogout}
+        />
+      </>
     )
   }
 
   if (view === 'games') {
     return (
       <>
+        {/* IDENTITY-LAYER START */}
+        {identityBanner}
+        {identityAccept}
+        {/* IDENTITY-LAYER END */}
         <Suspense
           fallback={
             <div className="flex min-h-[100dvh] items-center justify-center bg-cream-green">
@@ -1310,6 +1396,11 @@ export default function App() {
           id="nazix-main"
           className={`min-w-0 ${view === 'chat' ? 'p-2 md:p-4' : 'p-4 md:p-6'} pb-[max(1.25rem,env(safe-area-inset-bottom))]`}
         >
+          {/* IDENTITY-LAYER START */}
+          {identityBanner}
+          {identityAccept}
+          {view === 'invitations' ? identityDesk : null}
+          {/* IDENTITY-LAYER END */}
           {view !== 'guide' && (
             <ModuleIntro
               view={view}
@@ -1358,6 +1449,7 @@ export default function App() {
               user={user}
               notes={notes.filter((n) => n.important)}
               users={users}
+              groups={groups}
               projects={projects}
               files={files}
               ideas={ideas}
@@ -1374,7 +1466,7 @@ export default function App() {
             />
           )}
           {view === 'org' && <OrgHome user={user} activeOrgId={orgId} flash={flash} />}
-          {view === 'orgadmin' && isAdmin(user) && <OrgAdmin user={user} flash={flash} peek={db?.orgPeek} />}
+          {view === 'orgadmin' && isAdmin(user) && <OrgAdmin user={user} flash={flash} peek={db?.orgPeek} activeOrgId={orgId} />}
           {view === 'dashboard' && (
             <DashboardView
               user={user}
@@ -1422,6 +1514,7 @@ export default function App() {
               user={user}
               notes={notes}
               users={users}
+              groups={groups}
               projects={projects}
               files={files}
               ideas={ideas}
@@ -1444,6 +1537,7 @@ export default function App() {
             <ProjectsView
               user={user}
               projects={projects}
+              groups={groups}
               notes={notes}
               ideas={ideas}
               files={files}
@@ -1497,7 +1591,15 @@ export default function App() {
             />
           )}
           {view === 'calendar' && (
-            <CalendarView user={user} events={events} users={users} flash={flash} />
+            <CalendarView
+              user={user}
+              events={events}
+              users={users}
+              projects={projects}
+              workspaceId={orgId}
+              workspaceName={db?.xx_orgs?.[orgId]?.name || ''}
+              flash={flash}
+            />
           )}
           {view === 'todos' && (
             <TodosView
@@ -1536,7 +1638,7 @@ export default function App() {
             />
           )}
           {view === 'export' && (
-            <ExportView notes={notes} ideas={ideas} projects={projects} events={events} flash={flash} />
+            <ExportView user={user} notes={notes} ideas={ideas} projects={projects} events={events} groups={db?.xx_groups || {}} flash={flash} />
           )}
           {view === 'notifications' && (
             <NotificationsView notifications={notifications} flash={flash} user={user} />
@@ -1629,6 +1731,7 @@ function LandingPage({
   authError,
   authFieldErrors,
   emailNotice = null,
+  directory = [],
 }) {
   const { t, lang } = useI18n()
   const [authOpen, setAuthOpen] = useState(false)
@@ -1668,6 +1771,10 @@ function LandingPage({
     setAuthOpen(true)
     setMobileOpen(false)
   }
+
+  // IDENTITY-LAYER START
+  const identityGuest = <InviteAcceptGate user={null} onRequestAuth={(mode) => openAuth(mode)} />
+  // IDENTITY-LAYER END
 
   const goSection = (id) => {
     setMobileOpen(false)
@@ -1748,6 +1855,10 @@ function LandingPage({
           </div>
         )}
       </header>
+
+      {/* IDENTITY-LAYER START */}
+      <div className="mx-auto max-w-6xl px-4 pt-4 sm:px-6">{identityGuest}</div>
+      {/* IDENTITY-LAYER END */}
 
       <section className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-6 pt-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-8 lg:pb-4 lg:pt-12">
         <div className="max-w-xl animate-fade-up">
@@ -2025,6 +2136,7 @@ function LandingPage({
         authError={authError}
         authFieldErrors={authFieldErrors}
         emailNotice={emailNotice}
+        directory={directory}
       />
     </div>
   )
@@ -2142,6 +2254,7 @@ function AuthModal({
   authError,
   authFieldErrors = {},
   emailNotice = null,
+  directory = [],
 }) {
   const { t } = useI18n()
   useEffect(() => {
@@ -2233,6 +2346,17 @@ function AuthModal({
                 />
               </Field>
             )}
+            {/* IDENTITY-LAYER START */}
+            {authMode === 'register' && (
+              <IdentitySignupFields
+                section="handle"
+                form={authForm}
+                setForm={setAuthForm}
+                directory={directory}
+                errors={authFieldErrors}
+              />
+            )}
+            {/* IDENTITY-LAYER END */}
             {(authMode === 'login' || authMode === 'register') && (
               <Field label={t('auth.password')} error={authFieldErrors.password}>
                 <div className="relative">
@@ -2254,6 +2378,17 @@ function AuthModal({
                 </div>
               </Field>
             )}
+            {/* IDENTITY-LAYER START */}
+            {authMode === 'register' && (
+              <IdentitySignupFields
+                section="confirm"
+                form={authForm}
+                setForm={setAuthForm}
+                directory={directory}
+                errors={authFieldErrors}
+              />
+            )}
+            {/* IDENTITY-LAYER END */}
             {authMode === 'forgot' && (
               <div className="mb-3 rounded-xl border border-sage-200 bg-white/80 px-3 py-3 text-sm text-sage-700">
                 <p className="font-medium text-sage-900">{RESET_EMAIL.subject}</p>
@@ -3867,6 +4002,7 @@ function NotesView({
   user,
   notes,
   users,
+  groups = [],
   projects,
   files = [],
   ideas = [],
@@ -3918,7 +4054,8 @@ function NotesView({
             .map((part) => part.trim())
             .filter(Boolean),
           visibility: current.visibility,
-          shares: current.visibility === 'Privée' ? [] : current.shares || [],
+          shares: sharesForVisibility(current.visibility, current.shares),
+          groupId: current.groupId || null,
           projectId: current.projectId || null,
           parentId: current.parentId || null,
           important: Boolean(editingRef.current?.important),
@@ -3941,6 +4078,7 @@ function NotesView({
       tags: '',
       visibility: 'Privée',
       shares: [],
+      groupId: '',
       projectId: '',
       parentId: '',
       linkFileIds: [],
@@ -3989,6 +4127,7 @@ function NotesView({
       tags: (n.tags || []).join(', '),
       visibility: n.visibility || 'Privée',
       shares: n.shares || [],
+      groupId: n.groupId || '',
       projectId: n.projectId || '',
       parentId: n.parentId || '',
       linkFileIds: related.filter((r) => r.type === 'file').map((r) => r.id),
@@ -4021,7 +4160,8 @@ function NotesView({
           .map((t) => t.trim())
           .filter(Boolean),
         visibility: form.visibility,
-        shares: form.visibility === 'Privée' ? [] : form.shares,
+        shares: sharesForVisibility(form.visibility, form.shares),
+        groupId: form.groupId || null,
         projectId: form.projectId || null,
         parentId: form.parentId || null,
         imageUrl: String(form.imageUrl || '').trim(),
@@ -4321,9 +4461,32 @@ function NotesView({
                     {valueLabel(lang, v)}
                   </option>
                 ))}
+                {/* MODULES-LAYER START */}
+                {MODULE_VISIBILITY.map((v) => (
+                  <option key={v} value={v}>
+                    {billingT(lang, `vis.${v}`)}
+                  </option>
+                ))}
+                {/* MODULES-LAYER END */}
               </select>
             </Field>
           </div>
+          {/* MODULES-LAYER START */}
+          <Field label={billingT(lang, 'modules.group')}>
+            <select
+              className={inputClass}
+              value={form.groupId || ''}
+              onChange={(e) => setForm({ ...form, groupId: e.target.value })}
+            >
+              <option value="">{billingT(lang, 'modules.groupNone')}</option>
+              {groups.map((group) => (
+                <option key={group.id} value={group.id}>
+                  {group.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {/* MODULES-LAYER END */}
           <Field label={t('notes.tags')}>
             <input
               className={inputClass}
@@ -5952,6 +6115,7 @@ function ProjectDetailBody({ detail, notes, ideas, files, events, budgets, risks
 function ProjectsView({
   user,
   projects,
+  groups = [],
   notes,
   ideas,
   files = [],
@@ -5979,6 +6143,7 @@ function ProjectsView({
     dueDate: '',
     visibility: 'Partagée',
     shares: [],
+    groupId: '',
   })
   const projectFormRef = useRef(form)
   const projectEditingRef = useRef(editing)
@@ -6031,6 +6196,7 @@ function ProjectsView({
       dueDate: '',
       visibility: 'Partagée',
       shares: [],
+      groupId: '',
     })
     setOpen(true)
   }
@@ -6140,6 +6306,7 @@ function ProjectsView({
                             dueDate: p.dueDate || '',
                             visibility: p.visibility || 'Partagée',
                             shares: p.shares || [],
+                            groupId: p.groupId || '',
                           })
                           setOpen(true)
                         }}
@@ -6270,10 +6437,29 @@ function ProjectsView({
               onChange={(e) => setForm({ ...form, visibility: e.target.value })}
             >
               {VISIBILITIES.map((v) => (
-                <option key={v}>{v}</option>
+                <option key={v} value={v}>{v}</option>
+              ))}
+              {/* MODULES-LAYER START */}
+              {MODULE_VISIBILITY.map((v) => (
+                <option key={v} value={v}>{billingT(lang, `vis.${v}`)}</option>
+              ))}
+              {/* MODULES-LAYER END */}
+            </select>
+          </Field>
+          {/* MODULES-LAYER START */}
+          <Field label={billingT(lang, 'modules.group')}>
+            <select
+              className={inputClass}
+              value={form.groupId || ''}
+              onChange={(e) => setForm({ ...form, groupId: e.target.value })}
+            >
+              <option value="">{billingT(lang, 'modules.groupNone')}</option>
+              {groups.map((group) => (
+                <option key={group.id} value={group.id}>{group.name}</option>
               ))}
             </select>
           </Field>
+          {/* MODULES-LAYER END */}
           <Field label={t('projectsUi.startDate')}>
             <input
               type="date"
@@ -6360,7 +6546,7 @@ function ProjectsView({
   )
 }
 
-function CalendarView({ user, events, users, flash }) {
+function CalendarView({ user, events, users, projects = [], workspaceId = '', workspaceName = '', flash }) {
   const { t, lang } = useI18n()
   const cal = calendarLabels(lang)
   const [todayIso] = useState(() => toIsoDate(new Date()))
@@ -6379,6 +6565,9 @@ function CalendarView({ user, events, users, flash }) {
     participantIds: [],
     visibility: 'Partagée',
     shares: [],
+    projectId: '',
+    workspaceId: workspaceId || '',
+    workspaceName: workspaceName || '',
   })
   const eventFormRef = useRef(form)
   const eventCreated = useRef('')
@@ -6422,6 +6611,9 @@ function CalendarView({ user, events, users, flash }) {
     participantIds: [],
     visibility: 'Partagée',
     shares: [],
+    projectId: '',
+    workspaceId: workspaceId || '',
+    workspaceName: workspaceName || '',
   })
 
   const openCreate = (date) => {
@@ -6733,6 +6925,10 @@ function CalendarView({ user, events, users, flash }) {
                 <p className="font-display text-lg text-sage-900">{ev.title}</p>
                 <p className="text-sm text-sage-600">
                   {ev.date} · {ev.time}
+                  {/* MODULES-LAYER START */}
+                  {ev.workspaceName || ev.workspaceId ? ` · ${ev.workspaceName || ev.workspaceId}` : ''}
+                  {ev.projectId ? ` · ${projects.find((p) => p.id === ev.projectId)?.title || ''}` : ''}
+                  {/* MODULES-LAYER END */}
                 </p>
                 <p className="mt-2 text-sm text-sage-700">{ev.description}</p>
                 <p className="mt-2 text-xs text-sage-500">
@@ -6804,6 +7000,25 @@ function CalendarView({ user, events, users, flash }) {
               />
             </Field>
           </div>
+          {/* MODULES-LAYER START */}
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <Field label={billingT(lang, 'modules.workspace')}>
+              <input className={inputClass} value={form.workspaceName || form.workspaceId || workspaceName || workspaceId || ''} readOnly />
+            </Field>
+            <Field label={billingT(lang, 'modules.project')}>
+              <select
+                className={inputClass}
+                value={form.projectId || ''}
+                onChange={(e) => setForm({ ...form, projectId: e.target.value })}
+              >
+                <option value="">{billingT(lang, 'modules.projectNone')}</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>{project.title}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          {/* MODULES-LAYER END */}
           <Field label={t('calendar.participants')}>
             <div className="flex flex-wrap gap-2 rounded-xl border border-sage-200 bg-white p-3">
               {users
@@ -7041,25 +7256,30 @@ function SearchView({ notes, ideas, projects, events, files = [], budgets = [], 
   )
 }
 
-function ExportView({ notes, ideas, projects, events, flash }) {
+function ExportView({ user, notes, ideas, projects, events, groups = {}, flash }) {
   const { t } = useI18n()
-  const rows = buildExportRows({ notes, ideas, projects, events })
+  // MODULES-LAYER START
+  const readable = {
+    notes: filterReadableRows(notes, user, { groups, canRead: (person, row) => canReadEntity(person, row, { groups }) }),
+    ideas: filterReadableRows(ideas, user, { groups, canRead: (person, row) => canReadEntity(person, row, { groups }) }),
+    projects: filterReadableRows(projects, user, { groups, canRead: (person, row) => canReadEntity(person, row, { groups }) }),
+    events: filterReadableRows(events, user, { groups, canRead: (person, row) => canReadEntity(person, row, { groups }) }),
+  }
+  const rows = buildExportRows(readable)
   const bundle = {
     exportedAt: new Date().toISOString(),
-    notes,
-    ideas,
-    projects,
-    events,
+    ...readable,
   }
+  // MODULES-LAYER END
 
   const run = async (kind) => {
     try {
       if (kind === 'csv') exportCSV(rows)
       if (kind === 'xlsx') exportXLSX(rows)
       if (kind === 'json') exportJSON(bundle)
-      if (kind === 'docx') await exportDOCX(buildDocSections({ notes, ideas, projects, events }))
+      if (kind === 'docx') await exportDOCX(buildDocSections(readable))
       if (kind === 'pdf')
-        exportPDF('Export Nazix', buildPdfTables({ notes, ideas, projects, events }))
+        exportPDF('Export Nazix', buildPdfTables(readable))
       flash(t('exportUi.downloaded', { kind: kind.toUpperCase() }))
     } catch (err) {
       flash(err.message || t('exportUi.failed'), 'err')
@@ -7189,6 +7409,12 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
         >
           {t('settingsUi.saveProfile')}
         </button>
+
+        {/* IDENTITY-LAYER START */}
+        <div className="mt-4">
+          <IdentityProfileCard user={user} directory={users} onUserUpdated={onUserUpdated} flash={flash} />
+        </div>
+        {/* IDENTITY-LAYER END */}
 
         {!user.emailVerified && (
           <div className="mt-4 rounded-xl border border-warn/30 bg-warn/10 p-3">
@@ -7655,7 +7881,12 @@ function ChatView({ user, groups, messages, users, flash, readMap, onReadGroup }
                     }`}
                     onClick={() => setSelectedId(g.id)}
                   >
-                    <span className="min-w-0 flex-1 truncate font-medium text-sage-900">{g.name}</span>
+                    <span className="min-w-0 flex-1 truncate font-medium text-sage-900">
+                      {g.name}
+                      {/* MODULES-LAYER START */}
+                      {g.projectId ? <span className="ml-1 text-[11px] font-normal text-sage-500">{billingT(lang, 'modules.projectChat')}</span> : null}
+                      {/* MODULES-LAYER END */}
+                    </span>
                     {n > 0 && (
                       <span className="rounded-full bg-sage-700 px-2 py-0.5 text-[11px] font-bold text-white">
                         {n}

@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import { Building2, Eye, Trash2, UserPlus } from 'lucide-react'
 import { useI18n } from '../i18n'
 import { isAdmin } from '../lib/rbac'
+// MODULES-LAYER START
+import { BillingPanel } from '../billing/BillingPanel.jsx'
+// MODULES-LAYER END
 import {
   canManageOrg,
   createOrganization,
@@ -255,7 +258,7 @@ function orgRoleIsOwner(user, orgId) {
   return listMembersOfOrg(orgId).some((m) => m.userId === user.id && m.role === 'owner')
 }
 
-export function OrgAdmin({ user, flash, peek }) {
+export function OrgAdmin({ user, flash, peek, activeOrgId = '' }) {
   const { t } = useI18n()
   const orgs = listOrganizations()
   const [email, setEmail] = useState('')
@@ -314,6 +317,9 @@ export function OrgAdmin({ user, flash, peek }) {
         <h2 className="font-display text-2xl text-sage-900">{t('orgs.superTitle')}</h2>
         <p className="mt-1 text-sm text-sage-600">{t('orgs.superHint')}</p>
       </div>
+      {/* MODULES-LAYER START */}
+      <BillingPanel user={user} activeOrgId={activeOrgId} />
+      {/* MODULES-LAYER END */}
       <section className="rounded-2xl border border-sage-200 bg-white/80 p-4">
         <h3 className="font-display text-lg">{t('feedback.inbox')}</h3>
         <p className="mt-1 text-sm text-sage-600">{t('feedback.inboxHint')}</p>
@@ -394,11 +400,13 @@ export function OrgAdmin({ user, flash, peek }) {
                   <p className="font-semibold text-sage-900">{t('orgs.peek')}</p>
                   {peek?.loading ? <p>{t('orgs.loading')}</p> : null}
                   {peek?.error ? <p className="text-danger">{peek.error}</p> : null}
+                  {/* MODULES-LAYER START */}
                   {['xx_notes', 'xx_projects', 'xx_todos', 'xx_events', 'xx_feedback'].map((col) => (
                     <p key={col} className="mt-1 text-sage-700">
-                      {col.replace('xx_', '')}: {(peek?.rows?.[col] || []).map((row) => row.title).filter(Boolean).slice(0, 8).join(' · ') || '—'}
+                      {col.replace('xx_', '')}: {(peek?.rows?.[col] || []).length}
                     </p>
                   ))}
+                  {/* MODULES-LAYER END */}
                 </div>
               )}
               {deleteId === org.id && (

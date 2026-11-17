@@ -8,6 +8,9 @@ import {
   splitDisplayAndActions,
   visibleStreamContent,
 } from '../../server/ai-actions.mjs'
+// MODULES-LAYER START
+import { sanitizeSearchResults, stripClientSecrets } from '../billing/searchPolicy.js'
+// MODULES-LAYER END
 
 export {
   displayAiContent,
@@ -916,7 +919,9 @@ export async function searchWeb(query, loc) {
     try {
       const res = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } })
       const data = await res.json().catch(() => null)
-      if (res.ok && data && Array.isArray(data.results)) return data
+      // MODULES-LAYER START
+      if (res.ok && data && Array.isArray(data.results)) return sanitizeSearchResults(data)
+      // MODULES-LAYER END
       lastError = data?.error || `HTTP ${res.status}`
     } catch (err) {
       lastError = err
@@ -926,10 +931,12 @@ export async function searchWeb(query, loc) {
       const res = await fetch(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ q }),
+        body: JSON.stringify(stripClientSecrets({ q })),
       })
       const data = await res.json().catch(() => null)
-      if (res.ok && data && Array.isArray(data.results)) return data
+      // MODULES-LAYER START
+      if (res.ok && data && Array.isArray(data.results)) return sanitizeSearchResults(data)
+      // MODULES-LAYER END
       lastError = data?.error || `HTTP ${res.status}`
     } catch (err) {
       lastError = err

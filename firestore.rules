@@ -470,6 +470,15 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // MODULES-LAYER START
+    match /xx_audit/{id} {
+      allow read: if orgRead();
+      allow create: if orgCreate()
+        && !request.resource.data.keys().hasAny(['body', 'text', 'content', 'message', 'snippet']);
+      allow update, delete: if false;
+    }
+    // MODULES-LAYER END
+
     match /xx_orgs/{id} {
       allow read: if isAdmin() || isOrgMember(id);
       allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
