@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import {
   LayoutDashboard,
   StickyNote,
-  Lightbulb,
   FolderKanban,
   CalendarDays,
   ListTodo,
@@ -20,7 +19,6 @@ import {
   BoxSelect,
   Sparkles,
   Gamepad2,
-  Star,
   Building2,
   // SPACES-LAYER START
   Layers,
@@ -34,58 +32,53 @@ import {
   UserPlus,
 } from 'lucide-react'
 import { getBackendMode } from '../lib/store'
-import { isAdmin } from '../lib/rbac'
 import { useI18n } from '../i18n'
 
 export const NAV_GROUPS = [
   {
-    id: 'workspace',
-    label: 'Espace de travail',
+    id: 'personal',
+    label: 'Espace personnel',
+    items: [{ id: 'dashboard', label: 'Mon tableau de bord', icon: LayoutDashboard, labelKey: 'nav.myDashboard' }],
+  },
+  {
+    id: 'org',
+    label: 'Organisation active',
     items: [
-      { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
+      { id: 'overview', label: 'Vue d’ensemble', icon: Building2 },
+      { id: 'spaces', label: 'Espaces', icon: Layers },
+      { id: 'teams', label: 'Équipes', icon: Users },
       { id: 'projects', label: 'Projets', icon: FolderKanban },
-      { id: 'notes', label: 'Notes', icon: StickyNote },
-      { id: 'important', label: 'Notes importantes', icon: Star },
-      { id: 'ideas', label: 'Kanban', icon: Lightbulb },
+      { id: 'notes', label: 'Notes et idées', icon: StickyNote, labelKey: 'nav.notesIdeas' },
+      { id: 'chat', label: 'Discussions', icon: MessageCircle },
       { id: 'calendar', label: 'Calendrier', icon: CalendarDays },
-      { id: 'todos', label: 'Tâches', icon: ListTodo },
-      { id: 'files', label: 'Fichiers', icon: FolderOpen },
-      { id: 'budget', label: 'Budget', icon: Wallet },
-      { id: 'risks', label: 'Risques', icon: ShieldAlert },
-      { id: 'canvas', label: 'Espace visuel', icon: BoxSelect },
+      { id: 'files', label: 'Documents', icon: FolderOpen },
     ],
   },
   {
-    id: 'collab',
-    label: 'Collaboration',
+    id: 'manage',
+    label: 'Gestion',
     items: [
-      { id: 'org', label: 'Organisation', icon: Building2 },
-      // SPACES-LAYER START
-      { id: 'spaces', label: 'Espaces', icon: Layers },
-      // SPACES-LAYER END
-      { id: 'orgadmin', label: 'Organisations', icon: Building2 },
-      { id: 'team', label: 'Équipe', icon: Users },
-      { id: 'invitations', label: 'Invitations', icon: UserPlus },
-      { id: 'chat', label: 'Chat', icon: MessageCircle },
-      { id: 'notifications', label: 'Notifications', icon: Bell },
-      { id: 'feedback', label: 'Feedback', icon: MessageSquarePlus },
+      { id: 'members', label: 'Membres et invitations', icon: UserPlus },
+      { id: 'orgsettings', label: 'Paramètres de l’organisation', icon: Settings },
     ],
   },
   {
     id: 'tools',
     label: 'Outils',
     items: [
+      { id: 'todos', label: 'Tâches', icon: ListTodo },
+      { id: 'budget', label: 'Budget', icon: Wallet },
+      { id: 'risks', label: 'Risques', icon: ShieldAlert },
+      { id: 'canvas', label: 'Espace visuel', icon: BoxSelect },
+      { id: 'assistant', label: 'Assistant IA', icon: Sparkles },
+      { id: 'games', label: 'Jeux', icon: Gamepad2 },
+      { id: 'feedback', label: 'Retours', icon: MessageSquarePlus },
       { id: 'guide', label: 'Guide', icon: BookOpen },
       { id: 'search', label: 'Recherche', icon: Search },
       { id: 'export', label: 'Exports', icon: Download },
-      { id: 'assistant', label: 'Assistant IA', icon: Sparkles },
       { id: 'create', label: 'Création', icon: Wand2 },
+      { id: 'notifications', label: 'Notifications', icon: Bell },
     ],
-  },
-  {
-    id: 'fun',
-    label: 'Détente',
-    items: [{ id: 'games', label: 'Jeux', icon: Gamepad2 }],
   },
 ]
 
@@ -107,14 +100,14 @@ function readGroups() {
 }
 
 const GROUP_I18N = {
-  workspace: 'nav.groupWorkspace',
-  collab: 'nav.groupCollab',
+  personal: 'nav.groupPersonal',
+  org: 'nav.groupOrg',
+  manage: 'nav.groupManage',
   tools: 'nav.groupTools',
-  fun: 'nav.groupFun',
 }
 
 function navLabel(t, item) {
-  const key = `nav.${item.id}`
+  const key = item.labelKey || `nav.${item.id}`
   const translated = t(key)
   return translated === key ? item.label : translated
 }
@@ -129,6 +122,12 @@ export function Sidebar({
   chatUnread,
   collapsed,
   onCollapsed,
+  organizations = [],
+  activeOrgId = '',
+  onOrganization,
+  onCreateOrganization,
+  onManageOrganizations,
+  onAdminOrganizations,
 }) {
   const { t } = useI18n()
   const [closedGroups, setClosedGroups] = useState(readGroups)
@@ -185,6 +184,38 @@ export function Sidebar({
           </button>
         </div>
 
+        <div className={`mb-3 rounded-xl bg-sage-700/60 p-2 ${collapsed ? 'lg:hidden' : ''}`}>
+          <label className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-sage-300">
+            {t('hier.switch')}
+            <select
+              className="mt-1 w-full min-h-11 truncate rounded-lg border border-sage-500 bg-white px-2 py-2 text-sm font-medium normal-case tracking-normal text-sage-900"
+              value={organizations.some((org) => org.id === activeOrgId) ? activeOrgId : ''}
+              aria-label={t('hier.switch')}
+              onChange={(event) => onOrganization?.(event.target.value)}
+            >
+              <option value="">{t('hier.personalOption')}</option>
+              {organizations.map((org) => (
+                <option key={org.id} value={org.id}>
+                  {`${org.emoji || org.logo || ''} ${org.name}`.trim()}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="mt-2 flex flex-col gap-1">
+            <button type="button" className="min-h-10 rounded-lg px-2 text-left text-sm text-sage-50 hover:bg-sage-600" onClick={onCreateOrganization}>
+              {t('hier.createOrg')}
+            </button>
+            <button type="button" className="min-h-10 rounded-lg px-2 text-left text-sm text-sage-50 hover:bg-sage-600" onClick={onManageOrganizations}>
+              {t('hier.manage')}
+            </button>
+            {onAdminOrganizations ? (
+              <button type="button" className="min-h-10 rounded-lg px-2 text-left text-sm text-sage-50 hover:bg-sage-600" onClick={onAdminOrganizations}>
+                {t('hier.adminOrgs')}
+              </button>
+            ) : null}
+          </div>
+        </div>
+
         <nav className="flex-1 space-y-3 overflow-y-auto xx-scroll" aria-label={t('nav.primary')}>
           {NAV_GROUPS.map((group) => {
             const closed = Boolean(closedGroups[group.id]) && !collapsed
@@ -205,7 +236,7 @@ export function Sidebar({
                 {collapsed && <div className="hidden h-px bg-sage-600/80 lg:block" aria-hidden />}
                 {!closed && (
                   <div className="mt-1 space-y-0.5">
-                    {group.items.filter((item) => item.id !== 'orgadmin' || isAdmin(user)).map((item) => {
+                    {group.items.map((item) => {
                       const Icon = item.icon
                       const active = view === item.id
                       const label = navLabel(t, item)

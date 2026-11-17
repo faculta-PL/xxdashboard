@@ -94,6 +94,9 @@ export function createInviteService(deps) {
     const invite = toInviteRecord({
       id: deps.newId ? deps.newId() : `inv_${randomHex(8)}`,
       workspaceId,
+      organizationId: input?.organizationId || workspaceId,
+      spaceId: input?.spaceId || null,
+      teamId: input?.teamId || input?.groupId || null,
       groupId: input?.groupId || null,
       email,
       handle,

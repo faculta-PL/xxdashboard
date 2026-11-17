@@ -635,6 +635,34 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /xx_spaces/{id} {
+      allow read: if isAdmin() || (
+        resource.data.orgId is string
+        && isOrgMember(resource.data.orgId)
+      );
+      allow create: if isAdmin() || (
+        isSignedIn()
+        && request.resource.data.orgId is string
+        && request.resource.data.organizationId == request.resource.data.orgId
+        && request.resource.data.kind in ['general', 'extra']
+        && isOrgMember(request.resource.data.orgId)
+        && get(orgMemberPath(request.resource.data.orgId)).data.role in ['owner', 'admin', 'member']
+      );
+      allow update: if isAdmin() || (
+        resource.data.orgId is string
+        && request.resource.data.orgId == resource.data.orgId
+        && request.resource.data.kind == resource.data.kind
+        && isOrgMember(resource.data.orgId)
+        && get(orgMemberPath(resource.data.orgId)).data.role in ['owner', 'admin', 'member']
+      );
+      allow delete: if isAdmin() || (
+        resource.data.kind == 'extra'
+        && resource.data.orgId is string
+        && isOrgMember(resource.data.orgId)
+        && get(orgMemberPath(resource.data.orgId)).data.role in ['owner', 'admin']
+      );
+    }
+
     match /xx_audit_logs/{id} {
       allow read: if isAdmin() || (
         resource.data.workspaceId is string

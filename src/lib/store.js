@@ -66,6 +66,13 @@ import { VERIFY_EMAIL, RESET_EMAIL, firebaseUnavailableLine } from './emailCopy'
 import { ORG_SCOPED_COLLECTIONS, createOrgLayer } from './orgLayer'
 import { readMirroredActiveId, writeActiveMirror } from '../spaces/active.js'
 import { createSpacesEngine } from '../spaces/engine.js'
+import { planMigration } from '../platform/MIGRATION.js'
+import {
+  canAccessSpace,
+  canReadScopedContent,
+  generalSpaceId,
+  privateTeamContentHidden,
+} from '../platform/permissions.js'
 import { canPostInGroup, canSeeGroupContent, enterBlock } from '../spaces/permissions.js'
 import { setGroupsProvider, stampModuleItem } from '../billing/access.js'
 import {
@@ -107,6 +114,7 @@ const LOCAL_FALLBACK_NOTICE = 'Connexion en mode local — synchronisation plus 
 const LOCAL_KEY = 'xxdashboard_v1'
 const SESSION_KEY = 'xxdashboard_session_token'
 const ACTIVE_ORG_KEY = 'nazix_active_org'
+const ACTIVE_SPACE_KEY = 'nazix_active_space'
 const GENERAL_GROUP_ID = 'grp_general'
 const SESSION_HOURS = 24
 /** Fail-open budget so splash never waits on a hung Firestore/Auth call. */
@@ -132,7 +140,9 @@ function withTimeout(promise, ms, label) {
 let firestoreSyncState = 'idle'
 let realtimeAttached = false
 let activeOrgId = ''
+let activeSpaceId = ''
 try { activeOrgId = readMirroredActiveId(localStorage) || readWorkspaceId() || '' } catch { activeOrgId = '' }
+try { activeSpaceId = localStorage.getItem(ACTIVE_SPACE_KEY) || '' } catch { activeSpaceId = '' }
 let orgPeek = { orgId: '', loading: false, error: '', rows: {} }
 let listenerUserId = ''
 let listenerIsAdmin = false
@@ -152,6 +162,10 @@ export function computeSyncStatus() {
 
 export function getActiveOrgId() {
   return activeOrgId
+}
+
+export function getActiveSpaceId() {
+  return activeSpaceId
 }
 
 export function getBootHint() {
@@ -194,6 +208,7 @@ const COLLECTIONS = [
   'xx_feedback',
   'xx_orgs',
   'xx_org_members',
+  'xx_spaces',
   // SPACES-LAYER START
   'xx_group_members',
   // SPACES-LAYER END
@@ -244,11 +259,21 @@ function saveLocal(data) {
   } catch (err) { console.warn('org localStorage save failed:', err.message) }
 }
 
+const SPACE_STAMP = new Set(['xx_notes', 'xx_ideas', 'xx_projects', 'xx_events'])
+
 function applyOrgStamp(col, value) {
-  if (!value || typeof value !== 'object' || !ORG_SCOPED.has(col)) return value
-  if (value.orgId) return value
-  if (!activeOrgId) return value
-  return { ...value, orgId: activeOrgId }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  if (col === 'xx_spaces') {
+    const organizationId = value.organizationId || value.orgId || activeOrgId || ''
+    if (!organizationId) return value
+    return { ...value, organizationId, orgId: value.orgId || organizationId }
+  }
+  if (!ORG_SCOPED.has(col)) return value
+  const orgId = value.orgId || value.organizationId || activeOrgId || ''
+  if (!orgId) return value
+  const next = { ...value, orgId, organizationId: value.organizationId || orgId }
+  if (SPACE_STAMP.has(col) && !next.spaceId) next.spaceId = activeSpaceId || generalSpaceId(orgId)
+  return next
 }
 
 let memory = loadLocal()
@@ -280,10 +305,72 @@ function snapshotState() {
     clone.xx_sessions[id] = rest
   }
   clone.xx_reset_tokens = {}
+  const actor = listenerUserId ? memory.xx_users?.[listenerUserId] : null
+  if (actor?.id) {
+    const memberships = Object.values(memory.xx_org_members || {}).filter(
+      (member) => member?.userId === actor.id && member.status !== 'pending' && member.status !== 'revoked',
+    )
+    const filtered = filterReadableSnapshot(clone, {
+      user: actor,
+      activeOrgId,
+      isAdmin: listenerIsAdmin,
+      memberOrgIds: memberships.map((member) => member.orgId).filter(Boolean),
+      orgRole: memberships.find((member) => member.orgId === activeOrgId)?.role || '',
+      groups: clone.xx_groups || {},
+      spaces: clone.xx_spaces || {},
+      groupMembers: Object.values(clone.xx_group_members || {}),
+    })
+    Object.assign(clone, filtered)
+  }
   clone.activeOrgId = activeOrgId
+  clone.activeSpaceId = activeSpaceId
   clone.syncStatus = computeSyncStatus()
   clone.orgPeek = orgPeek
   return clone
+}
+
+function filterReadableSnapshot(db, ctx) {
+  const next = {}
+  const cols = ['xx_notes', 'xx_ideas', 'xx_projects', 'xx_events', 'xx_messages']
+  for (const col of cols) {
+    const map = {}
+    for (const [id, row] of Object.entries(db?.[col] || {})) {
+      if (snapshotRowVisible(row, col, ctx)) map[id] = row
+    }
+    next[col] = map
+  }
+  return next
+}
+
+function snapshotRowVisible(row, col, ctx) {
+  const user = ctx.user
+  if (!user?.id || !row) return false
+  if (col === 'xx_messages') {
+    const group = ctx.groups?.[row.groupId]
+    if (!group) return false
+    const orgId = group.organizationId || group.orgId || ''
+    if (orgId && ctx.activeOrgId && orgId !== ctx.activeOrgId) return false
+    if (orgId && !ctx.activeOrgId) return false
+    if (!ctx.isAdmin && orgId && !ctx.memberOrgIds.includes(orgId)) return false
+    const role = ctx.orgRole || (ctx.isAdmin ? 'owner' : '')
+    return canReadScopedContent(
+      user,
+      { ...row, orgId, groupId: group.id },
+      ctx.groups,
+      role,
+      ctx.spaces,
+      ctx.groupMembers,
+    )
+  }
+  const orgId = row.organizationId || row.orgId || ''
+  if (!orgId) {
+    return row.ownerId === user.id || row.userId === user.id || row.authorId === user.id || row.createdBy === user.id
+  }
+  if (ctx.activeOrgId && orgId !== ctx.activeOrgId) return false
+  if (!ctx.activeOrgId) return false
+  if (!ctx.isAdmin && !ctx.memberOrgIds.includes(orgId)) return false
+  const role = ctx.orgRole || (ctx.isAdmin ? 'owner' : '')
+  return canReadScopedContent(user, row, ctx.groups, role, ctx.spaces, ctx.groupMembers)
 }
 
 export function subscribeStore(fn) {
@@ -1031,30 +1118,51 @@ function restoreNamespacedOrg(orgId) {
 }
 // SPACES-LAYER END
 
+function alignSpaceToOrg(orgId) {
+  if (!orgId) {
+    if (!activeSpaceId) return false
+    activeSpaceId = ''
+    try { localStorage.removeItem(ACTIVE_SPACE_KEY) } catch { /* ignore */ }
+    return true
+  }
+  const current = memory.xx_spaces?.[activeSpaceId]
+  const currentOrg = current?.organizationId || current?.orgId || ''
+  if (current && currentOrg === orgId) return false
+  const general =
+    Object.values(memory.xx_spaces || {}).find(
+      (space) => space?.kind === 'general' && (space.organizationId || space.orgId) === orgId,
+    ) || null
+  const next = general?.id || generalSpaceId(orgId)
+  if (next === activeSpaceId) return false
+  activeSpaceId = next
+  try { localStorage.setItem(ACTIVE_SPACE_KEY, activeSpaceId) } catch { /* ignore */ }
+  return true
+}
+
 function setActiveOrgId(id) {
   const next = id || ''
-  if (next === activeOrgId) {
-    // SPACES-LAYER START
-    try { writeActiveMirror(localStorage, next) } catch { /* ignore */ }
-    // SPACES-LAYER END
-    return
-  }
-  if (!listenerIsAdmin) {
-    for (const col of ORG_SCOPED) {
-      for (const [rowId, row] of Object.entries(memory[col] || {})) {
-        if (row?.orgId && row.orgId !== next) delete memory[col][rowId]
+  const same = next === activeOrgId
+  if (!same) {
+    if (!listenerIsAdmin && next) {
+      for (const col of ORG_SCOPED) {
+        for (const [rowId, row] of Object.entries(memory[col] || {})) {
+          if (row?.orgId && row.orgId !== next) delete memory[col][rowId]
+        }
       }
+      // SPACES-LAYER START
+      restoreNamespacedOrg(next)
+      // SPACES-LAYER END
     }
-    // SPACES-LAYER START
-    restoreNamespacedOrg(next)
-    // SPACES-LAYER END
+    activeOrgId = next
+    try {
+      writeActiveMirror(localStorage, next)
+    } catch { /* ignore */ }
+    if (firebaseConfigured && db) rebindOrgListeners()
+  } else {
+    try { writeActiveMirror(localStorage, next) } catch { /* ignore */ }
   }
-  activeOrgId = next
-  try {
-    writeActiveMirror(localStorage, next)
-  } catch { /* ignore */ }
-  if (firebaseConfigured && db) rebindOrgListeners()
-  notify()
+  const spaceChanged = alignSpaceToOrg(next)
+  if (!same || spaceChanged) notify()
 }
 
 function setPeek(next) {
@@ -1882,6 +1990,8 @@ export async function ensureGeneralGroup(user) {
       ownerId: user.id,
       isGeneral: true,
       orgId: activeOrgId,
+      organizationId: activeOrgId,
+      spaceId: generalSpaceId(activeOrgId),
       createdAt: now,
       updatedAt: now,
       // SPACES-LAYER START
@@ -1895,6 +2005,8 @@ export async function ensureGeneralGroup(user) {
   const updated = {
     ...existing,
     orgId: activeOrgId,
+    organizationId: existing.organizationId || activeOrgId,
+    spaceId: existing.spaceId || generalSpaceId(activeOrgId),
     memberIds,
     isGeneral: true,
     name: existing.name || 'Général',
@@ -1910,7 +2022,12 @@ export async function ensureGeneralGroup(user) {
 
 export function listGroupsForUser(user) {
   return Object.values(memory.xx_groups || {})
-    .filter((g) => g.orgId === activeOrgId && canSeeGroupContent(memory, user, g))
+    .filter((g) => {
+      const org = g.organizationId || g.orgId
+      if (!activeOrgId || org !== activeOrgId) return false
+      if (privateTeamContentHidden(user, g, Object.values(memory.xx_group_members || {}))) return false
+      return canSeeGroupContent(memory, user, g)
+    })
     .sort((a, b) => {
       if (a.isGeneral && !b.isGeneral) return -1
       if (!a.isGeneral && b.isGeneral) return 1
@@ -1920,6 +2037,10 @@ export function listGroupsForUser(user) {
 
 export function listMessagesForGroup(groupId, user) {
   const group = memory.xx_groups[groupId]
+  if (!group) return []
+  const org = group.organizationId || group.orgId
+  if (activeOrgId && org && org !== activeOrgId) return []
+  if (privateTeamContentHidden(user, group, Object.values(memory.xx_group_members || {}))) return []
   if (!canSeeGroupContent(memory, user, group)) return []
   return Object.values(memory.xx_messages || {})
     .filter((m) => m.groupId === groupId)
@@ -2044,7 +2165,8 @@ async function upsert(col, data, user) {
   } else if (!canEditEntity(user, existing)) {
     throw new Error('Permission refusée.')
   }
-  if (ORG_SCOPED.has(col) && !existing?.orgId && !data.orgId && !activeOrgId) {
+  const personalCols = new Set(['xx_notes', 'xx_ideas', 'xx_todos', 'xx_todo_lists', 'xx_events'])
+  if (ORG_SCOPED.has(col) && !existing?.orgId && !data.orgId && !data.organizationId && !activeOrgId && !personalCols.has(col)) {
     throw new Error('Choisissez ou créez une organisation avant d’enregistrer.')
   }
   const merged = {
@@ -2293,6 +2415,8 @@ async function ensureProjectConversation(project, user) {
     kind: 'project',
     isGeneral: false,
     orgId: project.orgId || activeOrgId,
+    organizationId: project.organizationId || project.orgId || activeOrgId,
+    spaceId: project.spaceId || existing?.spaceId || activeSpaceId || generalSpaceId(project.orgId || activeOrgId),
     createdAt: existing?.createdAt || now,
     updatedAt: now,
   }
@@ -3787,6 +3911,25 @@ async function fetchOrgCol(col, orgId) {
   return list
 }
 
+let migratingHierarchy = false
+
+async function migrateHierarchy() {
+  if (migratingHierarchy) return
+  migratingHierarchy = true
+  try {
+    let lang = 'fr'
+    try { lang = localStorage.getItem('nazix_lang') || 'fr' } catch { /* ignore */ }
+    const { patches } = planMigration(memory, lang)
+    for (const patch of patches) {
+      if (!patch?.id) continue
+      await persistDoc(patch.col, patch.id, patch.value)
+    }
+    if (alignSpaceToOrg(activeOrgId)) notify()
+  } finally {
+    migratingHierarchy = false
+  }
+}
+
 const orgApi = createOrgLayer({
   getMemory: () => memory,
   persistDoc,
@@ -3824,7 +3967,11 @@ export function listOrganizations() {
 export function listMembersOfOrg(orgId) {
   return Object.values(memory.xx_org_members || {}).filter((m) => m.orgId === orgId)
 }
-export const createOrganization = (...args) => orgApi.createOrganization(...args)
+export async function createOrganization(name, user) {
+  const org = await orgApi.createOrganization(name, user)
+  await migrateHierarchy()
+  return memory.xx_orgs?.[org?.id] || org
+}
 // SPACES-LAYER START
 export const spaces = createSpacesEngine({
   getDb: () => memory,
@@ -3841,8 +3988,104 @@ export async function resolveOrganizations(user) {
   try { await spaces.claimInvites(user) } catch (err) { console.warn('spaces invites:', err?.message || err) }
   // SPACES-LAYER END
   const result = await orgApi.resolveOrganizations(user)
+  await migrateHierarchy()
   bindRealtimeForUser(user)
   return result
+}
+
+export function selectSpace(spaceId, user) {
+  if (!user?.id) throw new Error('Session requise.')
+  const space = memory.xx_spaces?.[spaceId]
+  if (!space) throw new Error('Espace introuvable.')
+  const orgId = space.organizationId || space.orgId
+  if (orgId && orgId !== activeOrgId) selectOrganization(orgId, user)
+  const role = orgApi.memberOf(user, orgId)?.role || (isAdmin(user) ? 'owner' : '')
+  if (!canAccessSpace(user, space, memory.xx_groups, role)) throw new Error('Permission refusée.')
+  activeSpaceId = space.id
+  try { localStorage.setItem(ACTIVE_SPACE_KEY, activeSpaceId) } catch { /* ignore */ }
+  notify()
+  return activeSpaceId
+}
+
+export async function createExtraSpace(user, input = {}) {
+  if (!user?.id) throw new Error('Session requise.')
+  if (!activeOrgId) throw new Error('Choisissez une organisation.')
+  const role = orgApi.memberOf(user, activeOrgId)?.role || ''
+  if (!role || role === 'guest') throw new Error('Permission refusée.')
+  const name = String(input.name || '').trim()
+  if (name.length < 2) throw new Error('Nom trop court.')
+  const visibility = ['organization', 'members', 'teams', 'private'].includes(input.visibility) ? input.visibility : 'organization'
+  const id = uid('spc')
+  const now = new Date().toISOString()
+  const space = {
+    id,
+    organizationId: activeOrgId,
+    orgId: activeOrgId,
+    name,
+    description: String(input.description || '').trim().slice(0, 500),
+    leadUserId: input.leadUserId || user.id,
+    visibility,
+    kind: 'extra',
+    memberIds: Array.isArray(input.memberIds) ? input.memberIds.filter(Boolean) : [],
+    teamIds: Array.isArray(input.teamIds) ? input.teamIds.filter(Boolean) : [],
+    createdAt: now,
+    createdBy: user.id,
+  }
+  await persistDoc('xx_spaces', id, space)
+  return memory.xx_spaces[id]
+}
+
+export async function createTeam(user, input = {}) {
+  if (!user?.id) throw new Error('Session requise.')
+  if (!activeOrgId) throw new Error('Choisissez une organisation.')
+  const role = orgApi.memberOf(user, activeOrgId)?.role || ''
+  if (!role || role === 'guest') throw new Error('Permission refusée.')
+  const name = String(input.name || '').trim()
+  if (name.length < 2) throw new Error('Nom trop court.')
+  let spaceId = String(input.spaceId || '').trim()
+  if (spaceId) {
+    const space = memory.xx_spaces?.[spaceId]
+    const org = space?.organizationId || space?.orgId
+    if (!space || org !== activeOrgId) throw new Error('Espace introuvable.')
+  } else {
+    spaceId = ''
+  }
+  const id = uid('grp')
+  const now = new Date().toISOString()
+  const leadUserId = input.leadUserId || user.id
+  const memberIds = [...new Set([user.id, leadUserId, ...(input.memberIds || []).filter(Boolean)])]
+  const group = {
+    id,
+    name,
+    memberIds,
+    ownerId: user.id,
+    leadUserId,
+    isGeneral: false,
+    orgId: activeOrgId,
+    organizationId: activeOrgId,
+    spaceId: spaceId || null,
+    type: 'private',
+    visibility: 'private',
+    sealed: true,
+    status: 'active',
+    kind: 'team',
+    createdAt: now,
+    updatedAt: now,
+  }
+  await persistDoc('xx_groups', id, group)
+  for (const memberId of memberIds) {
+    const mid = `${id}_${memberId}`
+    await persistDoc('xx_group_members', mid, {
+      id: mid,
+      groupId: id,
+      userId: memberId,
+      orgId: activeOrgId,
+      organizationId: activeOrgId,
+      role: memberId === leadUserId ? 'lead' : 'member',
+      status: 'active',
+    })
+  }
+  return memory.xx_groups[id]
 }
 export const placeUserInOrg = (...args) => orgApi.placeUserInOrg(...args)
 export const removeOrgMember = (...args) => orgApi.removeOrgMember(...args)

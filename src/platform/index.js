@@ -41,6 +41,14 @@ export {
   filterByWorkspace,
   isGroupVisible,
   filterVisibleGroups,
+  generalSpaceId,
+  teamIsPrivate,
+  isTeamMember,
+  privateTeamContentHidden,
+  passesOrganizationIsolation,
+  canAccessSpace,
+  canReadScopedContent,
+  rowInActiveSpace,
 } from './permissions.js'
 
 export {

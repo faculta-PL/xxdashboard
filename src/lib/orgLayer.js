@@ -26,6 +26,7 @@ export const ORG_SCOPED_COLLECTIONS = [
   'xx_feedback',
   'xx_group_members',
   'xx_audit',
+  'xx_spaces',
 ]
 
 export const ORG_ROLES = ['owner', 'admin', 'member', 'guest']
@@ -149,7 +150,7 @@ export function createOrgLayer(ctx) {
     await ctx.persistDoc('xx_orgs', id, {
       id,
       name: label,
-      slug: uniqueSlug(rows(mem(), 'xx_orgs'), slugify(label), id),
+      slug: uniqueSlug(rows(mem(), 'xx_orgs'), slugify(input.slug || label), id),
       description: String(input.description || '').trim(),
       ownerId: user.id,
       status: 'active',

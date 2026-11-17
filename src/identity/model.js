@@ -18,6 +18,9 @@ export const INVITE_FIELDS = [
   'uses',
   'status',
   'createdAt',
+  'organizationId',
+  'spaceId',
+  'teamId',
 ]
 export const INVITE_FILTERS = ['pending', 'accepted', 'declined', 'expired', 'revoked']
 export const INVITE_ROLES = ['member', 'admin', 'owner', 'guest']
@@ -121,6 +124,9 @@ export function toInviteRecord(input) {
     uses: Number(input?.uses || 0),
     status: String(input?.status || 'pending'),
     createdAt: String(input?.createdAt || ''),
+    organizationId: String(input?.organizationId || input?.workspaceId || ''),
+    spaceId: input?.spaceId ? String(input.spaceId) : null,
+    teamId: input?.teamId ? String(input.teamId) : input?.groupId ? String(input.groupId) : null,
   }
   return row
 }

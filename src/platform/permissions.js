@@ -389,6 +389,104 @@ export function guestCanReadItem(user, item) {
   return false
 }
 
+/** Stable id of the single automatic general space for an organization. */
+export function generalSpaceId(orgId) {
+  return orgId ? `spc_${orgId}_general` : ''
+}
+
+/**
+ * A team is private unless it is the general channel or an internal/project room.
+ * Private team content is hidden from anyone who is not a member.
+ */
+export function teamIsPrivate(team) {
+  if (!team || team.isGeneral) return false
+  if (team.kind === 'project' || team.type === 'project' || team.type === 'internal') return false
+  if (team.visibility === 'organization' || team.visibility === 'org' || team.visibility === 'internal') return false
+  return true
+}
+
+export function isTeamMember(userId, team, groupMembers) {
+  if (!userId || !team) return false
+  if (team.leadUserId === userId || team.ownerId === userId) return true
+  if (Array.isArray(team.memberIds) && team.memberIds.includes(userId)) return true
+  return (groupMembers || []).some(
+    (member) =>
+      member?.groupId === team.id &&
+      member?.userId === userId &&
+      member.status !== 'revoked' &&
+      member.status !== 'pending',
+  )
+}
+
+/** True when this private team's content must stay hidden from the actor. */
+export function privateTeamContentHidden(user, team, groupMembers) {
+  if (!teamIsPrivate(team)) return false
+  return !isTeamMember(user?.id, team, groupMembers)
+}
+
+/** Org A never includes a row that belongs to org B. Personal rows have no org. */
+export function passesOrganizationIsolation(orgIds, row) {
+  const orgId = row?.organizationId || row?.orgId || ''
+  if (!orgId) return true
+  return (orgIds || []).includes(orgId)
+}
+
+export function guestExplicitShare(user, row) {
+  if (!user?.id || !row) return false
+  if (row.ownerId === user.id || row.authorId === user.id || row.createdBy === user.id) return true
+  if (Array.isArray(row.shareUserIds) && row.shareUserIds.includes(user.id)) return true
+  if (Array.isArray(row.shares) && row.shares.some((share) => share?.userId === user.id || share === user.id)) return true
+  return false
+}
+
+/**
+ * Extra spaces follow their visibility. The general space is open to the organization.
+ * Guests are rejected here; they only pass through an explicit share.
+ */
+export function canAccessSpace(user, space, groups, orgRole) {
+  if (!user?.id || !space) return false
+  if (!orgRole || orgRole === 'guest') return false
+  if (space.kind === 'general') return true
+  const visibility = space.visibility || 'organization'
+  if (visibility === 'organization' || visibility === 'org') return true
+  if (space.leadUserId === user.id) return true
+  if (Array.isArray(space.memberIds) && space.memberIds.includes(user.id)) return true
+  const teamIds = Array.isArray(space.teamIds) ? space.teamIds : []
+  if (teamIds.some((id) => groups?.[id] && isTeamMember(user.id, groups[id]))) return true
+  if ((orgRole === 'owner' || orgRole === 'admin') && visibility !== 'private') return true
+  return false
+}
+
+/**
+ * Store and UI read path. Organization isolation, space visibility, guests, and private teams.
+ */
+export function canReadScopedContent(user, row, groups, orgRole, spaces, groupMembers) {
+  if (!user?.id || !row) return false
+  const orgId = row.organizationId || row.orgId || ''
+  if (!orgId) {
+    return row.ownerId === user.id || row.userId === user.id || row.authorId === user.id || row.createdBy === user.id
+  }
+  if (!orgRole) return false
+  if (orgRole === 'guest') return guestExplicitShare(user, row)
+  if (row.spaceId && spaces?.[row.spaceId] && !canAccessSpace(user, spaces[row.spaceId], groups, orgRole)) return false
+  const teamId = row.teamId || row.groupId
+  if (teamId) {
+    const team = groups?.[teamId]
+    if (!team) return false
+    const teamOrg = team.organizationId || team.orgId || ''
+    if (teamOrg && teamOrg !== orgId) return false
+    if (privateTeamContentHidden(user, team, groupMembers)) return false
+  }
+  return true
+}
+
+/** Legacy rows without spaceId stay on the general space only. */
+export function rowInActiveSpace(row, activeSpaceId, orgId) {
+  if (!activeSpaceId) return true
+  if (!row?.spaceId) return activeSpaceId === generalSpaceId(orgId)
+  return row.spaceId === activeSpaceId
+}
+
 export function removeGroupMembershipOnly(state, groupId, userId) {
   const groupMembers = (state.groupMembers || []).filter(
     (member) => !(member.groupId === groupId && member.userId === userId),

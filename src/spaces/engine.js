@@ -61,6 +61,7 @@ const SCOPED = [
   'xx_risks',
   'xx_risk_actions',
   'xx_links',
+  'xx_spaces',
 ]
 
 function rows(db, col) {

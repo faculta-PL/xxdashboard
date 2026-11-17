@@ -63,13 +63,19 @@ import { FeedbackBoard } from './feedback'
 import { StableChatPane } from './chat'
 import MiniApp, { isMiniRequest } from './MiniApp'
 import { useAutosave, useFormDraft } from './lib/formDraft'
-import { InstallBanner, OrgAdmin, OrgHome, SyncBadge } from './org/OrgScreens'
-// SPACES-LAYER START
-import { PersonalHome } from './spaces/PersonalHome.jsx'
-import { SpacesScreen } from './spaces/SpacesScreen.jsx'
-import { WorkspaceSwitcher } from './spaces/WorkspaceSwitcher.jsx'
-import { canSeeGroupContent, canSeeItem } from './spaces/permissions.js'
-// SPACES-LAYER END
+import { InstallBanner, OrgAdmin, SyncBadge } from './org/OrgScreens'
+import {
+  CreateOrgModal,
+  MembersDesk,
+  NeedOrg,
+  NotesIdeasSwitch,
+  OrgOverview,
+  OrgSettings,
+  PersonalBanner,
+  SpacesDesk,
+  useOrgChoices,
+} from './org/HierarchyScreens.jsx'
+import { canReadScopedContent, rowInActiveSpace } from './platform/permissions.js'
 import CreateToolsView from './CreateToolsView'
 import VoiceModal from './VoiceModal'
 import { DocumentBody, NoteCardExcerpt, NoteLinkedFiles } from './NoteMedia'
@@ -92,7 +98,6 @@ import {
   EmailVerifyBanner,
   IdentityProfileCard,
   IdentitySignupFields,
-  InvitationDesk,
   InviteAcceptGate,
   identityT,
   validateSignupForm,
@@ -168,6 +173,7 @@ import {
   selectOrganization,
   listOrgMemberships,
   getActiveOrgId,
+  createOrganization,
 } from './lib/store'
 import { firebaseConfigured, missingFirebaseVars, getFirebaseStatus } from './lib/firebase'
 import {
@@ -537,6 +543,9 @@ export default function App() {
   const [session, setSession] = useState(null)
   const [user, setUser] = useState(null)
   const [view, setView] = useState('dashboard')
+  const [createOrgOpen, setCreateOrgOpen] = useState(false)
+  const [createOrgBusy, setCreateOrgBusy] = useState(false)
+  const [inviteOffer, setInviteOffer] = useState(false)
   const [mobileNav, setMobileNav] = useState(false)
   const [navCollapsed, setNavCollapsed] = useState(readNavCollapsed)
   const [toast, setToast] = useState(null)
@@ -659,10 +668,26 @@ export default function App() {
   }, [authMode])
 
   const orgId = db?.activeOrgId || ''
-  const inOrg = (row) => Boolean(orgId) && row?.orgId === orgId
-  // SPACES-LAYER START — guests and private-group rows stay out of the open workspace.
-  const inSpace = (row) => inOrg(row) && canSeeItem(db, user, row)
-  // SPACES-LAYER END
+  const orgChoices = useOrgChoices(db, user?.id)
+  const spaceId = db?.activeSpaceId || ''
+  const orgRoleName =
+    Object.values(db?.xx_org_members || {}).find(
+      (member) => member?.userId === user?.id && member?.orgId === orgId && member.status !== 'pending' && member.status !== 'revoked',
+    )?.role || ''
+  const inOrg = (row) => {
+    const rowOrg = row?.organizationId || row?.orgId || ''
+    if (!orgId) return !rowOrg && (row?.ownerId === user?.id || row?.userId === user?.id || row?.authorId === user?.id)
+    return rowOrg === orgId
+  }
+  const canReadRow = (row) => {
+    if (!user || !inOrg(row)) return false
+    if (!orgId) return true
+    const rowOrg = row?.organizationId || row?.orgId || orgId
+    const role = isAdmin(user) ? orgRoleName || 'owner' : orgRoleName
+    return canReadScopedContent(user, { ...row, orgId: rowOrg }, db?.xx_groups || {}, role, db?.xx_spaces || {})
+  }
+  const inWorkspace = (row) => canReadRow(row)
+  const inSpace = (row) => canReadRow(row) && rowInActiveSpace(row, spaceId, orgId)
   const allUsers = useMemo(() => (db ? listUsers() : []), [db])
   const users = useMemo(() => {
     if (!db || !user) return []
@@ -706,7 +731,7 @@ export default function App() {
     () =>
       db && user
         ? Object.values(db.xx_todo_lists || {})
-            .filter((list) => inSpace(list) && canReadEntity(user, list))
+            .filter((list) => inWorkspace(list) && canReadEntity(user, list))
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr'))
         : [],
     [db, user],
@@ -714,7 +739,7 @@ export default function App() {
   const todos = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_todos || {}).filter((task) => inSpace(task) && canReadEntity(user, task))
+        ? Object.values(db.xx_todos || {}).filter((task) => inWorkspace(task) && canReadEntity(user, task))
         : [],
     [db, user, orgId],
   )
@@ -725,14 +750,14 @@ export default function App() {
   const folders = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_folders || {}).filter((f) => inSpace(f) && canReadFileOrFolder(user, f, fileCtx))
+        ? Object.values(db.xx_folders || {}).filter((f) => inWorkspace(f) && canReadFileOrFolder(user, f, fileCtx))
         : [],
     [db, user, fileCtx, orgId],
   )
   const files = useMemo(
     () =>
       db && user
-        ? Object.values(db.xx_files || {}).filter((f) => inSpace(f) && canReadFileOrFolder(user, f, fileCtx))
+        ? Object.values(db.xx_files || {}).filter((f) => inWorkspace(f) && canReadFileOrFolder(user, f, fileCtx))
         : [],
     [db, user, fileCtx, orgId],
   )
@@ -744,7 +769,7 @@ export default function App() {
     () =>
       db && user
         ? Object.values(db.xx_budgets || {})
-            .filter((b) => inSpace(b) && canReadEntity(user, b))
+            .filter((b) => inWorkspace(b) && canReadEntity(user, b))
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr'))
         : [],
     [db, user],
@@ -761,7 +786,7 @@ export default function App() {
     () =>
       db && user
         ? Object.values(db.xx_risks || {})
-            .filter((r) => inSpace(r) && canReadEntity(user, r))
+            .filter((r) => inWorkspace(r) && canReadEntity(user, r))
             .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
         : [],
     [db, user],
@@ -797,7 +822,18 @@ export default function App() {
         ? Object.values(db.xx_messages || {})
             .filter((m) => {
               const group = db.xx_groups?.[m.groupId]
-              return Boolean(group) && group.orgId === orgId && canSeeGroupContent(db, user, group)
+              if (!group || !orgId) return false
+              const groupOrg = group.organizationId || group.orgId
+              if (groupOrg !== orgId) return false
+              if (group.spaceId && spaceId && group.spaceId !== spaceId) return false
+              if (!group.spaceId && spaceId && !String(spaceId).endsWith('_general')) return false
+              return canReadScopedContent(
+                user,
+                { ...m, orgId: groupOrg, groupId: group.id },
+                db.xx_groups || {},
+                isAdmin(user) ? orgRoleName || 'owner' : orgRoleName,
+                db.xx_spaces || {},
+              )
             })
             .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
         : [],
@@ -805,7 +841,7 @@ export default function App() {
   )
   const presentIds = useMemo(() => (db ? listPresentUserIds() : []), [db])
   const links = useMemo(
-    () => (db && user ? Object.values(db.xx_links || {}).filter((row) => inSpace(row)) : []),
+    () => (db && user ? Object.values(db.xx_links || {}).filter((row) => inWorkspace(row)) : []),
     [db, user, orgId],
   )
   const canvasLayout = useMemo(
@@ -1194,16 +1230,6 @@ export default function App() {
   const identityAccept = (
     <InviteAcceptGate user={user} onUserUpdated={refreshUser} flash={flash} />
   )
-  const identityDesk = (
-    <InvitationDesk
-      user={user}
-      orgId={orgId}
-      groups={groups}
-      directory={allUsers}
-      flash={flash}
-      onUserUpdated={refreshUser}
-    />
-  )
   // IDENTITY-LAYER END
 
   const openFullNazix = () => {
@@ -1244,20 +1270,7 @@ export default function App() {
     )
   }
 
-  if (!orgId) {
-    return (
-      <>
-        <div className="mx-auto max-w-xl px-4 pt-6">
-          {identityBanner}
-          {identityAccept}
-        </div>
-        <PersonalHome user={user} db={db} onLogout={handleLogout} />
-        {toast && <Toast toast={toast} />}
-      </>
-    )
-  }
-
-  if (isMiniRequest()) {
+  if (orgId && isMiniRequest()) {
     return (
       <>
         {/* IDENTITY-LAYER START */}
@@ -1320,7 +1333,7 @@ export default function App() {
       >
         <Sidebar
           user={user}
-          view={view}
+          view={view === 'ideas' || view === 'important' ? 'notes' : view}
           onView={(id) => {
             setView(id)
             setMobileNav(false)
@@ -1331,6 +1344,19 @@ export default function App() {
           chatUnread={chatUnread}
           collapsed={navCollapsed}
           onCollapsed={setNavCollapsed}
+          organizations={orgChoices}
+          activeOrgId={orgId}
+          onOrganization={(id) => {
+            try {
+              selectOrganization(id, user)
+              setView(id ? 'overview' : 'dashboard')
+            } catch (err) {
+              flash(err.message || t('orgs.error'), 'err')
+            }
+          }}
+          onCreateOrganization={() => setCreateOrgOpen(true)}
+          onManageOrganizations={() => setView(orgId ? 'orgsettings' : 'dashboard')}
+          onAdminOrganizations={isAdmin(user) ? () => setView('orgadmin') : null}
         />
       </div>
 
@@ -1361,15 +1387,15 @@ export default function App() {
                     return <Icon size={22} className="shrink-0 text-sage-700" aria-hidden="true" />
                   })()
                 : null}
-              <span className="truncate">{t(`nav.${view}`) || NAV_FLAT.find((n) => n.id === view)?.label}</span>
+              <span className="truncate">
+                {t(view === 'dashboard' ? 'nav.myDashboard' : view === 'notes' || view === 'ideas' || view === 'important' ? 'nav.notesIdeas' : `nav.${view}`) ||
+                  NAV_FLAT.find((n) => n.id === view)?.label}
+              </span>
             </h1>
             {t(`chrome.${view}`) && t(`chrome.${view}`) !== `chrome.${view}` ? (
               <p className="mt-0.5 truncate text-xs text-sage-600">{t(`chrome.${view}`)}</p>
             ) : null}
           </div>
-          {/* SPACES-LAYER START */}
-          <WorkspaceSwitcher db={db} user={user} activeOrgId={orgId} onSwitch={(id) => selectOrganization(id, user)} />
-          {/* SPACES-LAYER END */}
           <SyncBadge status={db?.syncStatus || 'local'} />
           <button
             type="button"
@@ -1405,7 +1431,6 @@ export default function App() {
           {/* IDENTITY-LAYER START */}
           {identityBanner}
           {identityAccept}
-          {view === 'invitations' ? identityDesk : null}
           {/* IDENTITY-LAYER END */}
           {view !== 'guide' && (
             <ModuleIntro
@@ -1449,7 +1474,14 @@ export default function App() {
             <FeedbackBoard user={user} users={users} flash={flash} />
             // FEEDBACK-LAYER END
           )}
-          {view === 'important' && (
+          {!orgId &&
+          ['overview', 'spaces', 'teams', 'members', 'orgsettings', 'projects', 'notes', 'ideas', 'important', 'chat', 'calendar', 'files', 'todos', 'budget', 'risks', 'canvas', 'team', 'org', 'invitations'].includes(view) ? (
+            <NeedOrg onCreate={() => setCreateOrgOpen(true)} />
+          ) : null}
+          {orgId && (view === 'notes' || view === 'ideas' || view === 'important') ? (
+            <NotesIdeasSwitch view={view} onView={setView} />
+          ) : null}
+          {view === 'important' && orgId && (
             <NotesView
               onlyImportant
               user={user}
@@ -1471,10 +1503,57 @@ export default function App() {
               onDictate={() => setVoiceOpen(true)}
             />
           )}
-          {view === 'org' && <OrgHome user={user} activeOrgId={orgId} flash={flash} />}
-          {view === 'spaces' && <SpacesScreen user={user} db={db} orgId={orgId} users={users} flash={flash} />}
+          {(view === 'org' || view === 'overview') && orgId && (
+            <OrgOverview
+              user={user}
+              db={db}
+              orgId={orgId}
+              inviteOffer={inviteOffer}
+              onDismissInvite={() => setInviteOffer(false)}
+              onInvite={() => {
+                setInviteOffer(false)
+                setView('members')
+              }}
+              onOpenSpaces={() => setView('spaces')}
+            />
+          )}
+          {view === 'spaces' && orgId && (
+            <SpacesDesk user={user} db={db} orgId={orgId} users={users} flash={flash} onOpen={() => setView('projects')} />
+          )}
+          {(view === 'members' || view === 'teams' || view === 'team' || view === 'invitations') && orgId && (
+            <MembersDesk
+              user={user}
+              db={db}
+              orgId={orgId}
+              users={users}
+              allUsers={allUsers}
+              flash={flash}
+              groups={Object.values(db?.xx_groups || {}).filter((group) => (group.organizationId || group.orgId) === orgId)}
+              initialTab={view === 'teams' || view === 'team' ? 'teams' : view === 'invitations' ? 'invitations' : 'members'}
+              onUserUpdated={refreshUser}
+            />
+          )}
+          {view === 'orgsettings' && orgId && (
+            <OrgSettings
+              user={user}
+              db={db}
+              orgId={orgId}
+              flash={flash}
+              onDeleted={() => {
+                selectOrganization('', user)
+                setView('dashboard')
+              }}
+            />
+          )}
           {view === 'orgadmin' && isAdmin(user) && <OrgAdmin user={user} flash={flash} peek={db?.orgPeek} activeOrgId={orgId} />}
           {view === 'dashboard' && (
+            <>
+            <PersonalBanner
+              hasOrg={Boolean(orgId)}
+              orgName={db?.xx_orgs?.[orgId]?.name || ''}
+              onCreate={() => setCreateOrgOpen(true)}
+              onOverview={() => setView('overview')}
+            />
             <DashboardView
               user={user}
               notes={notes}
@@ -1495,8 +1574,9 @@ export default function App() {
               onImport={() => openImport({ destination: 'notes' })}
               onDictate={() => setVoiceOpen(true)}
             />
+            </>
           )}
-          {view === 'canvas' && (
+          {view === 'canvas' && orgId && (
             <CanvasView
               user={user}
               users={users}
@@ -1516,7 +1596,7 @@ export default function App() {
               onOpenModule={(v) => setView(v)}
             />
           )}
-          {view === 'notes' && (
+          {view === 'notes' && orgId && (
             <NotesView
               user={user}
               notes={notes}
@@ -1537,10 +1617,10 @@ export default function App() {
               onDictate={() => setVoiceOpen(true)}
             />
           )}
-          {view === 'ideas' && (
+          {view === 'ideas' && orgId && (
             <IdeasView user={user} ideas={ideas} users={users} flash={flash} />
           )}
-          {view === 'projects' && (
+          {view === 'projects' && orgId && (
             <ProjectsView
               user={user}
               projects={projects}
@@ -1558,7 +1638,7 @@ export default function App() {
               onFocusProject={setCurrentProjectId}
             />
           )}
-          {view === 'budget' && (
+          {view === 'budget' && orgId && (
             <BudgetView
               user={user}
               budgets={budgets}
@@ -1571,7 +1651,7 @@ export default function App() {
               onFocusBudget={setCurrentBudgetId}
             />
           )}
-          {view === 'risks' && (
+          {view === 'risks' && orgId && (
             <RisksView
               user={user}
               risks={risks}
@@ -1583,7 +1663,7 @@ export default function App() {
               onImport={() => openImport({ destination: 'risks' })}
             />
           )}
-          {view === 'files' && (
+          {view === 'files' && orgId && (
             <FilesView
               user={user}
               files={files}
@@ -1597,7 +1677,7 @@ export default function App() {
               }
             />
           )}
-          {view === 'calendar' && (
+          {view === 'calendar' && orgId && (
             <CalendarView
               user={user}
               events={events}
@@ -1608,7 +1688,7 @@ export default function App() {
               flash={flash}
             />
           )}
-          {view === 'todos' && (
+          {view === 'todos' && orgId && (
             <TodosView
               user={user}
               users={users}
@@ -1621,8 +1701,7 @@ export default function App() {
               onDeleteTask={(id) => deleteTodo(id, user)}
             />
           )}
-          {view === 'team' && <TeamView users={users} presentIds={presentIds} />}
-          {view === 'chat' && (
+          {view === 'chat' && orgId && (
             <ChatView
               user={user}
               groups={groups}
@@ -1698,6 +1777,25 @@ export default function App() {
         budgets={budgets}
         busy={voiceBusy}
         onConfirm={handleVoiceConfirm}
+      />
+      <CreateOrgModal
+        open={createOrgOpen}
+        busy={createOrgBusy}
+        onClose={() => setCreateOrgOpen(false)}
+        onSubmit={async (input) => {
+          setCreateOrgBusy(true)
+          try {
+            await createOrganization(input, user)
+            setCreateOrgOpen(false)
+            setInviteOffer(true)
+            setView('overview')
+            flash(t('hier.created'))
+          } catch (err) {
+            flash(err.message || t('orgs.error'), 'err')
+          } finally {
+            setCreateOrgBusy(false)
+          }
+        }}
       />
       {toast && <Toast toast={toast} />}
       <InstallBanner />
