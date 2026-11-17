@@ -59,8 +59,9 @@ const ctx = buildContextPayload({
 })
 
 assert(ctx.notes.length === 2, 'selected notes in context')
-assert(contextLabel(ctx).includes('Notes (2)'), contextLabel(ctx))
-assert(contextLabel(ctx).includes('Projet Alpha'), contextLabel(ctx))
+assert(contextLabel(ctx) === 'Notes 2 · Projets 1 · Risques 1', contextLabel(ctx))
+assert(!contextLabel(ctx).includes('Alpha'), contextLabel(ctx))
+assert(!/«|Contexte\s*:/i.test(contextLabel(ctx)), contextLabel(ctx))
 
 const math = budgetMath(budgets[0], lines)
 assert(math.paid === 2500, 'paid')
@@ -165,6 +166,22 @@ assert(wantsWebSearch('cherche en ligne React', false) === true, 'web intent')
 assert(wantsWebSearch('résume', false) === false, 'no web')
 assert(wantsWebSearch('résume', true) === true, 'toggle web')
 assert(wantsWebSearch('Regarde sur internet', false) === true, 'regarde sur internet')
+assert(wantsWebSearch('Tour Eiffel', false) === true, 'encyclopedic search')
+assert(wantsWebSearch('salut', false) === false, 'greeting skips search')
+assert(wantsWebSearch('risques en retard', false) === false, 'workspace skips search')
+
+const hello = localAnswer('salut', ctx)
+assert(/salut/i.test(hello.text), hello.text)
+assert(hello.text.includes('Réponse courte'), hello.text)
+assert(!hello.text.includes('Compte-rendu'), hello.text)
+assert(!hello.text.includes('Nazix :'), hello.text)
+assert(!hello.sources?.length, 'greeting has no note list')
+
+const dictation = localAnswer('salut', {
+  ...ctx,
+  notes: [...ctx.notes, { id: 'n9', title: "okay let's see oh it started writing already okay please Ultra sync my note" }],
+})
+assert(!/okay let's see|ultra sync/i.test(dictation.text), dictation.text)
 assert(webQueryFrom("C'est quoi la tour eiffel ?") === 'tour eiffel', 'encyclopedic query')
 assert(
   webQueryFrom('Regarde sur internet', [{ role: 'user', content: "C'est quoi la tour eiffel ?" }]) === 'tour eiffel',

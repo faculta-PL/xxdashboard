@@ -14,10 +14,33 @@ import { sanitizeSearchResults, stripClientSecrets } from '../billing/searchPoli
 import {
   answerFromSources,
   ensureSourceReply,
+  isEncyclopedicQuery,
   resolveWebQuery,
   searchFailureMessage,
   userAskedForWeb,
 } from '../../server/web-query.mjs'
+import {
+  contextCountsLabel,
+  effectiveUserQuestion,
+  isAmbiguousQuestion,
+  isDictationGarbage,
+  isGreeting,
+  isModeSwitch,
+  isWorkspaceQuestion,
+  researchModeOf,
+  shapeResearchText,
+} from '../../server/research-chat.mjs'
+
+export {
+  effectiveUserQuestion,
+  isAmbiguousQuestion,
+  isDictationGarbage,
+  isGreeting,
+  isModeSwitch,
+  isWorkspaceQuestion,
+  researchModeOf,
+  shapeResearchText,
+}
 
 export {
   displayAiContent,
@@ -330,6 +353,7 @@ export function buildContextPayload({
   const recentNotes = [...notes]
     .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
     .slice(0, 8)
+  const readable = (item) => !isDictationGarbage(item?.title || item?.name || '')
   const sectionNotes =
     section === 'notes' ? (selected.length ? selected : recentNotes) : selected.length ? selected : recentNotes.slice(0, 3)
 
@@ -355,17 +379,18 @@ export function buildContextPayload({
   const payload = {
     section,
     generatedAt: new Date().toISOString(),
-    notes: sectionNotes.map(slimNote),
-    ideas: (section === 'ideas' ? ideas : ideas.slice(0, 8)).map(slimIdea),
-    projects: (currentProject ? [currentProject] : projects.slice(0, 8)).map(slimProject),
-    events: (section === 'calendar' ? events.slice(0, 10) : upcoming).map(slimEvent),
-    files: files.slice(0, 12).map(slimFile),
+    notes: sectionNotes.filter(readable).map(slimNote),
+    ideas: (section === 'ideas' ? ideas : ideas.slice(0, 8)).filter(readable).map(slimIdea),
+    projects: (currentProject ? [currentProject] : projects.slice(0, 8)).filter(readable).map(slimProject),
+    events: (section === 'calendar' ? events.slice(0, 10) : upcoming).filter(readable).map(slimEvent),
+    files: files.slice(0, 12).filter(readable).map(slimFile),
     budgets: (focusBudget ? [focusBudget, ...budgets.filter((b) => b.id !== focusBudget.id)] : budgets)
       .slice(0, 6)
+      .filter(readable)
       .map((b) => slimBudget(b, budgetLines)),
-    risks: (section === 'risks' ? risks : openRisks).slice(0, 10).map(slimRisk),
-    currentProject: currentProject ? slimProject(currentProject) : null,
-    currentBudget: focusBudget ? slimBudget(focusBudget, budgetLines) : null,
+    risks: (section === 'risks' ? risks : openRisks).slice(0, 10).filter(readable).map(slimRisk),
+    currentProject: currentProject && readable(currentProject) ? slimProject(currentProject) : null,
+    currentBudget: focusBudget && readable(focusBudget) ? slimBudget(focusBudget, budgetLines) : null,
     counts: {
       notes: notes.length,
       ideas: ideas.length,
@@ -381,29 +406,9 @@ export function buildContextPayload({
   return payload
 }
 
-/** Ex. « Contexte : Notes (3) · Projet X » */
-export function contextLabel(ctx) {
-  if (!ctx) return 'Contexte : —'
-  const bits = []
-  if (ctx.notes?.length) bits.push(`Notes (${ctx.notes.length})`)
-  if (ctx.currentProject?.title) bits.push(`Projet ${ctx.currentProject.title}`)
-  else if (ctx.projects?.length === 1) bits.push(`Projet ${ctx.projects[0].title}`)
-  else if (ctx.projects?.length) bits.push(`Projets (${ctx.projects.length})`)
-  if (ctx.currentBudget?.name) bits.push(`Budget ${ctx.currentBudget.name}`)
-  else if (ctx.budgets?.length) bits.push(`Budgets (${ctx.budgets.length})`)
-  if (ctx.risks?.length) bits.push(`Risques (${ctx.risks.length})`)
-  if (ctx.files?.length && ctx.section === 'files') bits.push(`Fichiers (${ctx.files.length})`)
-  if (ctx.events?.length && (ctx.section === 'calendar' || ctx.section === 'dashboard')) {
-    bits.push(`Événements (${ctx.events.length})`)
-  }
-  if (ctx.ideas?.length && ctx.section === 'ideas') bits.push(`Idées (${ctx.ideas.length})`)
-  return bits.length ? `Contexte : ${bits.join(' · ')}` : 'Contexte : (vide)'
-}
-
-function cite(items) {
-  const titles = [...new Set(items.map((i) => i.title).filter(Boolean))]
-  if (!titles.length) return ''
-  return `\n\nSources Nazix : ${titles.map((t) => `« ${t} »`).join(', ')}.`
+/** Counts only. Titles and dictation stay out of the strip. */
+export function contextLabel(ctx, lang = 'fr') {
+  return contextCountsLabel(ctx, lang)
 }
 
 function retrieve(query, ctx, limit = 6) {
@@ -428,76 +433,92 @@ function retrieve(query, ctx, limit = 6) {
   return pool.slice(0, limit)
 }
 
-function sectionBudget(ctx) {
-  const rows = ctx.budgets || []
-  if (!rows.length) return { text: 'Aucun budget lisible dans le contexte.', items: [] }
+function sectionBudget(ctx, lang = 'fr') {
+  const rows = (ctx.budgets || []).filter((b) => !isDictationGarbage(b.name || b.title))
+  const en = lang === 'en'
+  if (!rows.length) {
+    return {
+      text: en ? 'No readable budget in the workspace.' : 'Aucun budget lisible dans le contexte.',
+      items: [],
+    }
+  }
   const lines = rows.map((b) => {
     const cur = b.currency || 'EUR'
-    return `« ${b.name} » — prévu ${money(b.plannedTotal, cur)}, payé ${money(b.paid, cur)}, restant ${money(b.remaining, cur)} (${b.pct} % consommé).`
+    const name = b.name || b.title || (en ? 'Budget' : 'Budget')
+    return en
+      ? `${name}: planned ${money(b.plannedTotal, cur)}, paid ${money(b.paid, cur)}, remaining ${money(b.remaining, cur)} (${b.pct}% used).`
+      : `${name} : prévu ${money(b.plannedTotal, cur)}, payé ${money(b.paid, cur)}, restant ${money(b.remaining, cur)} (${b.pct} % consommé).`
   })
+  return { text: lines.join(' '), items: rows.map((b) => ({ ...b, title: b.name || b.title })) }
+}
+
+function sectionRisks(ctx, lang = 'fr') {
+  const overdue = (ctx.risks || []).filter((r) => r.overdue && !isDictationGarbage(r.title))
+  const open = (ctx.risks || []).filter((r) => r.open && !isDictationGarbage(r.title))
+  const en = lang === 'en'
+  if (!open.length) {
+    return { text: en ? 'No open risk in the workspace.' : 'Aucun risque ouvert dans le contexte.', items: [] }
+  }
+  const rows = overdue.length ? overdue : open
+  const lines = rows.map((r) => {
+    const due = r.dueDate ? (en ? `, due ${fmtDay(r.dueDate)}` : `, échéance ${fmtDay(r.dueDate)}`) : ''
+    const late = r.overdue ? (en ? ', overdue' : ', en retard') : ''
+    return en
+      ? `${r.title}${due}${late}, priority ${r.priority || '—'}.`
+      : `${r.title}${due}${late}, priorité ${r.priority || '—'}.`
+  })
+  const head = overdue.length
+    ? en
+      ? `${overdue.length} overdue risk${overdue.length > 1 ? 's' : ''}.`
+      : `${overdue.length} risque${overdue.length > 1 ? 's' : ''} en retard.`
+    : en
+      ? `${open.length} open risk${open.length > 1 ? 's' : ''}.`
+      : `${open.length} risque${open.length > 1 ? 's' : ''} ouvert${open.length > 1 ? 's' : ''}.`
+  return { text: `${head} ${lines.join(' ')}`, items: rows }
+}
+
+function sectionEvents(ctx, lang = 'fr') {
+  const upcoming = (ctx.events || []).filter((e) => !isDictationGarbage(e.title))
+  const en = lang === 'en'
+  if (!upcoming.length) {
+    return { text: en ? 'No upcoming event in the workspace.' : 'Aucun événement à venir dans le contexte.', items: [] }
+  }
+  const lines = upcoming.map((e) => `${fmtDay(e.date)}${e.time ? ` ${e.time}` : ''} — ${e.title}`)
   return {
-    text: `**Budget**\n${lines.map((l) => `- ${l}`).join('\n')}`,
-    items: rows,
+    text: en ? `Next events: ${lines.join('; ')}.` : `Prochains événements : ${lines.join(' ; ')}.`,
+    items: upcoming,
   }
 }
 
-function sectionRisks(ctx) {
-  const overdue = (ctx.risks || []).filter((r) => r.overdue)
-  const open = (ctx.risks || []).filter((r) => r.open)
-  if (!open.length) return { text: 'Aucun risque ouvert dans le contexte.', items: [] }
-  const lines = (overdue.length ? overdue : open).map((r) => {
-    const due = r.dueDate ? ` — échéance ${fmtDay(r.dueDate)}` : ''
-    const late = r.overdue ? ' (en retard)' : ''
-    return `« ${r.title} »${due}${late} · priorité ${r.priority || '—'} · ${r.status}`
-  })
-  const head = overdue.length ? `**Risques en retard** (${overdue.length})` : `**Risques ouverts** (${open.length})`
-  return { text: `${head}\n${lines.map((l) => `- ${l}`).join('\n')}`, items: overdue.length ? overdue : open }
-}
-
-function sectionEvents(ctx) {
-  const upcoming = ctx.events || []
-  if (!upcoming.length) return { text: 'Aucun événement à venir dans le contexte.', items: [] }
-  const lines = upcoming.map((e) => `- ${fmtDay(e.date)}${e.time ? ` ${e.time}` : ''} — « ${e.title} »`)
-  return { text: `**Prochains événements**\n${lines.join('\n')}`, items: upcoming }
-}
-
-function sectionNotes(ctx) {
-  const notes = ctx.notes || []
-  if (!notes.length) return { text: 'Aucune note sélectionnée dans le contexte.', items: [] }
-  const lines = notes.map((n) => `- **« ${n.title} »**${n.snippet ? ` — ${n.snippet}` : ''}`)
-  return { text: `**Notes** (${notes.length})\n${lines.join('\n')}`, items: notes }
-}
-
-function briefing(ctx) {
-  const c = ctx.counts || {}
-  const parts = [
-    `Vous avez accès à ${c.notes || 0} note(s), ${c.ideas || 0} idée(s), ${c.projects || 0} projet(s), ${c.files || 0} fichier(s).`,
-    `${c.risksOpen || 0} risque(s) ouvert(s)${c.risksOverdue ? `, dont ${c.risksOverdue} en retard` : ''}.`,
-  ]
-  const budget = sectionBudget(ctx)
-  const risks = sectionRisks(ctx)
-  const events = sectionEvents(ctx)
-  const notes = sectionNotes(ctx)
-  return [parts.join(' '), notes.text, budget.text, risks.text, events.text].join('\n\n')
+function sectionNotes(ctx, lang = 'fr') {
+  const notes = (ctx.notes || []).filter((n) => !isDictationGarbage(n.title))
+  const en = lang === 'en'
+  if (!notes.length) {
+    return { text: en ? 'No note in the readable workspace.' : 'Aucune note sélectionnée dans le contexte.', items: [] }
+  }
+  const titles = notes.map((n) => n.title).filter(Boolean)
+  const text = en
+    ? `${notes.length} note${notes.length > 1 ? 's' : ''}: ${titles.join(', ')}.`
+    : `${notes.length} note${notes.length > 1 ? 's' : ''} : ${titles.join(', ')}.`
+  return { text, items: notes }
 }
 
 function detectIntent(query) {
   const q = String(query || '').toLowerCase()
-  if (/plus court|raccourci|en bref/.test(q)) return 'short'
-  if (/plus d[ée]taill|d[ée]veloppe|approfond/.test(q)) return 'detailed'
-  if (/^liste\b|sous forme de liste|en liste/.test(q)) return 'list'
+  if (isGreeting(query)) return 'briefing'
   if (/r[ée]sum|synth[eè]se|r[ée]capi/.test(q)) return 'summarize'
   if (/budget|restant|reste|consomm[ée]|d[ée]pense|salaire/.test(q)) return 'budget'
   if (/retard|risque|alerte|priorit/.test(q)) return 'risks'
   if (/\b[ée]v[ée]nement|calendrier|r[ée]union|prochain/.test(q)) return 'events'
   if (/fichier|document|pdf/.test(q)) return 'files'
-  if (/bonjour|salut|hello|hi\b|aide-moi|que peux/.test(q)) return 'briefing'
   return 'retrieve'
 }
 
 export function wantsWebSearch(query, webToggle) {
   if (webToggle) return true
-  return userAskedForWeb(query)
+  if (userAskedForWeb(query)) return true
+  if (isGreeting(query) || isWorkspaceQuestion(query) || isModeSwitch(query) || isAmbiguousQuestion(query)) return false
+  return isEncyclopedicQuery(query)
 }
 
 export function webQueryFrom(query, history = []) {
@@ -521,102 +542,131 @@ export function formatSearchError(err, lang = 'fr') {
 
 export { answerFromSources, ensureSourceReply }
 
-function applyStyle(text, style) {
-  if (style === 'short') {
-    const lines = text
-      .split('\n')
-      .map((l) => l.replace(/^[-*]\s*/, '').replace(/^\*\*.*\*\*\s*/, '').trim())
-      .filter((l) => l && !l.startsWith('Sources'))
-      .slice(0, 4)
-    return lines.length ? lines.map((l) => `- ${clip(l, 140)}`).join('\n') : clip(text, 280)
-  }
-  if (style === 'list') {
-    const lines = text
-      .split(/\n+/)
-      .map((l) => l.replace(/^#+\s*/, '').replace(/^\*\*(.+)\*\*/, '$1').replace(/^[-*]\s*/, '').trim())
-      .filter((l) => l && !/^sources/i.test(l))
-    const items = lines.slice(0, 10)
-    return items.map((l, i) => `${i + 1}. ${l}`).join('\n')
-  }
-  return text
+function packLocal(query, body, items, lang, mode, extra = {}) {
+  const language = lang === 'en' ? 'en' : 'fr'
+  const workspaceSources = (items || [])
+    .map((item) => ({
+      id: item.id,
+      title: item.title || item.name || '',
+      kind: item.kind || 'workspace',
+    }))
+    .filter((item) => item.title && !isDictationGarbage(item.title))
+  const text = shapeResearchText(body, {
+    lang: language,
+    mode,
+    query,
+    workspaceSources,
+    analysis: extra.analysis || '',
+    limits: extra.limits || '',
+    takeaways: extra.takeaways || '',
+    webSources: extra.webSources || [],
+    webAttempted: Boolean(extra.webAttempted),
+  })
+  return { text, sources: workspaceSources }
 }
 
 /**
- * Réponse extractive locale, en français, avec citations de titres.
- * `style`: '', 'short', 'detailed', 'list'
+ * Local extractive reply. Titles only in Sources — never a workspace dump.
+ * `style`: '', 'short', 'detailed', 'list' selects quick vs deep, not a new thread.
  */
-export function localAnswer(query, ctx, style = '') {
-  const intent = style || detectIntent(query)
+export function localAnswer(query, ctx, style = '', lang = 'fr') {
+  const language = lang === 'en' ? 'en' : 'fr'
+  const mode = style === 'detailed' ? 'deep' : researchModeOf(style)
   const context = ctx || { notes: [], ideas: [], projects: [], events: [], files: [], budgets: [], risks: [], counts: {} }
+  const intent = detectIntent(query)
+
+  if (isGreeting(query) || intent === 'briefing') {
+    return packLocal(query, '', [], language, 'quick')
+  }
+  if (isAmbiguousQuestion(query) || isModeSwitch(query)) {
+    return packLocal(query, '', [], language, mode)
+  }
+
   let text = ''
   let items = []
+  let analysis = ''
+  let limits = ''
 
-  if (intent === 'briefing') {
-    text = briefing(context)
-    items = [...(context.notes || []), ...(context.budgets || []), ...(context.risks || []), ...(context.events || [])]
-  } else if (intent === 'summarize') {
-    const notes = sectionNotes(context)
+  if (intent === 'summarize') {
+    const notes = sectionNotes(context, language)
     if (!notes.items.length) {
-      text = 'Je n’ai pas trouvé de notes à résumer dans le contexte auquel vous avez accès.'
+      text = language === 'en' ? 'I could not find notes to summarise.' : 'Je n’ai pas trouvé de notes à résumer.'
+      limits = text
     } else {
-      text = `**Synthèse** (${notes.items.length} note${notes.items.length > 1 ? 's' : ''})\n${notes.items
-        .map((n) => `- « ${n.title} » — ${n.snippet || '(pas d’extrait)'}`)
-        .join('\n')}`
+      text = notes.text
       items = notes.items
+      if (mode === 'deep') {
+        analysis = notes.items
+          .filter((note) => note.snippet)
+          .map((note) => `${note.title} : ${clip(note.snippet, 140)}`)
+          .join('\n')
+      }
     }
   } else if (intent === 'budget') {
-    const b = sectionBudget(context)
-    text = b.text
-    items = b.items
-  } else if (intent === 'risks') {
-    const r = sectionRisks(context)
-    text = r.text
-    items = r.items
-  } else if (intent === 'events') {
-    const e = sectionEvents(context)
-    text = e.text
-    items = e.items
-  } else if (intent === 'files') {
-    const files = context.files || []
-    if (!files.length) text = 'Je n’ai pas trouvé de fichiers dans le contexte.'
-    else {
-      text = `**Fichiers** (${files.length})\n${files.map((f) => `- ${f.name || f.title}`).join('\n')}`
-      items = files
+    const budget = sectionBudget(context, language)
+    text = budget.text
+    items = budget.items
+    if (budget.items.length === 1) {
+      limits =
+        language === 'en'
+          ? `Assumption: the readable budget “${budget.items[0].title}”.`
+          : `Hypothèse : le budget lisible « ${budget.items[0].title} ».`
     }
-  } else if (intent === 'short' || intent === 'list' || intent === 'detailed') {
-    const found = retrieve(query, context)
-    if (!found.length) {
-      text = briefing(context)
-      items = context.notes || []
+  } else if (intent === 'risks') {
+    const risks = sectionRisks(context, language)
+    text = risks.text
+    items = risks.items
+  } else if (intent === 'events') {
+    const events = sectionEvents(context, language)
+    text = events.text
+    items = events.items
+  } else if (intent === 'files') {
+    const files = (context.files || []).filter((file) => !isDictationGarbage(file.title || file.name))
+    if (!files.length) {
+      text = language === 'en' ? 'I could not find a file in the workspace.' : 'Je n’ai pas trouvé de fichiers dans le contexte.'
     } else {
       text =
-        intent === 'detailed'
-          ? found.map((f) => `- **« ${f.title} »** (${f.kind})${f.snippet ? `\n  ${f.snippet}` : ''}`).join('\n')
-          : found.map((f) => `- « ${f.title} » (${f.kind})`).join('\n')
-      items = found
+        language === 'en'
+          ? `${files.length} file${files.length > 1 ? 's' : ''}: ${files.map((file) => file.name || file.title).join(', ')}.`
+          : `${files.length} fichier${files.length > 1 ? 's' : ''} : ${files.map((file) => file.name || file.title).join(', ')}.`
+      items = files
     }
-    text = applyStyle(text, intent === 'detailed' ? '' : intent)
   } else {
-    const found = retrieve(query, context)
+    const found = retrieve(query, context).filter((item) => !isDictationGarbage(item.title))
     if (!found.length) {
       const q = String(query || '').trim()
-      if (!q || tokens(q).length === 0) {
-        text = briefing(context)
-        items = context.notes || []
-      } else {
-        text = `Je n’ai pas trouvé d’élément correspondant à « ${clip(q, 80)} » dans le contexte auquel vous avez accès (notes, projets, budgets, risques, fichiers, événements lisibles).`
-      }
+      text =
+        language === 'en'
+          ? `I could not find anything matching “${clip(q, 80)}”.`
+          : `Je n’ai pas trouvé d’élément correspondant à « ${clip(q, 80)} ».`
+      limits =
+        language === 'en'
+          ? 'This only covers the workspace you can already read. Nothing was invented.'
+          : 'Cela se limite à l’espace déjà lisible. Rien n’est inventé.'
     } else {
-      text = `Voici ce que je trouve dans Nazix :\n${found
-        .map((f) => `- **« ${f.title} »** (${f.kind})${f.snippet ? ` — ${f.snippet}` : ''}`)
-        .join('\n')}`
-      items = found
+      const top = found[0]
+      text =
+        language === 'en'
+          ? `The closest match is “${top.title}” (${top.kind}).`
+          : `L’élément le plus proche est « ${top.title} » (${top.kind}).`
+      items = found.slice(0, mode === 'deep' ? 5 : 3)
+      if (mode === 'deep') {
+        analysis = found
+          .filter((item) => item.snippet)
+          .map((item) => `${item.title} : ${clip(item.snippet, 140)}`)
+          .join('\n')
+      }
     }
   }
 
-  if (style === 'short' || style === 'list') text = applyStyle(text, style)
-  if (items.length) text += cite(items)
-  return { text: text.trim(), sources: items.map((i) => ({ id: i.id, title: i.title, kind: i.kind || i.category || '' })) }
+  if (style === 'list' && items.length > 1) {
+    return packLocal(query, text, items, language, mode, {
+      analysis,
+      limits,
+      takeaways: items.map((item, index) => `${index + 1}. ${item.title || item.name}`).join('\n'),
+    })
+  }
+  return packLocal(query, text, items, language, mode, { analysis, limits })
 }
 
 const LAST_N = 20
@@ -834,7 +884,7 @@ function markAiError(data, status) {
   return error
 }
 
-export async function askExternal({ messages, context, web, webSearch, signal, language }) {
+export async function askExternal({ messages, context, web, webSearch, signal, language, researchMode }) {
   const res = await fetch(aiEndpoint('/api/ai'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -844,6 +894,7 @@ export async function askExternal({ messages, context, web, webSearch, signal, l
       web: web || undefined,
       webSearch: Boolean(webSearch),
       language: language === 'en' ? 'en' : 'fr',
+      researchMode: researchModeOf(researchMode),
     }),
     signal,
   })
@@ -869,7 +920,7 @@ function parseSseBuffer(buffer, onEvent) {
   return rest
 }
 
-export async function askExternalStream({ messages, context, web, webSearch, signal, onDelta, language }) {
+export async function askExternalStream({ messages, context, web, webSearch, signal, onDelta, language, researchMode }) {
   const res = await fetch(aiEndpoint('/api/ai/stream'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
@@ -879,6 +930,7 @@ export async function askExternalStream({ messages, context, web, webSearch, sig
       web: web || undefined,
       webSearch: Boolean(webSearch),
       language: language === 'en' ? 'en' : 'fr',
+      researchMode: researchModeOf(researchMode),
     }),
     signal,
   })

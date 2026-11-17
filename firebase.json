@@ -11,7 +11,7 @@
       "codebase": "default",
       "runtime": "nodejs20",
       "predeploy": [
-        "node -e \"const fs=require('fs');fs.copyFileSync('server/ai-http.mjs','functions/ai-http.mjs');fs.copyFileSync('server/ai-actions.mjs','functions/ai-actions.mjs');fs.copyFileSync('server/web-query.mjs','functions/web-query.mjs')\""
+        "node -e \"const fs=require('fs');fs.copyFileSync('server/ai-http.mjs','functions/ai-http.mjs');fs.copyFileSync('server/ai-actions.mjs','functions/ai-actions.mjs');fs.copyFileSync('server/web-query.mjs','functions/web-query.mjs');fs.copyFileSync('server/research-chat.mjs','functions/research-chat.mjs')\""
       ]
     }
   ],

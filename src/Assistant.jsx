@@ -28,9 +28,12 @@ import {
   askExternal,
   askExternalStream,
   searchWeb,
-  formatWebBlock,
   formatSearchError,
-  answerFromSources,
+  effectiveUserQuestion,
+  isGreeting,
+  isModeSwitch,
+  isWorkspaceQuestion,
+  shapeResearchText,
   fetchAiStatus,
   writeExternalPref,
   writeWebPref,
@@ -60,6 +63,7 @@ import {
 } from './lib/store'
 import { canWriteRole } from './lib/rbac'
 import { useStickToBottom } from './chat/stick.js'
+import { ResearchAnswer } from './chat/ResearchAnswer.jsx'
 
 const inputClass =
   'w-full min-h-11 rounded-xl border border-sage-300 bg-white px-3 py-2.5 text-sage-900 outline-none ring-sage-400 placeholder:text-sage-400 focus:ring-2'
@@ -122,10 +126,10 @@ function Bubble({ msg, onCopy }) {
   return (
     <div className={`flex ${isAi ? 'justify-start' : 'justify-end'}`}>
       <div
-        className={`max-w-[92%] rounded-2xl border px-3 py-2 text-sm whitespace-pre-wrap ${
+        className={`max-w-[92%] rounded-2xl border px-3 py-2 text-sm ${
           isAi
             ? 'border-sage-300 bg-sage-100 text-sage-900'
-            : 'border-sage-200 bg-white text-sage-800'
+            : 'whitespace-pre-wrap border-sage-200 bg-white text-sage-800'
         }`}
       >
         <div className="mb-1 flex items-center justify-between gap-2">
@@ -144,38 +148,10 @@ function Bubble({ msg, onCopy }) {
             </button>
           )}
         </div>
-        {shown}
+        {isAi ? <ResearchAnswer text={shown} /> : shown}
         {msg.streaming && <span className="ml-0.5 inline-block animate-pulse text-sage-500">▍</span>}
         {msg.fallback && (
           <p className="mt-2 text-[11px] font-medium text-warn">{t('ai.fallback')}</p>
-        )}
-        {msg.sources?.length > 0 && (
-          <p className="mt-2 text-[11px] text-sage-600">
-            Nazix : {msg.sources.map((s) => `« ${s.title} »`).join(', ')}
-          </p>
-        )}
-        {msg.webSearchedAt && !msg.webSources?.length ? (
-          <p className="mt-2 text-[11px] text-sage-600">{t('ai.noSources')}</p>
-        ) : null}
-        {msg.webSources?.length > 0 && (
-          <ul className="mt-2 space-y-1 border-t border-sage-200 pt-2 text-[11px]">
-            <li className="font-semibold text-sage-600">
-              Web · {msg.webSearchedAt ? new Date(msg.webSearchedAt).toLocaleString('fr-FR') : ''}
-            </li>
-            {msg.webSources.map((s, i) => (
-              <li key={`${s.url || s.title}-${i}`}>
-                {s.url ? (
-                  <a href={s.url} target="_blank" rel="noreferrer" className="text-sage-700 underline">
-                    {s.title}
-                  </a>
-                ) : (
-                  <span>{s.title}</span>
-                )}
-                {s.snippet ? <span className="block text-sage-500">{s.snippet}</span> : null}
-                {s.source ? <span className="block text-sage-400">{s.source}</span> : null}
-              </li>
-            ))}
-          </ul>
         )}
       </div>
     </div>
@@ -440,8 +416,10 @@ function useAiChat({
   const [streamText, setStreamText] = useState('')
   const [pendingAction, setPendingAction] = useState(null)
   const [actionBusy, setActionBusy] = useState(false)
+  const [searching, setSearching] = useState(false)
   const abortRef = useRef(null)
   const streamRef = useRef('')
+  const researchModeRef = useRef('quick')
 
   const thread = threads.find((t) => t.id === threadId) || null
   const messages = thread?.messages || []
@@ -531,14 +509,20 @@ function useAiChat({
       }
       setPendingUser(null)
 
-      const wantWeb = wantsWebSearch(text, webSearch)
+      const priorUsers = history.filter((m) => m.role === 'user').map((m) => m.content)
+      const effective = effectiveUserQuestion(text, priorUsers.slice(0, -1))
+      const mode = style === 'detailed' ? 'deep' : style === 'short' ? 'quick' : researchModeRef.current
+      if (style === 'detailed' || style === 'short') researchModeRef.current = mode
+      const greeting = isGreeting(effective)
+      const wantWeb = !greeting && (wantsWebSearch(text, webSearch) || wantsWebSearch(effective, webSearch))
       let webPayload = null
       let webSources = []
       let webSearchedAt = ''
       let searchFailed = false
       if (wantWeb) {
+        setSearching(true)
         try {
-          const web = await searchWeb(webQueryFrom(text, history))
+          const web = await searchWeb(webQueryFrom(isModeSwitch(text) ? effective : text, history))
           webPayload = web
           webSources = web.results || []
           webSearchedAt = web.searchedAt || nowIso()
@@ -548,6 +532,8 @@ function useAiChat({
           webSources = []
           webSearchedAt = ''
           setError(formatSearchError(err, lang))
+        } finally {
+          setSearching(false)
         }
       }
 
@@ -565,7 +551,6 @@ function useAiChat({
 
       let answerText = ''
       let apiActions = []
-      let sources = []
 
       const onDelta = (_delta, full) => {
         streamRef.current = full
@@ -584,6 +569,7 @@ function useAiChat({
             signal: ctrl.signal,
             onDelta,
             language: lang,
+            researchMode: mode,
           })
           takeServerWeb(ext)
           if (ext.ok && (ext.content || ext.text)) {
@@ -616,6 +602,7 @@ function useAiChat({
                 webSearch: wantWeb,
                 signal: ctrl.signal,
                 language: lang,
+                researchMode: mode,
               })
               takeServerWeb(ext)
               if (ext.ok && (ext.content || ext.text)) {
@@ -645,26 +632,31 @@ function useAiChat({
         setError(openAiUnavailable(openaiError || 'OPENAI_API_KEY manquante'))
       }
 
+      let workspaceSources = []
       if (!answerText && !searchFailed) {
-        if (webSources.length) {
-          answerText = answerFromSources(webSources, lang)
-          sources = []
-        } else {
-          const local = localAnswer(style ? `${style}: ${text}` : text, context, style)
+        const preferLocal = !webSources.length || isWorkspaceQuestion(effective)
+        if (preferLocal) {
+          const local = localAnswer(
+            effective,
+            context,
+            style === 'list' ? 'list' : mode === 'deep' ? 'detailed' : '',
+            lang,
+          )
           answerText = local.text
-          sources = local.sources
+          workspaceSources = local.sources || []
           fallback = true
         }
-      } else if (answerText) {
-        sources = localAnswer(text, context).sources
-      }
-
-      if (webPayload && !usedExternal && !webSources.length) {
-        answerText += formatWebBlock(webPayload)
       }
 
       const split = splitDisplayAndActions(answerText)
-      answerText = split.content
+      answerText = shapeResearchText(split.content, {
+        lang,
+        mode,
+        query: effective,
+        webSources,
+        workspaceSources,
+        webAttempted: wantWeb && !searchFailed,
+      })
       const actions = mergeAiActions(
         apiActions,
         split.actions,
@@ -676,7 +668,7 @@ function useAiChat({
         id: messageId(),
         role: 'assistant',
         content: answerText,
-        sources,
+        sources: workspaceSources,
         webSources,
         webSearchedAt,
         actions,
@@ -691,6 +683,7 @@ function useAiChat({
       flash?.(msg, 'err')
     } finally {
       setBusy(false)
+      setSearching(false)
       setStreamText('')
       setPendingUser(null)
       abortRef.current = null
@@ -889,6 +882,7 @@ function useAiChat({
     openaiError,
     pendingUser,
     streamText,
+    searching,
     stop,
     onComposerKey,
     pendingAction,
@@ -945,7 +939,7 @@ function ChatPane({
     chat.busy ? 1 : 0,
   ].join(':')
   const onScroll = useStickToBottom(scrollerRef, { threadKey: chat.threadId || 'new', revision })
-  const showTyping = chat.busy && chat.messages[chat.messages.length - 1]?.role !== 'assistant'
+  const showTyping = chat.busy && !chat.searching && chat.messages[chat.messages.length - 1]?.role !== 'assistant'
   const quickClass = btnGhost + ' !h-8 !min-h-0 shrink-0 !px-2 !py-0 !text-xs'
   return (
     <div className="flex min-h-0 w-full flex-1 basis-0 flex-col overflow-hidden [overflow-anchor:none]">
@@ -1011,6 +1005,9 @@ function ChatPane({
         <button type="button" className={quickClass + (lastAi ? '' : ' invisible')} disabled={!lastAi || chat.busy} onClick={() => chat.followUp('list', t('ai.list'))}>
           <List size={12} /> {t('ai.list')}
         </button>
+      </div>
+      <div className="flex h-5 shrink-0 items-center px-3 text-[11px] text-sage-600" aria-live="polite">
+        {chat.searching ? t('searchUi.searching') : '\u00a0'}
       </div>
       <form
         onSubmit={chat.send}

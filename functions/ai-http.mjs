@@ -15,6 +15,13 @@ import {
   searchFailureMessage,
   userAskedForWeb,
 } from './web-query.mjs'
+import {
+  effectiveUserQuestion,
+  isDictationGarbage,
+  researchModeOf,
+  researchPrompt,
+  shapeResearchText,
+} from './research-chat.mjs'
 
 const MAX_BODY = 256 * 1024
 const LLM_TIMEOUT_MS = 30000
@@ -226,7 +233,7 @@ function statusPayload(env) {
 const SYSTEM_PROMPT_FR = `Tu es Nazix, l’assistant conversationnel de l’espace de travail collaboratif Nazix.
 Réponds en français, clairement, de façon utile et naturelle — comme un assistant ChatGPT, mais ancré dans Nazix.
 Utilise uniquement le contexte fourni (notes, idées, projets, budget, risques, fichiers, calendrier auxquels l’utilisateur a accès).
-Cite les titres entre « ». N’invente jamais de données privées absentes du contexte.
+Si une note sert à la réponse, cite seulement son titre, sans coller son contenu. N’invente jamais de données privées absentes du contexte.
 Si tu manques d’information : dis-le clairement (« je n’ai pas trouvé ») plutôt que de fabuler.
 Distingue les faits Nazix des résultats web (libellé Web).
 Ne propose jamais de supprimer, de partager, ni de modifier les droits d’accès.
@@ -235,7 +242,7 @@ Tu ne crées rien tout seul. Si une action est utile (créer ou mettre à jour u
 const SYSTEM_PROMPT_EN = `You are Nazix, the conversational assistant of the Nazix collaborative workspace.
 Reply in English, clearly, usefully and naturally — like ChatGPT, but grounded in Nazix.
 Use only the provided context (notes, ideas, projects, budget, risks, files, calendar the user can already read).
-Quote titles in « ». Never invent private data missing from the context.
+If a note is useful, cite its title only and do not paste its content. Never invent private data missing from the context.
 If you lack information: say so clearly (“I could not find that”) rather than guessing.
 Distinguish Nazix facts from web results (label them Web).
 Never propose deleting, sharing, or changing access rights.
@@ -253,19 +260,22 @@ const WEB_OVERRIDE_EN = `Web search is enabled. You MAY and MUST use the public 
 export function systemPromptFor(lang, opts = {}) {
   const en = resolveAiLang({ language: lang }) === 'en'
   let base = en ? SYSTEM_PROMPT_EN : SYSTEM_PROMPT_FR
-  if (!opts.web) return base
-  if (en) {
-    base = base.replace(
-      'Use only the provided context (notes, ideas, projects, budget, risks, files, calendar the user can already read).',
-      'Use Nazix context for private workspace data. When public web sources are provided, you MAY and MUST answer from them.',
-    )
-    return `${base}\n${WEB_OVERRIDE_EN}`
+  if (opts.web) {
+    if (en) {
+      base = base.replace(
+        'Use only the provided context (notes, ideas, projects, budget, risks, files, calendar the user can already read).',
+        'Use Nazix context for private workspace data. When public web sources are provided, you MAY and MUST answer from them.',
+      )
+      base = `${base}\n${WEB_OVERRIDE_EN}`
+    } else {
+      base = base.replace(
+        'Utilise uniquement le contexte fourni (notes, idées, projets, budget, risques, fichiers, calendrier auxquels l’utilisateur a accès).',
+        'Utilise le contexte Nazix pour les données privées de l’espace. Lorsque des sources web publiques sont fournies, tu PEUX et tu DOIS t’en servir pour répondre.',
+      )
+      base = `${base}\n${WEB_OVERRIDE_FR}`
+    }
   }
-  base = base.replace(
-    'Utilise uniquement le contexte fourni (notes, idées, projets, budget, risques, fichiers, calendrier auxquels l’utilisateur a accès).',
-    'Utilise le contexte Nazix pour les données privées de l’espace. Lorsque des sources web publiques sont fournies, tu PEUX et tu DOIS t’en servir pour répondre.',
-  )
-  return `${base}\n${WEB_OVERRIDE_FR}`
+  return `${base}\n${researchPrompt(lang, opts.mode)}`
 }
 
 const IMAGE_TIMEOUT_MS = 55000
@@ -300,20 +310,26 @@ function toChatMessages(body, lang = 'fr') {
       role: m.role,
       content: (m.role === 'assistant' ? displayAiContent(m.content) : String(m.content)).slice(0, 8000),
     }))
-  const context = body.context && typeof body.context === 'object' ? body.context : {}
+  const context = body.context && typeof body.context === 'object' ? scrubContext(body.context) : {}
   const contextText = JSON.stringify(context).slice(0, 24000)
   const webOn = Boolean(body.webSearch || (body.web && typeof body.web === 'object'))
   const parts = []
   if (contextText && contextText !== '{}') {
-    parts.push(`Contexte Nazix (uniquement des éléments déjà lisibles par l’utilisateur) :\n${contextText}`)
+    parts.push(
+      lang === 'en'
+        ? `Private Nazix context. Use it to answer. Do not paste it back:\n${contextText}`
+        : `Contexte Nazix privé. Sers-t’en pour répondre. Ne le recopie pas :\n${contextText}`,
+    )
   }
   if (webOn) parts.push(formatWebContext(body.web, lang))
   if (parts.length) {
     const ack = webOn
       ? lang === 'en'
-        ? 'I have the Nazix context and the public web sources. I may use those sources, answer in the user\'s language, and I will list the links.'
-        : 'J’ai le contexte Nazix et les sources web publiques. Je peux m’en servir, répondre dans la langue de l’utilisateur, et je listerai les liens.'
-      : 'J’ai bien le contexte. Je m’appuierai uniquement sur ces éléments, je citerai les titres, et je distinguerai le web le cas échéant.'
+        ? 'I have the private workspace context and the public web sources. I will answer in the research structure and I will not paste the workspace.'
+        : 'J’ai le contexte privé et les sources web. Je réponds avec la structure demandée, sans recopier l’espace.'
+      : lang === 'en'
+        ? 'I have the private workspace context. I will not paste it back.'
+        : 'J’ai le contexte privé. Je ne le recopie pas.'
     mapped.unshift({
       role: 'user',
       content: parts.join('\n\n'),
@@ -348,9 +364,18 @@ function sanitizeLlmError(prefix, errText = '') {
   return clipped ? `${prefix} — ${clipped}` : prefix
 }
 
-function imageFailure(lang, status, errText) {
+export function imageFailure(lang, status, errText, opts = {}) {
   const detail = publicApiMessage(errText)
-  if (String(lang || '').startsWith('en')) {
+  const en = String(lang || '').startsWith('en')
+  const afterRetry = Boolean(opts.afterRetry)
+  const parameterRejected =
+    /unknown parameter/i.test(detail) || /\b(?:response_format|output_format)\b/i.test(detail)
+  if (parameterRejected || (afterRetry && Number(status) === 400)) {
+    return en
+      ? `Image generation is unavailable (${status}). The image service refused the request. The rest of Create still works.`
+      : `La génération d’image est indisponible (${status}). Le service d’image a refusé la requête. Le reste de Création fonctionne.`
+  }
+  if (en) {
     return detail
       ? `Image generation is unavailable (${status}). ${detail}`
       : `Image generation is unavailable (${status}). The rest of Create still works.`
@@ -358,6 +383,38 @@ function imageFailure(lang, status, errText) {
   return detail
     ? `La génération d’image est indisponible (${status}). ${detail}`
     : `La génération d’image est indisponible (${status}). Le reste de Création fonctionne.`
+}
+
+export function gptImageFamily(model) {
+  const name = String(model || '').trim().toLowerCase()
+  return name === 'gpt-image-1' || name === 'gpt-image-1-mini' || name.startsWith('gpt-image')
+}
+
+/** Body for POST /v1/images/generations. gpt-image* rejects response_format. */
+export function buildImagePayload(model, prompt, { outputFormat = true } = {}) {
+  const size = '1024x1024'
+  if (gptImageFamily(model)) {
+    const payload = { model, prompt, size }
+    if (outputFormat) payload.output_format = 'png'
+    return payload
+  }
+  return { model, prompt, n: 1, size, response_format: 'b64_json' }
+}
+
+export function outputFormatRejected(status, data) {
+  if (Number(status) !== 400) return false
+  let parsed = data
+  if (typeof data === 'string') {
+    try {
+      parsed = JSON.parse(data)
+    } catch {
+      parsed = null
+    }
+  }
+  const param = parsed?.error?.param || parsed?.param
+  if (param === 'output_format') return true
+  const raw = typeof data === 'string' ? data : JSON.stringify(data ?? {})
+  return /unknown parameter:\s*['"]output_format['"]/i.test(publicApiMessage(raw))
 }
 
 function combinedAbort(req, ms) {
@@ -383,11 +440,11 @@ async function fetchWithTimeout(url, options, ms, req) {
   }
 }
 
-function openaiMessages(messages, lang = 'fr', web = false) {
-  return [{ role: 'system', content: systemPromptFor(lang, { web }) }, ...messages]
+function openaiMessages(messages, lang = 'fr', web = false, mode = 'quick') {
+  return [{ role: 'system', content: systemPromptFor(lang, { web, mode }) }, ...messages]
 }
 
-async function callOpenAI(key, messages, req, lang = 'fr', web = false) {
+async function callOpenAI(key, messages, req, lang = 'fr', web = false, mode = 'quick') {
   const res = await fetchWithTimeout(
     'https://api.openai.com/v1/chat/completions',
     {
@@ -400,7 +457,7 @@ async function callOpenAI(key, messages, req, lang = 'fr', web = false) {
         model: 'gpt-4o-mini',
         temperature: 0.4,
         max_tokens: 1400,
-        messages: openaiMessages(messages, lang, web),
+        messages: openaiMessages(messages, lang, web, mode),
       }),
     },
     LLM_TIMEOUT_MS,
@@ -416,7 +473,7 @@ async function callOpenAI(key, messages, req, lang = 'fr', web = false) {
   return String(text)
 }
 
-async function callAnthropic(key, messages, req, lang = 'fr', web = false) {
+async function callAnthropic(key, messages, req, lang = 'fr', web = false, mode = 'quick') {
   const res = await fetchWithTimeout(
     'https://api.anthropic.com/v1/messages',
     {
@@ -429,7 +486,7 @@ async function callAnthropic(key, messages, req, lang = 'fr', web = false) {
       body: JSON.stringify({
         model: 'claude-3-5-haiku-latest',
         max_tokens: 1400,
-        system: systemPromptFor(lang, { web }),
+        system: systemPromptFor(lang, { web, mode }),
         messages,
       }),
     },
@@ -449,7 +506,7 @@ async function callAnthropic(key, messages, req, lang = 'fr', web = false) {
   return text
 }
 
-async function callGrok(key, messages, req, lang = 'fr', web = false) {
+async function callGrok(key, messages, req, lang = 'fr', web = false, mode = 'quick') {
   const res = await fetchWithTimeout(
     'https://api.x.ai/v1/chat/completions',
     {
@@ -462,7 +519,7 @@ async function callGrok(key, messages, req, lang = 'fr', web = false) {
         model: 'grok-2-latest',
         temperature: 0.4,
         max_tokens: 1400,
-        messages: openaiMessages(messages, lang, web),
+        messages: openaiMessages(messages, lang, web, mode),
       }),
     },
     LLM_TIMEOUT_MS,
@@ -478,10 +535,10 @@ async function callGrok(key, messages, req, lang = 'fr', web = false) {
   return String(text)
 }
 
-async function callLlm(provider, messages, req, lang = 'fr', web = false) {
-  if (provider.name === 'openai') return callOpenAI(provider.key, messages, req, lang, web)
-  if (provider.name === 'anthropic') return callAnthropic(provider.key, messages, req, lang, web)
-  return callGrok(provider.key, messages, req, lang, web)
+async function callLlm(provider, messages, req, lang = 'fr', web = false, mode = 'quick') {
+  if (provider.name === 'openai') return callOpenAI(provider.key, messages, req, lang, web, mode)
+  if (provider.name === 'anthropic') return callAnthropic(provider.key, messages, req, lang, web, mode)
+  return callGrok(provider.key, messages, req, lang, web, mode)
 }
 
 function startSse(res) {
@@ -497,7 +554,7 @@ function sseWrite(res, obj) {
   res.write(`data: ${JSON.stringify(obj)}\n\n`)
 }
 
-async function streamOpenAI(key, messages, req, res, lang = 'fr', web = false) {
+async function streamOpenAI(key, messages, req, res, lang = 'fr', web = false, mode = 'quick', shapeOpts = {}) {
   const openaiRes = await fetchWithTimeout(
     'https://api.openai.com/v1/chat/completions',
     {
@@ -512,7 +569,7 @@ async function streamOpenAI(key, messages, req, res, lang = 'fr', web = false) {
         temperature: 0.4,
         max_tokens: 1400,
         stream: true,
-        messages: openaiMessages(messages, lang, web),
+        messages: openaiMessages(messages, lang, web, mode),
       }),
     },
     LLM_TIMEOUT_MS,
@@ -561,22 +618,79 @@ async function streamOpenAI(key, messages, req, res, lang = 'fr', web = false) {
     }
   }
   const finished = stripper.finish()
-  if (finished.content.startsWith(lastVisible)) {
-    const extra = finished.content.slice(lastVisible.length)
-    if (extra) sseWrite(res, { delta: extra })
-  } else if (finished.content !== lastVisible) {
-    sseWrite(res, { content: finished.content })
-  }
+  const content = finalizeAssistantText(finished.content, {
+    lang,
+    mode,
+    web: shapeOpts.web,
+    query: shapeOpts.query,
+    alreadySplit: true,
+    actions: finished.actions,
+  }).content
+  if (content !== lastVisible) sseWrite(res, { content, replace: true })
   sseWrite(res, {
     done: true,
-    text: finished.content,
-    content: finished.content,
+    text: content,
+    content,
     actions: finished.actions,
     provider: 'openai',
+    replace: true,
     ok: true,
   })
   res.end()
-  return finished.content
+  return content
+}
+
+function scrubContext(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map(scrubContext)
+      .filter((item) => {
+        if (!item || typeof item !== 'object') return true
+        const title = item.title || item.name
+        return !(title && isDictationGarbage(title))
+      })
+  }
+  if (value && typeof value === 'object') {
+    const out = {}
+    for (const [key, item] of Object.entries(value)) {
+      if (key === 'contextLabel') {
+        out[key] = contextCountsFromLabel(item)
+        continue
+      }
+      if (typeof item === 'string' && isDictationGarbage(item)) continue
+      out[key] = scrubContext(item)
+    }
+    return out
+  }
+  return value
+}
+
+function contextCountsFromLabel(label) {
+  const text = String(label || '')
+  if (!text || isDictationGarbage(text) || /«/.test(text)) return ''
+  return text.replace(/^Contexte\s*:\s*/i, '').trim()
+}
+
+function chatQuery(body) {
+  const turns = userTurns(body)
+  const latest = turns[turns.length - 1] || ''
+  return effectiveUserQuestion(latest, turns.slice(0, -1))
+}
+
+function finalizeAssistantText(raw, opts = {}) {
+  const split = opts.alreadySplit
+    ? { content: String(raw || ''), actions: opts.actions || [] }
+    : splitDisplayAndActions(raw)
+  const results = opts.web?.results || opts.webSources || []
+  const withLinks = ensureSourceReply(split.content, results, opts.lang || 'fr')
+  const content = shapeResearchText(withLinks, {
+    lang: opts.lang || 'fr',
+    mode: opts.mode || 'quick',
+    query: opts.query || '',
+    webSources: results,
+    webAttempted: Boolean(opts.web),
+  })
+  return { content, actions: split.actions }
 }
 
 function userTurns(body) {
@@ -678,17 +792,18 @@ async function handleAi(req, res, env) {
     throw err
   }
   const { lang, web } = prepared
+  const mode = researchModeOf(prepared.body?.researchMode)
+  const query = chatQuery(prepared.body)
   const messages = toChatMessages(prepared.body, lang)
-  const raw = await callLlm(provider, messages, req, lang, Boolean(web))
-  const split = splitDisplayAndActions(raw)
-  const content = ensureSourceReply(split.content, web?.results, lang)
+  const raw = await callLlm(provider, messages, req, lang, Boolean(web), mode)
+  const { content, actions } = finalizeAssistantText(raw, { lang, mode, web, query })
   json(res, 200, {
     ok: true,
     mode: 'external',
     provider: provider.name,
     text: content,
     content,
-    actions: split.actions,
+    actions,
     web: web || undefined,
   })
 }
@@ -724,20 +839,22 @@ async function handleAiStream(req, res, env) {
     throw err
   }
   const { lang, web } = prepared
+  const mode = researchModeOf(prepared.body?.researchMode)
+  const query = chatQuery(prepared.body)
   const messages = toChatMessages(prepared.body, lang)
   const webOn = Boolean(web)
+  const shapeOpts = { web, query }
   startSse(res)
   try {
     if (web?.results?.length) {
-      const raw = await callLlm(provider, messages, req, lang, true)
-      const split = splitDisplayAndActions(raw)
-      const content = ensureSourceReply(split.content, web.results, lang)
+      const raw = await callLlm(provider, messages, req, lang, true, mode)
+      const { content, actions } = finalizeAssistantText(raw, { lang, mode, web, query })
       if (content) sseWrite(res, { delta: content })
       sseWrite(res, {
         done: true,
         text: content,
         content,
-        actions: split.actions,
+        actions,
         provider: provider.name,
         web,
         replace: true,
@@ -747,11 +864,11 @@ async function handleAiStream(req, res, env) {
       return
     }
     if (provider.name === 'openai') {
-      await streamOpenAI(provider.key, messages, req, res, lang, webOn)
+      await streamOpenAI(provider.key, messages, req, res, lang, webOn, mode, shapeOpts)
       return
     }
-    const raw = await callLlm(provider, messages, req, lang, webOn)
-    const { content, actions } = splitDisplayAndActions(raw)
+    const raw = await callLlm(provider, messages, req, lang, webOn, mode)
+    const { content, actions } = finalizeAssistantText(raw, { lang, mode, web, query })
     if (content) sseWrite(res, { delta: content })
     sseWrite(res, {
       done: true,
@@ -760,6 +877,7 @@ async function handleAiStream(req, res, env) {
       actions,
       provider: provider.name,
       web: web || undefined,
+      replace: true,
       ok: true,
     })
     res.end()
@@ -1169,11 +1287,16 @@ async function handleSearch(req, res) {
   }
 }
 
-async function tryImageModel(key, prompt, model, req) {
-  const payload =
-    model === 'gpt-image-1'
-      ? { model, prompt, size: '1024x1024', output_format: 'png' }
-      : { model, prompt, n: 1, size: '1024x1024', response_format: 'b64_json' }
+function imageApiError(resImg, data, { afterRetry = false } = {}) {
+  const raw = JSON.stringify(data ?? {}).slice(0, 500)
+  return Object.assign(new Error(imageFailure('fr', resImg.status, raw, { afterRetry })), {
+    status: resImg.status,
+    detail: publicApiMessage(raw),
+    afterRetry,
+  })
+}
+
+async function postImageGeneration(key, payload, req) {
   const resImg = await fetchWithTimeout(
     'https://api.openai.com/v1/images/generations',
     {
@@ -1188,13 +1311,77 @@ async function tryImageModel(key, prompt, model, req) {
     req,
   )
   const data = await resImg.json().catch(() => ({}))
-  if (!resImg.ok) {
-    throw Object.assign(new Error(imageFailure('fr', resImg.status, JSON.stringify(data).slice(0, 500))), {
-      status: resImg.status,
-      detail: publicApiMessage(JSON.stringify(data).slice(0, 500)),
-    })
+  return { resImg, data }
+}
+
+async function tryImageModel(key, prompt, model, req) {
+  const family = gptImageFamily(model)
+  let payload = buildImagePayload(model, prompt, { outputFormat: family })
+  let { resImg, data } = await postImageGeneration(key, payload, req)
+  if (!resImg.ok && family && outputFormatRejected(resImg.status, data)) {
+    payload = buildImagePayload(model, prompt, { outputFormat: false })
+    ;({ resImg, data } = await postImageGeneration(key, payload, req))
+    if (!resImg.ok) throw imageApiError(resImg, data, { afterRetry: true })
+    return data
   }
+  if (!resImg.ok) throw imageApiError(resImg, data)
   return data
+}
+
+function shownImageError(lang, primary, secondary) {
+  const secondaryDetail = String(secondary?.detail || '')
+  const primaryDetail = String(primary?.detail || '')
+  const secondaryParam = /unknown parameter/i.test(secondaryDetail)
+  const primaryParam = /unknown parameter/i.test(primaryDetail)
+  const chosen = secondaryParam && primary && !primaryParam ? primary : secondary || primary
+  return imageFailure(lang, chosen?.status || 502, chosen?.detail || '', {
+    afterRetry: Boolean(chosen?.afterRetry),
+  })
+}
+
+function temporaryImageUrl(raw) {
+  let url
+  try {
+    url = new URL(String(raw || ''))
+  } catch {
+    return ''
+  }
+  if (url.protocol !== 'https:') return ''
+  const host = url.hostname.toLowerCase()
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return ''
+  if (host === '0.0.0.0' || host === '::1' || host === '[::1]') return ''
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (ipv4) {
+    const n = ipv4.slice(1).map((part) => Number(part))
+    if (n.some((part) => part > 255)) return ''
+    const [a, b] = n
+    if (a === 10 || a === 127 || a === 0) return ''
+    if (a === 169 && b === 254) return ''
+    if (a === 172 && b >= 16 && b <= 31) return ''
+    if (a === 192 && b === 168) return ''
+  }
+  return url.toString()
+}
+
+async function inlineImage(data, req) {
+  const item = data?.data?.[0] || {}
+  let b64 = String(item.b64_json || '').trim()
+  let mime = 'image/png'
+  const dataUrl = b64.match(/^data:([^;,]+);base64,([\s\S]+)$/)
+  if (dataUrl) {
+    mime = dataUrl[1] || mime
+    b64 = dataUrl[2]
+  }
+  b64 = b64.replace(/\s+/g, '')
+  if (b64) return { b64, mime }
+  const remote = temporaryImageUrl(item.url)
+  if (!remote) return null
+  const imgRes = await fetchWithTimeout(remote, {}, IMAGE_TIMEOUT_MS, req)
+  if (!imgRes.ok) return null
+  const buf = Buffer.from(await imgRes.arrayBuffer())
+  if (!buf.length) return null
+  const ct = String(imgRes.headers.get('content-type') || 'image/png').split(';')[0].trim()
+  return { b64: buf.toString('base64'), mime: ct || 'image/png' }
 }
 
 async function handleImage(req, res, env) {
@@ -1239,29 +1426,17 @@ async function handleImage(req, res, env) {
     try {
       data = await tryImageModel(key, prompt, 'dall-e-3', req)
     } catch (err2) {
-      json(res, 200, { ok: false, error: imageFailure(lang, err2.status || err.status || 502, err2.detail || err2.message || firstError?.message || '') })
+      json(res, 200, { ok: false, error: shownImageError(lang, firstError, err2) })
       return
     }
   }
-  const item = data?.data?.[0] || {}
-  let b64 = item.b64_json || ''
-  let url = item.url || ''
-  let mime = 'image/png'
-  if (!b64 && url) {
-    try {
-      const imgRes = await fetchWithTimeout(url, {}, IMAGE_TIMEOUT_MS, req)
-      if (imgRes.ok) {
-        const buf = Buffer.from(await imgRes.arrayBuffer())
-        const ct = String(imgRes.headers.get('content-type') || 'image/png').split(';')[0]
-        mime = ct || 'image/png'
-        b64 = buf.toString('base64')
-        url = ''
-      }
-    } catch {
-      /* keep remote url */
-    }
+  let inline = null
+  try {
+    inline = await inlineImage(data, req)
+  } catch {
+    inline = null
   }
-  if (!b64 && !url) {
+  if (!inline?.b64) {
     json(res, 200, {
       ok: false,
       error: lang === 'en' ? 'The image service returned an empty file. The rest of Create still works.' : 'Le service d’image a renvoyé un fichier vide. Le reste de Création fonctionne.',
@@ -1271,9 +1446,8 @@ async function handleImage(req, res, env) {
   json(res, 200, {
     ok: true,
     model: modelUsed,
-    mime,
-    b64: b64 || undefined,
-    url: url || undefined,
+    mime: inline.mime,
+    b64: inline.b64,
   })
 }
 
