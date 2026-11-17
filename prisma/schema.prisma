@@ -1,0 +1,660 @@
+// Nazix PostgreSQL source of truth.
+// The running Vite app keeps Firestore and local storage until DATABASE_URL is set.
+// Do not generate a Prisma client from the Vite build; this file is not part of the bundle.
+//
+// Removing a workspace member deletes the membership row only.
+// workspaces.created_by_id is ON DELETE SET NULL, so deleting that user does not delete the workspace.
+// Content authored by the user is kept (author/lead FKs are ON DELETE SET NULL).
+// ON DELETE CASCADE on a child.workspace_id runs when the workspace itself is deleted.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WorkspaceRole {
+  owner
+  admin
+  member
+  guest
+
+  @@map("workspace_role")
+}
+
+enum GroupRole {
+  lead
+  admin
+  member
+  observer
+
+  @@map("group_role")
+}
+
+enum ProjectRole {
+  lead
+  member
+  guest
+
+  @@map("project_role")
+}
+
+enum GroupVisibility {
+  private
+  workspace
+
+  @@map("group_visibility")
+}
+
+enum Visibility {
+  private
+  shared
+  workspace
+  public
+
+  @@map("visibility")
+}
+
+enum SharePermission {
+  read
+  edit
+
+  @@map("share_permission")
+}
+
+enum InviteStatus {
+  pending
+  accepted
+  declined
+  expired
+  revoked
+
+  @@map("invite_status")
+}
+
+enum ConversationKind {
+  direct
+  group
+
+  @@map("conversation_kind")
+}
+
+enum ParticipantStatus {
+  invited
+  accepted
+  declined
+
+  @@map("participant_status")
+}
+
+enum BillingInterval {
+  month
+  year
+  custom
+
+  @@map("billing_interval")
+}
+
+enum SubscriptionStatus {
+  trialing
+  active
+  past_due
+  canceled
+
+  @@map("subscription_status")
+}
+
+enum InvoiceStatus {
+  draft
+  open
+  paid
+  void
+  uncollectible
+
+  @@map("invoice_status")
+}
+
+enum TransactionStatus {
+  pending
+  succeeded
+  failed
+  refunded
+
+  @@map("transaction_status")
+}
+
+model User {
+  id              String    @id @default(uuid())
+  email           String    @unique
+  handle          String    @unique
+  displayName     String    @map("display_name")
+  passwordHash    String?   @map("password_hash")
+  avatarUrl       String?   @map("avatar_url")
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(6)
+  disabledAt      DateTime? @map("disabled_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  settings            UserSettings?
+  createdWorkspaces   Workspace[]          @relation("WorkspaceCreator")
+  memberships         WorkspaceMember[]
+  createdGroups       Group[]              @relation("GroupCreator")
+  groupMemberships    GroupMember[]
+  invitesSent         Invitation[]         @relation("InvitedBy")
+  invitesAccepted     Invitation[]         @relation("AcceptedBy")
+  ledProjects         Project[]            @relation("ProjectLead")
+  createdProjects     Project[]            @relation("ProjectCreator")
+  projectMemberships  ProjectMember[]
+  notes               Note[]               @relation("NoteAuthor")
+  ideas               Idea[]               @relation("IdeaAuthor")
+  noteShares          NoteShare[]          @relation("NoteShareGrantee")
+  noteSharesCreated   NoteShare[]          @relation("NoteShareCreator")
+  conversations       Conversation[]       @relation("ConversationCreator")
+  conversationMembers ConversationMember[]
+  messages            Message[]            @relation("MessageAuthor")
+  eventsCreated       Event[]              @relation("EventCreator")
+  eventParticipations EventParticipant[]
+  billedSubscriptions Subscription[]       @relation("SubscriptionPayer")
+  notifications       Notification[]
+  auditLogs           AuditLog[]           @relation("AuditActor")
+
+  @@map("users")
+}
+
+model UserSettings {
+  userId      String   @id @map("user_id")
+  locale      String   @default("fr")
+  theme       String   @default("system")
+  timeZone    String   @default("Europe/Paris") @map("time_zone")
+  notifyEmail Boolean  @default(true) @map("notify_email")
+  notifyPush  Boolean  @default(false) @map("notify_push")
+  extras      Json     @default("{}")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+model Workspace {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  createdBy User? @relation("WorkspaceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  members             WorkspaceMember[]
+  groups              Group[]
+  groupMembers        GroupMember[]
+  invitations         Invitation[]
+  projects            Project[]
+  projectMembers      ProjectMember[]
+  notes               Note[]
+  ideas               Idea[]
+  noteShares          NoteShare[]
+  conversations       Conversation[]
+  conversationMembers ConversationMember[]
+  messages            Message[]
+  events              Event[]
+  eventParticipants   EventParticipant[]
+  subscriptions       Subscription[]
+  invoices            Invoice[]
+  transactions        Transaction[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+
+  @@index([createdById])
+  @@map("workspaces")
+}
+
+/// Child of a workspace. Deleting this row does not delete the workspace.
+model WorkspaceMember {
+  id          String        @id @default(uuid())
+  workspaceId String        @map("workspace_id")
+  userId      String        @map("user_id")
+  role        WorkspaceRole
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId])
+  @@index([userId])
+  @@map("workspace_members")
+}
+
+model Group {
+  id          String          @id @default(uuid())
+  workspaceId String          @map("workspace_id")
+  name        String
+  visibility  GroupVisibility @default(private)
+  createdById String?         @map("created_by_id")
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy     User?          @relation("GroupCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  members       GroupMember[]
+  invitations   Invitation[]
+  conversations Conversation[]
+
+  @@index([workspaceId])
+  @@index([createdById])
+  @@map("groups")
+}
+
+model GroupMember {
+  id          String    @id @default(uuid())
+  groupId     String    @map("group_id")
+  userId      String    @map("user_id")
+  workspaceId String    @map("workspace_id")
+  role        GroupRole
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  group     Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+  @@index([workspaceId])
+  @@map("group_members")
+}
+
+/// Raw invite tokens are never stored. Persist hashToken() in token_hash.
+model Invitation {
+  id           String        @id @default(uuid())
+  workspaceId  String        @map("workspace_id")
+  email        String
+  role         WorkspaceRole @default(member)
+  tokenHash    String        @unique @map("token_hash")
+  status       InviteStatus  @default(pending)
+  expiresAt    DateTime?     @map("expires_at") @db.Timestamptz(6)
+  uses         Int           @default(0)
+  maxUses      Int?          @map("max_uses")
+  invitedById  String?       @map("invited_by_id")
+  acceptedById String?       @map("accepted_by_id")
+  groupId      String?       @map("group_id")
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace  Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy  User?     @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+  acceptedBy User?     @relation("AcceptedBy", fields: [acceptedById], references: [id], onDelete: SetNull)
+  group      Group?    @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([email])
+  @@index([invitedById])
+  @@index([acceptedById])
+  @@index([groupId])
+  @@index([status])
+  @@map("invitations")
+}
+
+model Project {
+  id          String     @id @default(uuid())
+  workspaceId String     @map("workspace_id")
+  name        String
+  description String     @default("")
+  leadId      String?    @map("lead_id")
+  createdById String?    @map("created_by_id")
+  visibility  Visibility @default(private)
+  status      String     @default("active")
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lead      User?           @relation("ProjectLead", fields: [leadId], references: [id], onDelete: SetNull)
+  createdBy User?           @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  members   ProjectMember[]
+  notes     Note[]
+  ideas     Idea[]
+  events    Event[]
+
+  @@index([workspaceId])
+  @@index([leadId])
+  @@index([createdById])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id          String      @id @default(uuid())
+  projectId   String      @map("project_id")
+  userId      String      @map("user_id")
+  workspaceId String      @map("workspace_id")
+  role        ProjectRole @default(member)
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+  @@index([workspaceId])
+  @@map("project_members")
+}
+
+model Note {
+  id          String     @id @default(uuid())
+  workspaceId String     @map("workspace_id")
+  projectId   String?    @map("project_id")
+  parentId    String?    @map("parent_id")
+  authorId    String?    @map("author_id")
+  title       String
+  body        String     @default("")
+  visibility  Visibility @default(private)
+  important   Boolean    @default(false)
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  parent    Note?       @relation("NoteThread", fields: [parentId], references: [id], onDelete: Cascade)
+  children  Note[]      @relation("NoteThread")
+  author    User?       @relation("NoteAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  shares    NoteShare[]
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([parentId])
+  @@index([authorId])
+  @@map("notes")
+}
+
+model Idea {
+  id          String     @id @default(uuid())
+  workspaceId String     @map("workspace_id")
+  projectId   String?    @map("project_id")
+  authorId    String?    @map("author_id")
+  title       String
+  body        String     @default("")
+  status      String     @default("new")
+  position    Int        @default(0)
+  visibility  Visibility @default(private)
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  author    User?     @relation("IdeaAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([authorId])
+  @@index([workspaceId, status])
+  @@map("ideas")
+}
+
+model NoteShare {
+  id          String          @id @default(uuid())
+  noteId      String          @map("note_id")
+  userId      String          @map("user_id")
+  workspaceId String          @map("workspace_id")
+  permission  SharePermission @default(read)
+  createdById String?         @map("created_by_id")
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  note      Note      @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  user      User      @relation("NoteShareGrantee", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation("NoteShareCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([noteId, userId])
+  @@index([noteId])
+  @@index([userId])
+  @@index([workspaceId])
+  @@index([createdById])
+  @@map("note_shares")
+}
+
+model Conversation {
+  id          String           @id @default(uuid())
+  workspaceId String           @map("workspace_id")
+  groupId     String?          @map("group_id")
+  kind        ConversationKind
+  title       String           @default("")
+  createdById String?          @map("created_by_id")
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  group     Group?               @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdBy User?                @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  members   ConversationMember[]
+  messages  Message[]
+
+  @@index([workspaceId])
+  @@index([groupId])
+  @@index([createdById])
+  @@map("conversations")
+}
+
+model ConversationMember {
+  id             String    @id @default(uuid())
+  conversationId String    @map("conversation_id")
+  userId         String    @map("user_id")
+  workspaceId    String    @map("workspace_id")
+  lastReadAt     DateTime? @map("last_read_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([conversationId])
+  @@index([userId])
+  @@index([workspaceId])
+  @@map("conversation_members")
+}
+
+model Message {
+  id             String    @id @default(uuid())
+  conversationId String    @map("conversation_id")
+  workspaceId    String    @map("workspace_id")
+  authorId       String?   @map("author_id")
+  body           String
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  editedAt       DateTime? @map("edited_at") @db.Timestamptz(6)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  author       User?        @relation("MessageAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
+  @@index([workspaceId])
+  @@index([authorId])
+  @@map("messages")
+}
+
+model Event {
+  id          String     @id @default(uuid())
+  workspaceId String     @map("workspace_id")
+  projectId   String?    @map("project_id")
+  createdById String?    @map("created_by_id")
+  title       String
+  startsAt    DateTime   @map("starts_at") @db.Timestamptz(6)
+  endsAt      DateTime?  @map("ends_at") @db.Timestamptz(6)
+  visibility  Visibility @default(workspace)
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace    Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project      Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdBy    User?              @relation("EventCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  participants EventParticipant[]
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([createdById])
+  @@index([startsAt])
+  @@map("events")
+}
+
+model EventParticipant {
+  id          String            @id @default(uuid())
+  eventId     String            @map("event_id")
+  userId      String            @map("user_id")
+  workspaceId String            @map("workspace_id")
+  status      ParticipantStatus @default(invited)
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  event     Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@index([eventId])
+  @@index([userId])
+  @@index([workspaceId])
+  @@map("event_participants")
+}
+
+model Plan {
+  id          String          @id
+  code        String          @unique
+  name        String
+  description String          @default("")
+  priceCents  Int             @map("price_cents")
+  currency    String          @default("EUR") @db.Char(3)
+  interval    BillingInterval
+  limits      Json
+  active      Boolean         @default(true)
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  features      PlanFeature[]
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model PlanFeature {
+  id         String  @id
+  planId     String  @map("plan_id")
+  featureKey String  @map("feature_key")
+  enabled    Boolean @default(true)
+
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  @@unique([planId, featureKey])
+  @@index([planId])
+  @@index([featureKey])
+  @@map("plan_features")
+}
+
+model Subscription {
+  id                 String             @id @default(uuid())
+  workspaceId        String             @map("workspace_id")
+  planId             String             @map("plan_id")
+  billingUserId      String?            @map("billing_user_id")
+  status             SubscriptionStatus @default(active)
+  currentPeriodStart DateTime           @map("current_period_start") @db.Timestamptz(6)
+  currentPeriodEnd   DateTime?          @map("current_period_end") @db.Timestamptz(6)
+  cancelAt           DateTime?          @map("cancel_at") @db.Timestamptz(6)
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  plan         Plan          @relation(fields: [planId], references: [id], onDelete: Restrict)
+  billingUser  User?         @relation("SubscriptionPayer", fields: [billingUserId], references: [id], onDelete: SetNull)
+  invoices     Invoice[]
+  transactions Transaction[]
+
+  @@index([workspaceId])
+  @@index([planId])
+  @@index([billingUserId])
+  @@map("subscriptions")
+}
+
+model Invoice {
+  id             String        @id @default(uuid())
+  workspaceId    String        @map("workspace_id")
+  subscriptionId String?       @map("subscription_id")
+  number         String        @unique
+  amountCents    Int           @map("amount_cents")
+  currency       String        @default("EUR") @db.Char(3)
+  status         InvoiceStatus @default(open)
+  issuedAt       DateTime      @map("issued_at") @db.Timestamptz(6)
+  paidAt         DateTime?     @map("paid_at") @db.Timestamptz(6)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  transactions Transaction[]
+
+  @@index([workspaceId])
+  @@index([subscriptionId])
+  @@map("invoices")
+}
+
+model Transaction {
+  id             String            @id @default(uuid())
+  workspaceId    String            @map("workspace_id")
+  invoiceId      String?           @map("invoice_id")
+  subscriptionId String?           @map("subscription_id")
+  amountCents    Int               @map("amount_cents")
+  currency       String            @default("EUR") @db.Char(3)
+  status         TransactionStatus @default(pending)
+  provider       String            @default("")
+  providerRef    String            @default("") @map("provider_ref")
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invoice      Invoice?      @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([invoiceId])
+  @@index([subscriptionId])
+  @@map("transactions")
+}
+
+model Notification {
+  id          String    @id @default(uuid())
+  workspaceId String    @map("workspace_id")
+  userId      String    @map("user_id")
+  type        String
+  title       String
+  body        String    @default("")
+  readAt      DateTime? @map("read_at") @db.Timestamptz(6)
+  payload     Json      @default("{}")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+/// Kept when the actor user is removed (actor_id SET NULL) and when the workspace is removed (workspace_id SET NULL).
+model AuditLog {
+  id          String   @id @default(uuid())
+  workspaceId String?  @map("workspace_id")
+  actorId     String?  @map("actor_id")
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String   @default("") @map("entity_id")
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  actor     User?      @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}

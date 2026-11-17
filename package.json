@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node --test src/platform/platform.test.js src/i18n.test.mjs",
     "lint": "oxlint",
     "preview": "vite preview"
   },
