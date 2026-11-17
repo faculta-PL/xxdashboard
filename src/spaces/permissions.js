@@ -1,10 +1,39 @@
 /**
- * Workspace, guest, and group rules.
- * src/platform/permissions.js is not on this branch, so Nazix enforces them here.
+ * Workspace memory adapter. Policy decisions go through src/platform/permissions.js.
+ * Callers still pass the Firestore db, so this file keeps those signatures and
+ * re-exports the platform contract underneath.
  * Workspace id is the org id. See the HANDOFF in src/spaces/index.js.
  */
 
+import { can as platformCan, canPerformAdminOperation } from '../platform/permissions.js'
 import { asWorkspace, GROUP_ROLES, GROUP_TYPES, WORKSPACE_ROLES } from './model.js'
+
+export {
+  ACTIONS,
+  can,
+  isGroupVisible,
+  filterVisibleGroups,
+  passesWorkspaceIsolation,
+  actorWorkspaceIds,
+  isWorkspaceManager,
+  hasWorkspaceAdminPowers,
+  canPerformAdminOperation,
+} from '../platform/permissions.js'
+
+function actorFor(db, user) {
+  if (!user?.id) return null
+  const memberships = Object.values(db?.xx_org_members || {})
+    .filter((member) => member?.userId === user.id && isJoinedMember(member))
+    .map((member) => ({ workspaceId: member.orgId, role: member.role }))
+  const groupMemberships = Object.values(db?.xx_group_members || {})
+    .filter((member) => member?.userId === user.id)
+    .map((member) => ({
+      groupId: member.groupId,
+      workspaceId: member.orgId,
+      role: member.role,
+    }))
+  return { id: user.id, memberships, groupMemberships }
+}
 
 export { GROUP_ROLES, GROUP_TYPES, WORKSPACE_ROLES }
 
@@ -143,22 +172,19 @@ export function canManageGroupRoster(db, user, group) {
 }
 
 export function canCreateGroup(db, user, orgId) {
-  const role = workspaceRole(db, user?.id, orgId)
-  return role === 'owner' || role === 'admin' || role === 'member'
+  return platformCan(actorFor(db, user), 'create', { type: 'group', workspaceId: orgId })
 }
 
 export function canEditWorkspaceProfile(db, user, orgId) {
-  const role = workspaceRole(db, user?.id, orgId)
-  return role === 'owner' || role === 'admin'
+  return platformCan(actorFor(db, user), 'update', { type: 'workspace', workspaceId: orgId })
 }
 
 export function canManageWorkspaceMembers(db, user, orgId) {
-  const role = workspaceRole(db, user?.id, orgId)
-  return role === 'owner' || role === 'admin'
+  return platformCan(actorFor(db, user), 'invite', { type: 'workspace_member', workspaceId: orgId })
 }
 
 export function canArchiveWorkspace(db, user, orgId) {
-  return workspaceRole(db, user?.id, orgId) === 'owner'
+  return canPerformAdminOperation(workspaceRole(db, user?.id, orgId), 'archiveWorkspace')
 }
 
 export function canRestoreWorkspace(db, user, orgId) {
@@ -166,7 +192,7 @@ export function canRestoreWorkspace(db, user, orgId) {
 }
 
 export function canDeleteWorkspace(db, user, orgId) {
-  return workspaceRole(db, user?.id, orgId) === 'owner'
+  return platformCan(actorFor(db, user), 'delete', { type: 'workspace', workspaceId: orgId })
 }
 
 export function canAssignWorkspaceRole(actorRole, nextRole, targetRole) {

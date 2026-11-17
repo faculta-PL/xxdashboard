@@ -12,10 +12,12 @@ import {
   listAllFeedback,
   listMembersOfOrg,
   listOrganizations,
+  listUsers,
   loadOrgPeek,
   placeUserInOrg,
   removeOrgMember,
   selectOrganization,
+  setAccountStatus,
 } from '../lib/store'
 
 const inputClass =
@@ -267,7 +269,14 @@ export function OrgAdmin({ user, flash, peek, activeOrgId = '' }) {
   const [confirmName, setConfirmName] = useState('')
   const [deleteId, setDeleteId] = useState('')
   const [busy, setBusy] = useState(false)
+  const [accountQuery, setAccountQuery] = useState('')
+  const [confirmUser, setConfirmUser] = useState('')
   if (!isAdmin(user)) return null
+  const needle = accountQuery.trim().toLowerCase()
+  const accounts = listUsers().filter((person) => {
+    const blob = `${person.handle || ''} ${person.fullName || ''} ${person.email || ''}`.toLowerCase()
+    return !needle || blob.includes(needle)
+  })
 
   const place = async (e) => {
     e.preventDefault()
@@ -319,6 +328,37 @@ export function OrgAdmin({ user, flash, peek, activeOrgId = '' }) {
       </div>
       {/* MODULES-LAYER START */}
       <BillingPanel user={user} activeOrgId={activeOrgId} />
+      <section className="rounded-2xl border border-sage-200 bg-white/80 p-4">
+        <h3 className="font-display text-lg">{t('orgs.accounts')}</h3>
+        <input className={inputClass + ' mt-3'} value={accountQuery} placeholder={t('orgs.searchAccounts')} onChange={(event) => setAccountQuery(event.target.value)} />
+        <ul className="mt-3 divide-y divide-sage-100 text-sm">
+          {accounts.map((person) => (
+            <li key={person.id} className="flex flex-wrap items-center gap-2 py-2">
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-sage-900">{person.fullName} {person.handle ? `@${person.handle}` : ''}</p>
+                <p className="text-xs text-sage-600">{person.email} · {person.status || 'active'}</p>
+              </div>
+              <button
+                type="button"
+                className={btnGhost}
+                onClick={() => {
+                  if (confirmUser !== person.id) {
+                    setConfirmUser(person.id)
+                    return
+                  }
+                  const next = person.status === 'suspended' ? 'active' : 'suspended'
+                  setAccountStatus(person.id, next, user).then(() => {
+                    setConfirmUser('')
+                    flash(t('orgs.statusSaved'))
+                  }).catch((err) => flash(err.message, 'err'))
+                }}
+              >
+                {confirmUser === person.id ? t('orgs.confirmStatus') : person.status === 'suspended' ? t('orgs.restoreUser') : t('orgs.suspendUser')}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
       {/* MODULES-LAYER END */}
       <section className="rounded-2xl border border-sage-200 bg-white/80 p-4">
         <h3 className="font-display text-lg">{t('feedback.inbox')}</h3>

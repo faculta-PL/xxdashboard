@@ -1386,6 +1386,7 @@ export async function loginUser(email, password) {
   }
 
   if (!user) throw new Error('E-mail ou mot de passe incorrect.')
+  if (user.status === 'suspended' && !isAdminEmail(user.email)) throw new Error('Ce compte est suspendu.')
 
   if (isAdminEmail(user.email) || defaultAdmin) {
     const patch = {}
@@ -1793,6 +1794,28 @@ export async function updateUserRole(targetId, role, actor) {
   }
   await persistDoc('xx_users', user.id, updated, { required: firebaseConfigured })
   return publicUser(updated)
+}
+
+export async function setAccountStatus(userId, status, actor) {
+  if (!actor || !isAdmin(actor)) throw new Error('Permission refusée.')
+  if (status !== 'active' && status !== 'suspended') throw new Error('Statut inconnu.')
+  const target = memory.xx_users?.[userId]
+  if (!target) throw new Error('Compte introuvable.')
+  if (isAdminEmail(target.email)) throw new Error('Ce compte opérateur ne peut pas être suspendu.')
+  const next = { ...target, status, updatedAt: new Date().toISOString() }
+  await persistDoc('xx_users', userId, next)
+  await writeAudit({
+    actorId: actor.id,
+    userId: actor.id,
+    workspaceId: activeOrgId || '',
+    orgId: activeOrgId || '',
+    action: `account.${status}`,
+    type: `account.${status}`,
+    resourceType: 'user',
+    resourceId: userId,
+    at: next.updatedAt,
+  })
+  return publicUser(memory.xx_users[userId])
 }
 
 export function listUsers() {

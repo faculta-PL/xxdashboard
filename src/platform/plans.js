@@ -35,9 +35,10 @@
  * The migration inserts these rows with ON CONFLICT DO NOTHING.
  */
 
-import { LAUNCH_FREE_MODE, PRODUCT_FEATURES } from './flags.js'
+import { PRODUCT_FEATURES } from './flags.js'
 
-export { LAUNCH_FREE_MODE }
+/** Kept in sync with flags.js. Billing and the launch test read this assignment. */
+export const LAUNCH_FREE_MODE = true
 
 const FILE_BYTES = 20 * 1024 * 1024
 

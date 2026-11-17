@@ -23,7 +23,7 @@ const WORKSPACE_SURFACE = new Set(['workspace', 'workspace_member', 'invitation'
 /**
  * @param {string | null | undefined} role
  */
-function isWorkspaceManager(role) {
+export function isWorkspaceManager(role) {
   return role === 'owner' || role === 'admin'
 }
 
@@ -296,4 +296,105 @@ export function can(actor, action, resource) {
     return canContent(actor, role, action, resource)
   }
   return false
+}
+
+/**
+ * Firestore-shaped checks used by isolation and the modules tests.
+ * The pure `can()` API above stays the contract. These names match the
+ * workspace memory (org id, memberIds, sealed private groups).
+ */
+
+const ADMIN_ACTIONS = ['invite', 'changeRole', 'deleteWorkspace', 'manageAdmins', 'archiveWorkspace', 'suspend']
+
+export function hasWorkspaceAdminPowers(access) {
+  const role = access?.workspaceRole
+  return role === 'owner' || role === 'admin'
+}
+
+export function canPerformAdminOperation(workspaceRoleName, action) {
+  if (!WORKSPACE_ROLES.includes(workspaceRoleName)) return false
+  if (!ADMIN_ACTIONS.includes(action)) return false
+  if (action === 'suspend') return false
+  if (action === 'deleteWorkspace' || action === 'manageAdmins') return workspaceRoleName === 'owner'
+  if (action === 'archiveWorkspace') return workspaceRoleName === 'owner'
+  return isWorkspaceManager(workspaceRoleName)
+}
+
+export function groupRoleOf(userId, group, groupMembers) {
+  if (!userId || !group) return null
+  const row = (groupMembers || []).find((member) => member.groupId === group.id && member.userId === userId)
+  if (row?.role && GROUP_ROLES.includes(row.role)) return row.role
+  if (group.leadUserId === userId || group.ownerId === userId) return 'lead'
+  if (Array.isArray(group.memberIds) && group.memberIds.includes(userId)) return 'member'
+  if (group.isGeneral) return null
+  return null
+}
+
+export function canSeeGroup(user, group, access) {
+  if (!user || !group) return false
+  const role = access?.workspaceRole || ''
+  const membership = access?.groupRole || null
+  if (group.status === 'archived' && membership !== 'lead' && role !== 'owner') return false
+  if (group.isGeneral) return Boolean(role) && role !== 'guest'
+  if (!group.visibility) return Boolean(membership) || role === 'owner' || role === 'admin'
+  if (group.visibility === 'private') {
+    if (membership) return true
+    return role === 'owner' || role === 'admin'
+  }
+  if (role === 'guest') return Boolean(membership)
+  return Boolean(role)
+}
+
+export function canSeeGroupContent(user, group, access) {
+  if (!user || !group) return false
+  const role = access?.workspaceRole || ''
+  const membership = access?.groupRole || null
+  if (group.status === 'archived' && membership !== 'lead' && role !== 'owner') return false
+  if (group.isGeneral) return Boolean(role) && role !== 'guest'
+  if (membership) return true
+  if (group.visibility === 'private') {
+    if (group.sealed) return false
+    return role === 'owner'
+  }
+  if (!group.visibility) return role === 'owner' || role === 'admin'
+  return false
+}
+
+export function canPostInGroup(user, group, access) {
+  if (!canSeeGroupContent(user, group, access)) return false
+  if (access?.groupRole === 'observer') return false
+  if (group.isGeneral) return access?.workspaceRole && access.workspaceRole !== 'guest'
+  if (access?.groupRole) return true
+  return access?.workspaceRole === 'owner' && group.visibility === 'private' && !group.sealed
+}
+
+export function canManageGroupMembers(user, group, access) {
+  if (!user || !group) return false
+  if (access?.groupRole === 'lead' || access?.groupRole === 'admin') return true
+  if (group.sealed) return false
+  return access?.workspaceRole === 'owner' || access?.workspaceRole === 'admin'
+}
+
+export function canReadConversation(userId, conversation) {
+  if (!userId || !conversation) return false
+  const members = conversation.memberIds || conversation.participantIds || []
+  return members.includes(userId)
+}
+
+export function guestCanReadItem(user, item) {
+  if (!user || !item) return false
+  if (item.ownerId === user.id) return true
+  if ((item.shares || []).some((share) => share.userId === user.id)) return true
+  if ((item.shareUserIds || []).includes(user.id)) return true
+  return false
+}
+
+export function removeGroupMembershipOnly(state, groupId, userId) {
+  const groupMembers = (state.groupMembers || []).filter(
+    (member) => !(member.groupId === groupId && member.userId === userId),
+  )
+  return {
+    workspaceMembers: state.workspaceMembers || [],
+    groupMembers,
+  }
 }
