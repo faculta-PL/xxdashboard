@@ -22,6 +22,9 @@ import {
   Gamepad2,
   Star,
   Building2,
+  // SPACES-LAYER START
+  Layers,
+  // SPACES-LAYER END
   PanelLeftClose,
   PanelLeftOpen,
   ChevronDown,
@@ -57,6 +60,9 @@ export const NAV_GROUPS = [
     label: 'Collaboration',
     items: [
       { id: 'org', label: 'Organisation', icon: Building2 },
+      // SPACES-LAYER START
+      { id: 'spaces', label: 'Espaces', icon: Layers },
+      // SPACES-LAYER END
       { id: 'orgadmin', label: 'Organisations', icon: Building2 },
       { id: 'team', label: 'Équipe', icon: Users },
       { id: 'invitations', label: 'Invitations', icon: UserPlus },

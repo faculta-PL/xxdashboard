@@ -44,6 +44,9 @@ const dicts = {
       localMode: 'Mode local',
       emailUnverified: 'E-mail non vérifié',
       help: 'Aide — {label}',
+      // SPACES-LAYER START
+      spaces: 'Espaces',
+      // SPACES-LAYER END
       primary: 'Navigation principale',
     },
     landing: {
@@ -1207,6 +1210,9 @@ const dicts = {
       localMode: 'Local mode',
       emailUnverified: 'Email not verified',
       help: 'Help — {label}',
+      // SPACES-LAYER START
+      spaces: 'Spaces',
+      // SPACES-LAYER END
       primary: 'Main navigation',
     },
     landing: {

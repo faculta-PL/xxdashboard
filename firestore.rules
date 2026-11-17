@@ -504,5 +504,62 @@ service cloud.firestore {
         && get(orgMemberPath(resource.data.orgId)).data.role in ['owner', 'admin']
       );
     }
+
+    // SPACES-LAYER START
+    match /xx_group_members/{id} {
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.userId == request.auth.uid)
+        || (
+          resource.data.keys().hasAll(['orgId'])
+          && isOrgMember(resource.data.orgId)
+          && get(orgMemberPath(resource.data.orgId)).data.role in ['owner', 'admin', 'member']
+        );
+      allow create, update: if isAdmin()
+        || (
+          request.resource.data.orgId is string
+          && isOrgMember(request.resource.data.orgId)
+          && get(orgMemberPath(request.resource.data.orgId)).data.role == 'owner'
+        )
+        || (
+          request.resource.data.groupId is string
+          && exists(/databases/$(database)/documents/xx_group_members/$(request.resource.data.groupId + '_' + request.auth.uid))
+          && get(/databases/$(database)/documents/xx_group_members/$(request.resource.data.groupId + '_' + request.auth.uid)).data.role in ['lead', 'admin']
+        );
+      allow delete: if isAdmin()
+        || (
+          resource.data.keys().hasAll(['orgId'])
+          && isOrgMember(resource.data.orgId)
+          && get(orgMemberPath(resource.data.orgId)).data.role == 'owner'
+        )
+        || (
+          resource.data.groupId is string
+          && exists(/databases/$(database)/documents/xx_group_members/$(resource.data.groupId + '_' + request.auth.uid))
+          && get(/databases/$(database)/documents/xx_group_members/$(resource.data.groupId + '_' + request.auth.uid)).data.role in ['lead', 'admin']
+        );
+    }
+
+    match /xx_orgs/{id} {
+      allow delete: if isOrgMember(id) && get(orgMemberPath(id)).data.role == 'owner';
+    }
+
+    match /xx_org_members/{id} {
+      allow update: if isSignedIn()
+        && resource.data.status == 'pending'
+        && request.resource.data.orgId == resource.data.orgId
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.userId == request.auth.uid
+        && (
+          resource.data.userId == request.auth.uid
+          || resource.data.email == authEmail()
+        )
+        && request.resource.data.status in ['pending', 'active'];
+      allow delete: if isSignedIn()
+        && resource.data.status == 'pending'
+        && (
+          resource.data.userId == request.auth.uid
+          || resource.data.email == authEmail()
+        );
+    }
+    // SPACES-LAYER END
   }
 }

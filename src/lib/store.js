@@ -33,7 +33,6 @@ import {
   canDeleteEntity,
   isAdmin,
   isAdminEmail,
-  canReadGroup,
   canWriteGroup,
   canAddInFolder,
   canModifyFileOrFolder,
@@ -65,6 +64,11 @@ import {
 } from './files'
 import { VERIFY_EMAIL, RESET_EMAIL, firebaseUnavailableLine } from './emailCopy'
 import { ORG_SCOPED_COLLECTIONS, createOrgLayer } from './orgLayer'
+// SPACES-LAYER START
+import { readMirroredActiveId, writeActiveMirror } from '../spaces/active.js'
+import { createSpacesEngine } from '../spaces/engine.js'
+import { canPostInGroup, canSeeGroupContent, enterBlock } from '../spaces/permissions.js'
+// SPACES-LAYER END
 
 function viteEnv(key) {
   try {
@@ -121,7 +125,9 @@ function withTimeout(promise, ms, label) {
 let firestoreSyncState = 'idle'
 let realtimeAttached = false
 let activeOrgId = ''
-try { activeOrgId = localStorage.getItem(ACTIVE_ORG_KEY) || '' } catch { activeOrgId = '' }
+// SPACES-LAYER START
+try { activeOrgId = readMirroredActiveId(localStorage) } catch { activeOrgId = '' }
+// SPACES-LAYER END
 let orgPeek = { orgId: '', loading: false, error: '', rows: {} }
 let listenerUserId = ''
 let listenerIsAdmin = false
@@ -182,6 +188,9 @@ const COLLECTIONS = [
   'xx_feedback',
   'xx_orgs',
   'xx_org_members',
+  // SPACES-LAYER START
+  'xx_group_members',
+  // SPACES-LAYER END
 ]
 
 function emptyDb() {
@@ -994,18 +1003,48 @@ function attachRealtimeListeners() {
   rebindOrgListeners()
 }
 
+// SPACES-LAYER START
+function restoreNamespacedOrg(orgId) {
+  if (!orgId || typeof localStorage === 'undefined') return
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i) || ''
+      const match = key.match(/^nazix:([^:]+):(xx_[a-z0-9_]+)$/)
+      if (!match || match[1] !== orgId || !ORG_SCOPED.has(match[2])) continue
+      const parsed = JSON.parse(localStorage.getItem(key) || '{}')
+      if (!parsed || typeof parsed !== 'object') continue
+      if (!memory[match[2]]) memory[match[2]] = {}
+      for (const [rowId, row] of Object.entries(parsed)) {
+        if (!memory[match[2]][rowId]) memory[match[2]][rowId] = row
+      }
+    }
+  } catch { /* ignore */ }
+}
+// SPACES-LAYER END
+
 function setActiveOrgId(id) {
   const next = id || ''
-  if (next === activeOrgId) return
+  if (next === activeOrgId) {
+    // SPACES-LAYER START
+    try { writeActiveMirror(localStorage, next) } catch { /* ignore */ }
+    // SPACES-LAYER END
+    return
+  }
   if (!listenerIsAdmin) {
     for (const col of ORG_SCOPED) {
       for (const [rowId, row] of Object.entries(memory[col] || {})) {
         if (row?.orgId && row.orgId !== next) delete memory[col][rowId]
       }
     }
+    // SPACES-LAYER START
+    restoreNamespacedOrg(next)
+    // SPACES-LAYER END
   }
   activeOrgId = next
   try {
+    // SPACES-LAYER START
+    writeActiveMirror(localStorage, next)
+    // SPACES-LAYER END
     if (next) localStorage.setItem(ACTIVE_ORG_KEY, next)
     else localStorage.removeItem(ACTIVE_ORG_KEY)
   } catch { /* ignore */ }
@@ -1780,7 +1819,11 @@ function generalGroupId(orgId = activeOrgId) {
 }
 function orgMemberUserIds(orgId = activeOrgId) {
   if (!orgId) return []
-  return Object.values(memory.xx_org_members || {}).filter((m) => m.orgId === orgId && m.userId).map((m) => m.userId)
+  // SPACES-LAYER START — guests and pending invites stay out of the general group.
+  return Object.values(memory.xx_org_members || {})
+    .filter((m) => m.orgId === orgId && m.userId && m.role !== 'guest' && m.status !== 'pending' && m.status !== 'revoked')
+    .map((m) => m.userId)
+  // SPACES-LAYER END
 }
 async function addUserToGeneralGroup(userId) {
   if (!activeOrgId || !userId) return null
@@ -1804,18 +1847,42 @@ export async function ensureGeneralGroup(user) {
   const existing = memory.xx_groups[id]
   const now = new Date().toISOString()
   if (!existing) {
-    const group = { id, name: 'Général', memberIds, ownerId: user.id, isGeneral: true, orgId: activeOrgId, createdAt: now, updatedAt: now }
+    const group = {
+      id,
+      name: 'Général',
+      memberIds,
+      ownerId: user.id,
+      isGeneral: true,
+      orgId: activeOrgId,
+      createdAt: now,
+      updatedAt: now,
+      // SPACES-LAYER START
+      type: 'internal',
+      status: 'active',
+      // SPACES-LAYER END
+    }
     await persistDoc('xx_groups', id, group)
     return group
   }
-  const updated = { ...existing, orgId: activeOrgId, memberIds, isGeneral: true, name: existing.name || 'Général', updatedAt: now }
+  const updated = {
+    ...existing,
+    orgId: activeOrgId,
+    memberIds,
+    isGeneral: true,
+    name: existing.name || 'Général',
+    updatedAt: now,
+    // SPACES-LAYER START
+    type: existing.type || 'internal',
+    status: existing.status || 'active',
+    // SPACES-LAYER END
+  }
   await persistDoc('xx_groups', id, updated)
   return updated
 }
 
 export function listGroupsForUser(user) {
   return Object.values(memory.xx_groups || {})
-    .filter((g) => g.orgId === activeOrgId && canReadGroup(user, g))
+    .filter((g) => g.orgId === activeOrgId && canSeeGroupContent(memory, user, g))
     .sort((a, b) => {
       if (a.isGeneral && !b.isGeneral) return -1
       if (!a.isGeneral && b.isGeneral) return 1
@@ -1825,7 +1892,9 @@ export function listGroupsForUser(user) {
 
 export function listMessagesForGroup(groupId, user) {
   const group = memory.xx_groups[groupId]
-  if (!canReadGroup(user, group)) return []
+  // SPACES-LAYER START
+  if (!canSeeGroupContent(memory, user, group)) return []
+  // SPACES-LAYER END
   return Object.values(memory.xx_messages || {})
     .filter((m) => m.groupId === groupId)
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
@@ -1885,7 +1954,9 @@ export async function inviteToGroup(groupId, userIds, actor) {
 
 export async function sendMessage(groupId, body, user) {
   const group = memory.xx_groups[groupId]
-  if (!canWriteGroup(user, group)) throw new Error('Permission refusée.')
+  // SPACES-LAYER START
+  if (!canPostInGroup(memory, user, group)) throw new Error('Permission refusée.')
+  // SPACES-LAYER END
   const text = String(body || '').trim()
   if (!text) throw new Error('Message vide.')
   if (text.length > 4000) throw new Error('Message trop long.')
@@ -3609,6 +3680,11 @@ export function selectOrganization(orgId, user) {
   if (!orgId) { setActiveOrgId(''); return }
   const allowed = orgApi.membershipsFor(user).some((m) => m.orgId === orgId)
   if (!allowed) throw new Error('Vous n’appartenez pas à cette organisation.')
+  // SPACES-LAYER START
+  const block = enterBlock(memory, user, orgId)
+  if (block === 'archived') throw new Error('Cet espace est archivé.')
+  if (block) throw new Error('Vous n’appartenez pas à cette organisation.')
+  // SPACES-LAYER END
   setActiveOrgId(orgId)
 }
 export function listOrganizations() {
@@ -3618,7 +3694,21 @@ export function listMembersOfOrg(orgId) {
   return Object.values(memory.xx_org_members || {}).filter((m) => m.orgId === orgId)
 }
 export const createOrganization = (...args) => orgApi.createOrganization(...args)
+// SPACES-LAYER START
+export const spaces = createSpacesEngine({
+  getDb: () => memory,
+  persist: (col, id, value) => persistDoc(col, id, value),
+  remove: (col, id) => removeDoc(col, id),
+  newId: uid,
+  now: () => new Date().toISOString(),
+  getActive: () => activeOrgId,
+  setActive: (id) => setActiveOrgId(id || ''),
+})
+// SPACES-LAYER END
 export async function resolveOrganizations(user) {
+  // SPACES-LAYER START
+  try { await spaces.claimInvites(user) } catch (err) { console.warn('spaces invites:', err?.message || err) }
+  // SPACES-LAYER END
   const result = await orgApi.resolveOrganizations(user)
   bindRealtimeForUser(user)
   return result

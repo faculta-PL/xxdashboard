@@ -1,4 +1,7 @@
 /** Organization isolation: membership, migration, feedback seed. */
+// SPACES-LAYER START
+import { slugify, uniqueSlug } from '../spaces/model.js'
+// SPACES-LAYER END
 
 export const ORG_SCOPED_COLLECTIONS = [
   'xx_notes',
@@ -21,9 +24,14 @@ export const ORG_SCOPED_COLLECTIONS = [
   'xx_ai_threads',
   'xx_game_scores',
   'xx_feedback',
+  // SPACES-LAYER START
+  'xx_group_members',
+  // SPACES-LAYER END
 ]
 
-export const ORG_ROLES = ['owner', 'admin', 'member']
+// SPACES-LAYER START
+export const ORG_ROLES = ['owner', 'admin', 'member', 'guest']
+// SPACES-LAYER END
 
 export function orgMemberId(orgId, userId) {
   return `${orgId}_${userId}`
@@ -58,7 +66,12 @@ export function createOrgLayer(ctx) {
     if (!user) return []
     const email = String(user.email || '').trim().toLowerCase()
     return rows(mem(), 'xx_org_members').filter(
-      (m) => m.userId === user.id || (email && String(m.email || '').toLowerCase() === email),
+      (m) =>
+        (m.userId === user.id || (email && String(m.email || '').toLowerCase() === email))
+        // SPACES-LAYER START
+        && m.status !== 'pending'
+        && m.status !== 'revoked'
+        // SPACES-LAYER END
     )
   }
 
@@ -134,7 +147,19 @@ export function createOrgLayer(ctx) {
     if (label.length < 2) throw new Error('Nom d’organisation trop court.')
     const id = ctx.newId('org')
     const now = ctx.now()
-    await ctx.persistDoc('xx_orgs', id, { id, name: label, createdAt: now, createdBy: user.id })
+    await ctx.persistDoc('xx_orgs', id, {
+      id,
+      name: label,
+      createdAt: now,
+      createdBy: user.id,
+      // SPACES-LAYER START
+      slug: uniqueSlug(rows(mem(), 'xx_orgs'), slugify(label), id),
+      description: '',
+      ownerId: user.id,
+      status: 'active',
+      emoji: '',
+      // SPACES-LAYER END
+    })
     const memberId = orgMemberId(id, user.id)
     await ctx.persistDoc('xx_org_members', memberId, {
       id: memberId,
@@ -142,6 +167,9 @@ export function createOrgLayer(ctx) {
       userId: user.id,
       email: user.email || '',
       role: 'owner',
+      // SPACES-LAYER START
+      status: 'active',
+      // SPACES-LAYER END
       joinedAt: now,
     })
     ctx.setActiveOrgId(id)
@@ -174,8 +202,16 @@ export function createOrgLayer(ctx) {
     if (memberships.length === 1) ctx.setActiveOrgId(memberships[0].orgId)
     else if (!memberships.some((m) => m.orgId === saved)) ctx.setActiveOrgId('')
     else ctx.setActiveOrgId(saved)
+    // SPACES-LAYER START
     const active = ctx.getActiveOrgId()
-    if (active) await seedShippedFeedback(user, active)
+    if (active) {
+      const org = mem().xx_orgs?.[active]
+      const member = membershipsFor(user).find((row) => row.orgId === active)
+      const hidden = org && (org.status === 'archived' || org.status === 'suspended') && member?.role !== 'owner'
+      if (hidden) ctx.setActiveOrgId('')
+    }
+    // SPACES-LAYER END
+    if (ctx.getActiveOrgId()) await seedShippedFeedback(user, ctx.getActiveOrgId())
     return { memberships: membershipsFor(user), activeOrgId: ctx.getActiveOrgId() }
   }
 
