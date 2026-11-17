@@ -177,6 +177,7 @@ import {
 } from './lib/store'
 import { firebaseConfigured, missingFirebaseVars, getFirebaseStatus } from './lib/firebase'
 import { isPlatformAdmin } from './platform/superAdmin.js'
+import { organizationTitle } from './lib/orgName.js'
 import {
   canReadEntity,
   canEditEntity,
@@ -1394,7 +1395,7 @@ export default function App() {
                   })()
                 : null}
               <span className="truncate">
-                {t(view === 'dashboard' ? 'nav.myDashboard' : view === 'notes' || view === 'ideas' || view === 'important' ? 'nav.notesIdeas' : `nav.${view}`) ||
+                {t(view === 'notes' || view === 'ideas' || view === 'important' ? 'nav.notesIdeas' : `nav.${view}`) ||
                   NAV_FLAT.find((n) => n.id === view)?.label}
               </span>
             </h1>
@@ -1556,7 +1557,7 @@ export default function App() {
             <>
             <PersonalBanner
               hasOrg={Boolean(orgId)}
-              orgName={db?.xx_orgs?.[orgId]?.name || ''}
+              orgName={organizationTitle(db?.xx_orgs?.[orgId], user?.role)}
               onCreate={() => setCreateOrgOpen(true)}
               onOverview={() => setView('overview')}
             />

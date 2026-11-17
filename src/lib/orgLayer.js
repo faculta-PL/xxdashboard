@@ -1,6 +1,7 @@
 /** Organization isolation: membership, migration, feedback seed. */
 // SPACES-LAYER START
 import { slugify, uniqueSlug } from '../spaces/model.js'
+import { fallbackOrganizationName } from './orgName.js'
 // SPACES-LAYER END
 
 export const ORG_SCOPED_COLLECTIONS = [
@@ -190,8 +191,7 @@ export function createOrgLayer(ctx) {
     let memberships = membershipsFor(user)
     const unscoped = ORG_SCOPED_COLLECTIONS.some((col) => rows(mem(), col).some((row) => row && row.orgId == null))
     if (ctx.isAdminUser(user) && !memberships.length && unscoped) {
-      const first = String(user.fullName || 'Nazix').trim().split(/\s+/)[0] || 'Nazix'
-      await createOrganization(first, user)
+      await createOrganization(fallbackOrganizationName(user), user)
       memberships = membershipsFor(user)
     }
     const firstOrgId = memberships[0]?.orgId || ''

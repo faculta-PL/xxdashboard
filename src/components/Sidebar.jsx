@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   LayoutDashboard,
   StickyNote,
@@ -20,9 +20,7 @@ import {
   Sparkles,
   Gamepad2,
   Building2,
-  // SPACES-LAYER START
   Layers,
-  // SPACES-LAYER END
   PanelLeftClose,
   PanelLeftOpen,
   ChevronDown,
@@ -30,25 +28,29 @@ import {
   Wand2,
   MessageSquarePlus,
   UserPlus,
+  Plus,
+  Check,
 } from 'lucide-react'
 import { getBackendMode } from '../lib/store'
+import { organizationTitle } from '../lib/orgName.js'
+import { isPlatformAdmin } from '../platform/superAdmin.js'
 import { useI18n } from '../i18n'
 
 export const NAV_GROUPS = [
   {
     id: 'personal',
-    label: 'Espace personnel',
-    items: [{ id: 'dashboard', label: 'Mon tableau de bord', icon: LayoutDashboard, labelKey: 'nav.myDashboard' }],
+    label: 'Personnel',
+    items: [{ id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard }],
   },
   {
     id: 'org',
-    label: 'Organisation active',
+    label: 'Organisation',
     items: [
       { id: 'overview', label: 'Vue d’ensemble', icon: Building2 },
       { id: 'spaces', label: 'Espaces', icon: Layers },
       { id: 'teams', label: 'Équipes', icon: Users },
       { id: 'projects', label: 'Projets', icon: FolderKanban },
-      { id: 'notes', label: 'Notes et idées', icon: StickyNote, labelKey: 'nav.notesIdeas' },
+      { id: 'notes', label: 'Notes', icon: StickyNote },
       { id: 'chat', label: 'Discussions', icon: MessageCircle },
       { id: 'calendar', label: 'Calendrier', icon: CalendarDays },
       { id: 'files', label: 'Documents', icon: FolderOpen },
@@ -58,8 +60,8 @@ export const NAV_GROUPS = [
     id: 'manage',
     label: 'Gestion',
     items: [
-      { id: 'members', label: 'Membres et invitations', icon: UserPlus },
-      { id: 'orgsettings', label: 'Paramètres de l’organisation', icon: Settings },
+      { id: 'members', label: 'Membres', icon: UserPlus, labelKey: 'nav.menuMembers' },
+      { id: 'orgsettings', label: 'Paramètres', icon: Settings, labelKey: 'nav.menuOrgSettings' },
     ],
   },
   {
@@ -70,14 +72,14 @@ export const NAV_GROUPS = [
       { id: 'budget', label: 'Budget', icon: Wallet },
       { id: 'risks', label: 'Risques', icon: ShieldAlert },
       { id: 'canvas', label: 'Espace visuel', icon: BoxSelect },
-      { id: 'assistant', label: 'Assistant IA', icon: Sparkles },
+      { id: 'assistant', label: 'Assistant', icon: Sparkles, labelKey: 'nav.menuAssistant' },
       { id: 'games', label: 'Jeux', icon: Gamepad2 },
       { id: 'feedback', label: 'Retours', icon: MessageSquarePlus },
-      { id: 'guide', label: 'Guide', icon: BookOpen },
       { id: 'search', label: 'Recherche', icon: Search },
       { id: 'export', label: 'Exports', icon: Download },
       { id: 'create', label: 'Création', icon: Wand2 },
       { id: 'notifications', label: 'Notifications', icon: Bell },
+      { id: 'guide', label: 'Guide', icon: BookOpen },
     ],
   },
 ]
@@ -87,16 +89,18 @@ export const NAV_FLAT = [
   { id: 'settings', label: 'Paramètres', icon: Settings },
 ]
 
+const TOOL_IDS = new Set(NAV_GROUPS.find((group) => group.id === 'tools').items.map((item) => item.id))
 const GROUPS_KEY = 'nazix_nav_groups'
 const COLLAPSE_KEY = 'nazix_nav_collapsed'
 
-function readGroups() {
+function readToolsClosed() {
   try {
     const raw = JSON.parse(localStorage.getItem(GROUPS_KEY) || '{}')
-    return raw && typeof raw === 'object' ? raw : {}
+    if (raw && typeof raw === 'object' && raw.tools === false) return false
   } catch {
-    return {}
+    /* ignore */
   }
+  return true
 }
 
 const GROUP_I18N = {
@@ -110,6 +114,131 @@ function navLabel(t, item) {
   const key = item.labelKey || `nav.${item.id}`
   const translated = t(key)
   return translated === key ? item.label : translated
+}
+
+function OrgSwitcher({
+  user,
+  collapsed,
+  organizations,
+  activeOrgId,
+  onOrganization,
+  onCreateOrganization,
+  onManageOrganizations,
+  onAdminOrganizations,
+  onCloseMobile,
+}) {
+  const { t } = useI18n()
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef(null)
+  const active = organizations.find((org) => org.id === activeOrgId) || null
+  const closedLabel = activeOrgId
+    ? organizationTitle(active, user?.role) || t('hier.orgUntitled')
+    : t('hier.personalOption')
+  const showAllOrgs = Boolean(onAdminOrganizations) && isPlatformAdmin(user)
+
+  useEffect(() => {
+    if (!open) return undefined
+    const onPointer = (event) => {
+      if (!rootRef.current?.contains(event.target)) setOpen(false)
+    }
+    const onKey = (event) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onPointer)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const choose = (action) => {
+    setOpen(false)
+    action?.()
+    onCloseMobile?.()
+  }
+
+  const rowClass = (selected) =>
+    `flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm ${
+      selected ? 'bg-sage-700 font-semibold text-white' : 'text-sage-900 hover:bg-sage-100'
+    }`
+
+  return (
+    <div ref={rootRef} className={`relative mb-3 ${collapsed ? 'lg:px-0' : ''}`}>
+      <button
+        type="button"
+        className={`flex min-h-11 w-full items-center gap-2 rounded-xl border border-sage-500 bg-white px-3 text-sm font-medium text-sage-900 ${
+          collapsed ? 'lg:justify-center lg:px-0' : ''
+        }`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`${t('hier.switch')} : ${closedLabel}`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <Building2 size={16} className="shrink-0 text-sage-700" aria-hidden="true" />
+        <span className={`min-w-0 flex-1 truncate text-left ${collapsed ? 'lg:hidden' : ''}`}>{closedLabel}</span>
+        <ChevronDown
+          size={16}
+          className={`shrink-0 text-sage-600 transition ${open ? 'rotate-180' : ''} ${collapsed ? 'lg:hidden' : ''}`}
+          aria-hidden="true"
+        />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          aria-label={t('hier.switch')}
+          className={`absolute z-50 max-h-[min(24rem,70vh)] overflow-y-auto xx-scroll rounded-xl border border-sage-200 bg-white p-1 text-sage-900 shadow-lg ${
+            collapsed
+              ? 'left-0 right-0 top-full mt-1 lg:left-full lg:right-auto lg:top-0 lg:mt-0 lg:ml-2 lg:w-64'
+              : 'left-0 right-0 top-full mt-1'
+          }`}
+        >
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={!activeOrgId}
+            className={rowClass(!activeOrgId)}
+            onClick={() => choose(() => onOrganization?.(''))}
+          >
+            <span className="min-w-0 flex-1 truncate">{t('hier.personalOption')}</span>
+            {!activeOrgId ? <Check size={16} className="shrink-0" aria-hidden="true" /> : null}
+          </button>
+          {organizations.map((org) => {
+            const selected = org.id === activeOrgId
+            const label = organizationTitle(org, user?.role) || t('hier.orgUntitled')
+            return (
+              <button
+                key={org.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={selected}
+                className={rowClass(selected)}
+                onClick={() => choose(() => onOrganization?.(org.id))}
+              >
+                <span className="min-w-0 flex-1 truncate">{label}</span>
+                {selected ? <Check size={16} className="shrink-0" aria-hidden="true" /> : null}
+              </button>
+            )
+          })}
+          <div className="my-1 border-t border-sage-200" />
+          <button type="button" role="menuitem" className={rowClass(false)} onClick={() => choose(onCreateOrganization)}>
+            <Plus size={16} className="shrink-0" aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate">{t('hier.createOrg')}</span>
+          </button>
+          <button type="button" role="menuitem" className={rowClass(false)} onClick={() => choose(onManageOrganizations)}>
+            <Settings size={16} className="shrink-0" aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate">{t('hier.manage')}</span>
+          </button>
+          {showAllOrgs ? (
+            <button type="button" role="menuitem" className={rowClass(false)} onClick={() => choose(onAdminOrganizations)}>
+              <Building2 size={16} className="shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">{t('hier.adminOrgs')}</span>
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 export function Sidebar({
@@ -130,18 +259,25 @@ export function Sidebar({
   onAdminOrganizations,
 }) {
   const { t } = useI18n()
-  const [closedGroups, setClosedGroups] = useState(readGroups)
+  const preferClosed = useRef(readToolsClosed())
+  const [toolsClosed, setToolsClosed] = useState(() => readToolsClosed() && !TOOL_IDS.has(view))
 
   useEffect(() => {
-    try {
-      localStorage.setItem(GROUPS_KEY, JSON.stringify(closedGroups))
-    } catch {
-      /* ignore */
-    }
-  }, [closedGroups])
+    if (TOOL_IDS.has(view)) setToolsClosed(false)
+    else setToolsClosed(preferClosed.current)
+  }, [view])
 
-  const toggleGroup = (id) => {
-    setClosedGroups((prev) => ({ ...prev, [id]: !prev[id] }))
+  const toggleTools = () => {
+    setToolsClosed((prev) => {
+      const next = !prev
+      preferClosed.current = next
+      try {
+        localStorage.setItem(GROUPS_KEY, JSON.stringify({ tools: next }))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
   }
 
   const toggleRail = () => {
@@ -154,6 +290,9 @@ export function Sidebar({
     }
   }
 
+  const orgActive = Boolean(activeOrgId)
+  const groups = NAV_GROUPS.filter((group) => orgActive || (group.id !== 'org' && group.id !== 'manage'))
+
   return (
     <aside className="flex h-full w-[min(260px,100vw)] flex-col border-r border-sage-200 bg-sage-800 text-sage-50 lg:w-full">
       <div className="flex h-full flex-col p-3 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
@@ -161,7 +300,7 @@ export function Sidebar({
           <div className={`min-w-0 ${collapsed ? 'lg:hidden' : ''}`}>
             <p className="font-display text-2xl leading-none">Nazix</p>
             <p className="mt-1 truncate text-xs text-sage-300">
-              {getBackendMode() === 'firebase' ? t('nav.firebase') : t('nav.localMode')} · {user.role}
+              {getBackendMode() === 'firebase' ? t('nav.firebase') : t('nav.localMode')}
             </p>
           </div>
           <button
@@ -184,56 +323,50 @@ export function Sidebar({
           </button>
         </div>
 
-        <div className={`mb-3 rounded-xl bg-sage-700/60 p-2 ${collapsed ? 'lg:hidden' : ''}`}>
-          <label className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-sage-300">
-            {t('hier.switch')}
-            <select
-              className="mt-1 w-full min-h-11 truncate rounded-lg border border-sage-500 bg-white px-2 py-2 text-sm font-medium normal-case tracking-normal text-sage-900"
-              value={organizations.some((org) => org.id === activeOrgId) ? activeOrgId : ''}
-              aria-label={t('hier.switch')}
-              onChange={(event) => onOrganization?.(event.target.value)}
-            >
-              <option value="">{t('hier.personalOption')}</option>
-              {organizations.map((org) => (
-                <option key={org.id} value={org.id}>
-                  {`${org.emoji || org.logo || ''} ${org.name}`.trim()}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="mt-2 flex flex-col gap-1">
-            <button type="button" className="min-h-10 rounded-lg px-2 text-left text-sm text-sage-50 hover:bg-sage-600" onClick={onCreateOrganization}>
-              {t('hier.createOrg')}
-            </button>
-            <button type="button" className="min-h-10 rounded-lg px-2 text-left text-sm text-sage-50 hover:bg-sage-600" onClick={onManageOrganizations}>
-              {t('hier.manage')}
-            </button>
-            {onAdminOrganizations ? (
-              <button type="button" className="min-h-10 rounded-lg px-2 text-left text-sm text-sage-50 hover:bg-sage-600" onClick={onAdminOrganizations}>
-                {t('hier.adminOrgs')}
-              </button>
-            ) : null}
-          </div>
-        </div>
+        <OrgSwitcher
+          user={user}
+          collapsed={collapsed}
+          organizations={organizations}
+          activeOrgId={activeOrgId}
+          onOrganization={onOrganization}
+          onCreateOrganization={onCreateOrganization}
+          onManageOrganizations={onManageOrganizations}
+          onAdminOrganizations={onAdminOrganizations}
+          onCloseMobile={onCloseMobile}
+        />
 
         <nav className="flex-1 space-y-3 overflow-y-auto xx-scroll" aria-label={t('nav.primary')}>
-          {NAV_GROUPS.map((group) => {
-            const closed = Boolean(closedGroups[group.id]) && !collapsed
+          {groups.map((group) => {
             const groupLabel = t(GROUP_I18N[group.id] || group.label)
+            const collapsible = group.id === 'tools'
+            const closed = collapsible && toolsClosed
             return (
               <div key={group.id}>
-                <button
-                  type="button"
-                  className={`flex w-full items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sage-300 hover:text-sage-50 ${
-                    collapsed ? 'lg:hidden' : ''
-                  }`}
-                  onClick={() => toggleGroup(group.id)}
-                  aria-expanded={!closed}
-                >
-                  <span className="min-w-0 flex-1 truncate text-left">{groupLabel}</span>
-                  <ChevronDown size={14} className={`shrink-0 transition ${closed ? '-rotate-90' : ''}`} />
-                </button>
-                {collapsed && <div className="hidden h-px bg-sage-600/80 lg:block" aria-hidden />}
+                {collapsible ? (
+                  <button
+                    type="button"
+                    className={`flex w-full items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sage-300 hover:text-sage-50 ${
+                      collapsed ? 'lg:justify-center lg:px-0' : ''
+                    }`}
+                    onClick={toggleTools}
+                    aria-expanded={!closed}
+                    title={groupLabel}
+                  >
+                    <span className={`min-w-0 flex-1 truncate text-left ${collapsed ? 'lg:hidden' : ''}`}>{groupLabel}</span>
+                    <ChevronDown size={14} className={`shrink-0 transition ${closed ? '-rotate-90' : ''}`} />
+                  </button>
+                ) : (
+                  <>
+                    <p
+                      className={`px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sage-300 ${
+                        collapsed ? 'lg:sr-only' : ''
+                      }`}
+                    >
+                      {groupLabel}
+                    </p>
+                    {collapsed ? <div className="hidden h-px bg-sage-600/80 lg:block" aria-hidden="true" /> : null}
+                  </>
+                )}
                 {!closed && (
                   <div className="mt-1 space-y-0.5">
                     {group.items.map((item) => {
@@ -294,15 +427,15 @@ export function Sidebar({
           <button
             type="button"
             onClick={() => onView('settings')}
-            title={t('nav.settings')}
-            aria-label={t('nav.settings')}
+            title={t('nav.account')}
+            aria-label={t('nav.account')}
             aria-current={view === 'settings' ? 'page' : undefined}
             className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
               collapsed ? 'lg:justify-center lg:px-0' : ''
             } ${view === 'settings' ? 'bg-sage-600 text-white' : 'text-sage-100 hover:bg-sage-700'}`}
           >
             <Settings size={18} className="shrink-0" />
-            <span className={`min-w-0 flex-1 truncate ${collapsed ? 'lg:hidden' : ''}`}>{t('nav.settings')}</span>
+            <span className={`min-w-0 flex-1 truncate ${collapsed ? 'lg:hidden' : ''}`}>{t('nav.account')}</span>
           </button>
           <p className={`mt-2 truncate px-2 text-sm font-medium ${collapsed ? 'lg:hidden' : ''}`}>{user.fullName}</p>
           <p className={`truncate px-2 text-xs text-sage-300 ${collapsed ? 'lg:hidden' : ''}`}>{user.email}</p>

@@ -17,6 +17,7 @@ import { showInSwitcher } from './spaces/permissions.js'
 // SPACES-LAYER END
 import { createRecognizer, speechSupported } from './lib/voice'
 import { todayIso } from './lib/todos'
+import { organizationTitle } from './lib/orgName.js'
 import { useStickToBottom } from './chat/stick.js'
 
 const btn =
@@ -208,7 +209,7 @@ export default function MiniApp({
         <select className={field} value={orgId} aria-label={t('orgs.switch')} onChange={(e) => selectOrganization(e.target.value, user)}>
           {orgs.map((item) => (
             <option key={item.id} value={item.id}>
-              {item.name}
+              {organizationTitle(item, user?.role) || t('hier.orgUntitled')}
             </option>
           ))}
         </select>

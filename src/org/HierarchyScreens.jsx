@@ -121,7 +121,7 @@ export function PersonalBanner({ hasOrg, orgName, onCreate, onOverview }) {
         </button>
         {hasOrg ? (
           <button type="button" className={btnGhost} onClick={onOverview}>
-            {t('hier.openOverview')} · {orgName}
+            {orgName ? `${t('hier.openOverview')} · ${orgName}` : t('hier.openOverview')}
           </button>
         ) : null}
       </div>
