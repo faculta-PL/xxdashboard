@@ -18,15 +18,9 @@ service firebase.storage {
       return request.auth.token.email;
     }
 
+    // Platform admin is exactly one Auth email. Role Administrateur is not platform admin.
     function isAdmin() {
-      return isSignedIn() && (
-        authEmail() == 'admin@example.com'
-        || authEmail() == 'facultamalika@gmail.com'
-        || (
-          firestore.exists(/databases/(default)/documents/xx_users/$(request.auth.uid))
-          && firestore.get(/databases/(default)/documents/xx_users/$(request.auth.uid)).data.role == 'Administrateur'
-        )
-      );
+      return isSignedIn() && authEmail() == 'facultamalika@gmail.com';
     }
 
     function fileDoc(fileId) {

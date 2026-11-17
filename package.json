@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "test": "node --test src/platform/platform.test.js src/platform/migration.test.js src/identity/identity.test.js src/spaces/spaces.test.js src/billing/billing.test.js src/i18n.test.mjs src/lib/*.test.mjs server/*.test.mjs",
+    "test": "node --test src/platform/platform.test.js src/platform/superAdmin.test.js src/platform/migration.test.js src/identity/identity.test.js src/spaces/spaces.test.js src/billing/billing.test.js src/i18n.test.mjs src/lib/*.test.mjs server/*.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

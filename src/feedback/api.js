@@ -1,6 +1,6 @@
 /** Create, import, vote once, and change status. Never deletes a feedback doc. */
 import { uid } from '../lib/crypto'
-import { isAdmin } from '../lib/rbac'
+import { isPlatformAdmin } from '../platform/superAdmin.js'
 import { getStoreSnapshot, notifyUsers, writeFeedbackDoc } from '../lib/store'
 import { FEEDBACK_STATUSES } from './model.js'
 import { isOrgAdmin, isOrgMember } from './org.js'
@@ -51,7 +51,7 @@ async function createFeedbackDoc({ title, detail, module, source }, user, orgId)
 async function notifyAdmins(user, payload) {
   const db = getStoreSnapshot()
   const adminIds = Object.values(db.xx_users || {})
-    .filter((account) => account?.id && account.id !== user.id && isAdmin(account))
+    .filter((account) => account?.id && account.id !== user.id && isPlatformAdmin(account))
     .map((account) => account.id)
   if (!adminIds.length) return
   await notifyUsers(adminIds, payload)
@@ -95,7 +95,7 @@ export async function voteFeedbackOnce(id, user) {
   const legacy = existing.orgId == null
   if (legacy) {
     const owns = existing.userId === user.id || existing.ownerId === user.id || existing.authorId === user.id
-    if (!owns && !isAdmin(user)) throw coded('forbidden')
+    if (!owns && !isPlatformAdmin(user)) throw coded('forbidden')
   } else if (!isOrgMember(user, existing.orgId || '', db)) {
     throw coded('not_member')
   }

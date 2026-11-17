@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Building2, Eye, Trash2, UserPlus } from 'lucide-react'
 import { useI18n } from '../i18n'
-import { isAdmin } from '../lib/rbac'
+import { browserRepo } from '../identity/repo.js'
+import { hydrateInvites } from '../identity/bridge.js'
+import { isPlatformAdmin } from '../platform/superAdmin.js'
 // MODULES-LAYER START
 import { BillingPanel } from '../billing/BillingPanel.jsx'
 // MODULES-LAYER END
@@ -12,6 +14,7 @@ import {
   listAllFeedback,
   listMembersOfOrg,
   listOrganizations,
+  listPlatformDirectory,
   listUsers,
   loadOrgPeek,
   placeUserInOrg,
@@ -215,7 +218,7 @@ export function OrgHome({ user, activeOrgId, flash }) {
             <select className={inputClass} value={role} onChange={(e) => setRole(e.target.value)}>
               <option value="member">{t('orgs.member')}</option>
               <option value="admin">{t('orgs.admin')}</option>
-              {orgRoleIsOwner(user, activeOrgId) || isAdmin(user) ? <option value="owner">{t('orgs.owner')}</option> : null}
+              {orgRoleIsOwner(user, activeOrgId) || isPlatformAdmin(user) ? <option value="owner">{t('orgs.owner')}</option> : null}
             </select>
             <button className={btnPrimary} disabled={busy} type="submit">
               {t('orgs.invite')}
@@ -256,6 +259,85 @@ export function OrgHome({ user, activeOrgId, flash }) {
   )
 }
 
+function memberLabel(member) {
+  const userId = member?.userId || member?.id || ''
+  const person = listUsers().find((user) => user.id === userId)
+  const name = person?.fullName || member?.fullName || ''
+  const handle = person?.handle || member?.handle || ''
+  const email = person?.email || member?.email || ''
+  return [name, handle ? `@${handle}` : '', email].filter(Boolean).join(' · ') || userId
+}
+
+function publicInvite(row) {
+  if (!row?.id) return null
+  return {
+    id: row.id,
+    email: row.email || '',
+    handle: row.handle || '',
+    status: row.status || '',
+    role: row.role || '',
+    workspaceId: row.workspaceId || row.organizationId || '',
+  }
+}
+
+function mergeInvites(remote, local) {
+  const map = new Map()
+  for (const row of [...(remote || []), ...(local || [])]) {
+    const safe = publicInvite(row)
+    if (safe) map.set(safe.id, safe)
+  }
+  return [...map.values()]
+}
+
+function PlatformDirectory({ user, localInvites }) {
+  const { t } = useI18n()
+  const directory = listPlatformDirectory(user)
+  if (!directory) return null
+  const invites = mergeInvites(directory.invitations, localInvites)
+  const orgName = (id) => directory.orgs.find((org) => org.id === id)?.name || (id ? id : t('orgs.unscoped'))
+  return (
+    <section className="rounded-2xl border border-sage-200 bg-white/80 p-4">
+      <h3 className="font-display text-lg">{t('orgs.directory')}</h3>
+      <p className="mt-1 text-sm text-sage-600">{t('orgs.directoryHint')}</p>
+      <h4 className="mt-4 text-sm font-semibold text-sage-800">{t('orgs.teams')}</h4>
+      {directory.groups.length === 0 ? (
+        <p className="mt-2 text-sm text-sage-500">{t('orgs.noTeams')}</p>
+      ) : (
+        <ul className="mt-2 space-y-3">
+          {directory.groups.map((group) => (
+            <li key={group.id} className="rounded-xl bg-sage-50 px-3 py-2 text-sm">
+              <p className="font-medium text-sage-900">{group.name || group.id}</p>
+              <p className="text-xs text-sage-600">{orgName(group.orgId)}</p>
+              <ul className="mt-1 text-xs text-sage-700">
+                {group.members.length === 0 ? (
+                  <li>{t('orgs.emptyMembers')}</li>
+                ) : (
+                  group.members.map((member) => <li key={member.id}>{memberLabel(member)}</li>)
+                )}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+      <h4 className="mt-4 text-sm font-semibold text-sage-800">{t('orgs.invites')}</h4>
+      {invites.length === 0 ? (
+        <p className="mt-2 text-sm text-sage-500">{t('orgs.noInvites')}</p>
+      ) : (
+        <ul className="mt-2 divide-y divide-sage-100 text-sm">
+          {invites.map((invite) => (
+            <li key={invite.id} className="py-2">
+              <p className="font-medium text-sage-900">{invite.email || (invite.handle ? `@${invite.handle}` : invite.id)}</p>
+              <p className="text-xs text-sage-600">
+                {orgName(invite.workspaceId)} · {invite.role || '—'} · {invite.status || '—'}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 function orgRoleIsOwner(user, orgId) {
   return listMembersOfOrg(orgId).some((m) => m.userId === user.id && m.role === 'owner')
 }
@@ -271,7 +353,18 @@ export function OrgAdmin({ user, flash, peek, activeOrgId = '' }) {
   const [busy, setBusy] = useState(false)
   const [accountQuery, setAccountQuery] = useState('')
   const [confirmUser, setConfirmUser] = useState('')
-  if (!isAdmin(user)) return null
+  const [localInvites, setLocalInvites] = useState([])
+  useEffect(() => {
+    let alive = true
+    hydrateInvites().finally(() => {
+      if (!alive) return
+      setLocalInvites(browserRepo().list())
+    })
+    return () => {
+      alive = false
+    }
+  }, [user?.id])
+  if (!isPlatformAdmin(user)) return null
   const needle = accountQuery.trim().toLowerCase()
   const accounts = listUsers().filter((person) => {
     const blob = `${person.handle || ''} ${person.fullName || ''} ${person.email || ''}`.toLowerCase()
@@ -359,6 +452,7 @@ export function OrgAdmin({ user, flash, peek, activeOrgId = '' }) {
           ))}
         </ul>
       </section>
+      <PlatformDirectory user={user} localInvites={localInvites} />
       {/* MODULES-LAYER END */}
       <section className="rounded-2xl border border-sage-200 bg-white/80 p-4">
         <h3 className="font-display text-lg">{t('feedback.inbox')}</h3>
@@ -426,7 +520,7 @@ export function OrgAdmin({ user, flash, peek, activeOrgId = '' }) {
                   {members.map((member) => (
                     <li key={member.id} className="flex items-center justify-between gap-2 py-2">
                       <span className="min-w-0 truncate">
-                        {member.email} · {roleLabel(t, member.role)}
+                        {memberLabel(member)} · {roleLabel(t, member.role)}
                       </span>
                       <button type="button" className={btnGhost + ' !min-h-9'} onClick={() => remove(org.id, member)}>
                         {t('orgs.remove')}

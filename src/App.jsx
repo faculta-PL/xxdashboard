@@ -176,12 +176,12 @@ import {
   createOrganization,
 } from './lib/store'
 import { firebaseConfigured, missingFirebaseVars, getFirebaseStatus } from './lib/firebase'
+import { isPlatformAdmin } from './platform/superAdmin.js'
 import {
   canReadEntity,
   canEditEntity,
   canDeleteEntity,
   canWriteRole,
-  isAdmin,
   ROLES,
   canReadFileOrFolder,
   canModifyFileOrFolder,
@@ -683,7 +683,7 @@ export default function App() {
     if (!user || !inOrg(row)) return false
     if (!orgId) return true
     const rowOrg = row?.organizationId || row?.orgId || orgId
-    const role = isAdmin(user) ? orgRoleName || 'owner' : orgRoleName
+    const role = isPlatformAdmin(user) ? orgRoleName || 'owner' : orgRoleName
     return canReadScopedContent(user, { ...row, orgId: rowOrg }, db?.xx_groups || {}, role, db?.xx_spaces || {})
   }
   const inWorkspace = (row) => canReadRow(row)
@@ -831,7 +831,7 @@ export default function App() {
                 user,
                 { ...m, orgId: groupOrg, groupId: group.id },
                 db.xx_groups || {},
-                isAdmin(user) ? orgRoleName || 'owner' : orgRoleName,
+                isPlatformAdmin(user) ? orgRoleName || 'owner' : orgRoleName,
                 db.xx_spaces || {},
               )
             })
@@ -1356,7 +1356,7 @@ export default function App() {
           }}
           onCreateOrganization={() => setCreateOrgOpen(true)}
           onManageOrganizations={() => setView(orgId ? 'orgsettings' : 'dashboard')}
-          onAdminOrganizations={isAdmin(user) ? () => setView('orgadmin') : null}
+          onAdminOrganizations={isPlatformAdmin(user) ? () => setView('orgadmin') : null}
         />
       </div>
 
@@ -1545,7 +1545,7 @@ export default function App() {
               }}
             />
           )}
-          {view === 'orgadmin' && isAdmin(user) && <OrgAdmin user={user} flash={flash} peek={db?.orgPeek} activeOrgId={orgId} />}
+          {view === 'orgadmin' && isPlatformAdmin(user) && <OrgAdmin user={user} flash={flash} peek={db?.orgPeek} activeOrgId={orgId} />}
           {view === 'dashboard' && (
             <>
             <PersonalBanner
@@ -7725,7 +7725,7 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
           >
             <Download size={14} /> {t('settingsUi.exportKitBtn')}
           </button>
-          {isAdmin(user) && (
+          {isPlatformAdmin(user) && (
             <>
               <button
                 type="button"
@@ -7765,7 +7765,7 @@ function SettingsView({ user, session, users, flash, onUserUpdated, allowExterna
         )}
       </section>
 
-      {isAdmin(user) && (
+      {isPlatformAdmin(user) && (
         <section className="rounded-2xl border border-sage-200 bg-white/80 p-5">
           <h2 className="font-display text-lg text-sage-900">Utilisateurs ({users.length})</h2>
           <p className="mt-1 text-xs text-sage-500">

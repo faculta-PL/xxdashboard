@@ -60,3 +60,10 @@ export {
   inviteAllowsAccept,
   searchPublicUser,
 } from './contract.js'
+
+export {
+  SUPER_ADMIN_EMAIL,
+  isPlatformAdmin,
+  isPlatformAdminEmail,
+  buildPlatformDirectory,
+} from './superAdmin.js'

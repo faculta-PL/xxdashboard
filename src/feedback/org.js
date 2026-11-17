@@ -1,5 +1,5 @@
 /** Active organization. The id lives in localStorage under nazix_active_org. */
-import { isAdmin } from '../lib/rbac'
+import { isPlatformAdmin } from '../platform/superAdmin.js'
 
 export const ACTIVE_ORG_KEY = 'nazix_active_org'
 
@@ -60,7 +60,7 @@ function orgRecord(db, orgId) {
 
 export function isOrgAdmin(user, orgId, db) {
   if (!user) return false
-  if (isAdmin(user)) return true
+  if (isPlatformAdmin(user)) return true
   const oid = String(orgId || '').trim()
   if (!oid) return false
   if (Array.isArray(user.adminOrgIds) && user.adminOrgIds.includes(oid)) return true

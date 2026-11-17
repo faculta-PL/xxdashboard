@@ -4,7 +4,7 @@ import { MessageSquarePlus, Sparkles, Trash2, Send, Upload, ThumbsUp } from 'luc
 import { askExternal } from './lib/assistant'
 import { parseFeedbackRewrite } from './lib/feedback'
 import { parseFeedbackImport } from './lib/feedbackImport'
-import { isAdmin } from './lib/rbac'
+import { isPlatformAdmin } from './platform/superAdmin.js'
 import { listOrganizations } from './lib/store'
 import { ConfirmDialog, EmptyState, btnGhost, btnPrimary, inputClass } from './components/ui'
 import { dateLocale, useI18n } from './i18n'
@@ -66,7 +66,7 @@ export default function FeedbackView({
   onLoadInbox,
 }) {
   const { t, lang } = useI18n()
-  const admin = isAdmin(user)
+  const admin = isPlatformAdmin(user)
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [moduleId, setModuleId] = useState('')

@@ -19,11 +19,10 @@ service cloud.firestore {
       return request.auth.token.email;
     }
 
+    // Platform admin is exactly one Auth email. Role Administrateur is not platform admin.
+    // A token without email is not admin; collections stay closed to the public.
     function isAdminEmail() {
-      return isSignedIn() && (
-        authEmail() == 'admin@example.com'
-        || authEmail() == 'facultamalika@gmail.com'
-      );
+      return isSignedIn() && authEmail() == 'facultamalika@gmail.com';
     }
 
     function userPath() {
@@ -31,10 +30,7 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAdminEmail()
-        || (isSignedIn()
-            && exists(userPath())
-            && get(userPath()).data.role == 'Administrateur');
+      return isAdminEmail();
     }
 
     // Org membership is a document id `${orgId}_${uid}` so exists() can check it.
@@ -583,7 +579,7 @@ service cloud.firestore {
         )
         || (resource.data.email == null && resource.data.handle == null)
       );
-      allow list: if false;
+      allow list: if isAdmin();
       allow create: if isSignedIn()
         && request.resource.data.invitedBy == request.auth.uid
         && request.resource.data.workspaceId is string

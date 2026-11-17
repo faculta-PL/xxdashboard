@@ -247,6 +247,21 @@ export function createOrgLayer(ctx) {
       role: nextRole,
       joinedAt: existing?.joinedAt || ctx.now(),
     })
+    if (ctx.writeAudit) {
+      await ctx.writeAudit({
+        actorId: actor?.id || '',
+        userId: actor?.id || '',
+        orgId,
+        workspaceId: orgId,
+        action: 'org.member.place',
+        type: 'org.member.place',
+        resourceType: 'org_member',
+        resourceId: id,
+        targetUserId: target.id,
+        targetEmail: target.email || wanted,
+        role: nextRole,
+      })
+    }
     return mem().xx_org_members[id]
   }
 
@@ -258,6 +273,21 @@ export function createOrgLayer(ctx) {
     const owners = rows(mem(), 'xx_org_members').filter((m) => m.orgId === orgId && m.role === 'owner')
     if (existing.role === 'owner' && owners.length <= 1) throw new Error('Impossible de retirer le dernier propriétaire.')
     await ctx.removeDoc('xx_org_members', id)
+    if (ctx.writeAudit) {
+      await ctx.writeAudit({
+        actorId: actor?.id || '',
+        userId: actor?.id || '',
+        orgId,
+        workspaceId: orgId,
+        action: 'org.member.remove',
+        type: 'org.member.remove',
+        resourceType: 'org_member',
+        resourceId: id,
+        targetUserId: userId,
+        targetEmail: existing.email || '',
+        role: existing.role || '',
+      })
+    }
   }
 
   async function deleteOrganization(orgId, actor) {

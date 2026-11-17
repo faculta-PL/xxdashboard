@@ -1,6 +1,7 @@
 // MODULES-LAYER START
 import { moduleReadDecision } from '../billing/access.js'
 // MODULES-LAYER END
+import { SUPER_ADMIN_EMAIL, isPlatformAdmin, isPlatformAdminEmail } from '../platform/superAdmin.js'
 
 export const ROLES = {
   ADMIN: 'Administrateur',
@@ -9,31 +10,11 @@ export const ROLES = {
   READER: 'Lecteur',
 }
 
-/** Built-in admin accounts — keep in sync with firestore.rules / storage.rules. */
-function viteEnv(key) {
-  try {
-    return import.meta.env?.[key]
-  } catch {
-    return undefined
-  }
-}
-
-function adminEmailsFromEnv() {
-  const extras = String(viteEnv('VITE_ADMIN_EMAILS') || '')
-    .split(/[,;]/)
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean)
-  const singles = [viteEnv('VITE_ADMIN_EMAIL'), viteEnv('VITE_ADMIN_EMAIL_2')]
-    .map((s) => String(s || '').trim().toLowerCase())
-    .filter(Boolean)
-  return [...new Set(['admin@example.com', 'facultamalika@gmail.com', ...extras, ...singles])]
-}
-
-export const ADMIN_EMAILS = adminEmailsFromEnv()
+/** Platform operator email. Exactly one account — see src/platform/superAdmin.js. */
+export const ADMIN_EMAILS = [SUPER_ADMIN_EMAIL]
 
 export function isAdminEmail(email) {
-  const normalized = String(email || '').trim().toLowerCase()
-  return ADMIN_EMAILS.includes(normalized)
+  return isPlatformAdminEmail(email)
 }
 
 export const ROLE_RANK = {
@@ -43,10 +24,11 @@ export const ROLE_RANK = {
   [ROLES.READER]: 1,
 }
 
+/** Legacy content role inside a workspace. The platform console uses isPlatformAdmin. */
 export function isAdmin(user) {
   if (!user) return false
   if (user.role === ROLES.ADMIN) return true
-  return isAdminEmail(user.email)
+  return isPlatformAdmin(user)
 }
 
 export function canWriteRole(user) {

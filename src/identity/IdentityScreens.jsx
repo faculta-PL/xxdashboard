@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Mail, Search, UserPlus } from 'lucide-react'
 import { btnGhost, btnPrimary, inputClass } from '../components/ui'
 import { useI18n } from '../i18n'
-import { isAdmin } from '../lib/rbac'
+import { isPlatformAdmin } from '../platform/superAdmin.js'
 import { canManageOrg, orgRole, resendVerificationEmail, selectOrganization, updateProfile, verifyEmail } from '../lib/store'
 import { featureEnabled } from '../platform/contract.js'
 import { appInviteService, hydrateInvites } from './bridge.js'
@@ -328,7 +328,7 @@ export function InvitationDesk({ user, orgId, groups = [], directory = [], flash
   const [fresh, setFresh] = useState(null)
   const [busy, setBusy] = useState(false)
   const canInvite = Boolean(user && orgId && canManageOrg(user, orgId))
-  const owner = orgRole(user, orgId) === 'owner' || isAdmin(user)
+  const owner = orgRole(user, orgId) === 'owner' || isPlatformAdmin(user)
 
   useEffect(() => subscribeInvites(() => setTick((n) => n + 1)), [])
   useEffect(() => {

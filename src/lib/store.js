@@ -66,7 +66,9 @@ import { VERIFY_EMAIL, RESET_EMAIL, firebaseUnavailableLine } from './emailCopy'
 import { ORG_SCOPED_COLLECTIONS, createOrgLayer } from './orgLayer'
 import { readMirroredActiveId, writeActiveMirror } from '../spaces/active.js'
 import { createSpacesEngine } from '../spaces/engine.js'
+import { applyLocalAccountSeed } from '../platform/localAccounts.js'
 import { planMigration } from '../platform/MIGRATION.js'
+import { buildPlatformDirectory, isPlatformAdmin } from '../platform/superAdmin.js'
 import {
   canAccessSpace,
   canReadScopedContent,
@@ -236,6 +238,7 @@ function loadLocal() {
       if (parsed && typeof parsed === 'object') base[match[2]] = { ...(base[match[2]] || {}), ...parsed }
     }
   } catch { /* namespaced keys are optional */ }
+  applyLocalAccountSeed(base)
   return base
 }
 
@@ -1082,9 +1085,17 @@ function rebindOrgListeners() {
     hydrateMemberOrgs(listenerUserId)
   }
   if (listenerIsAdmin) watchCollection('xx_feedback', collection(db, 'xx_feedback'))
+  // Groups and invitations for the one platform admin. Message bodies stay on the active org.
+  if (listenerIsAdmin) {
+    watchCollection('xx_invitations', collection(db, 'xx_invitations'))
+    watchCollection('xx_groups', collection(db, 'xx_groups'))
+    watchCollection('xx_group_members', collection(db, 'xx_group_members'))
+  }
   if (!activeOrgId) { notify(); return }
   const privateCols = new Set(['xx_notifications', 'xx_ai_threads', 'xx_canvas_layout'])
+  const directoryCols = new Set(['xx_groups', 'xx_group_members'])
   for (const col of ORG_SCOPED) {
+    if (listenerIsAdmin && directoryCols.has(col)) continue
     if (privateCols.has(col)) {
       if (!listenerUserId) continue
       watchCollection(col, query(collection(db, col), where('userId', '==', listenerUserId)))
@@ -1172,7 +1183,7 @@ function setPeek(next) {
 
 export function bindRealtimeForUser(user) {
   listenerUserId = user?.id || ''
-  listenerIsAdmin = Boolean(user && isAdmin(user))
+  listenerIsAdmin = Boolean(user && isPlatformAdmin(user))
   if (firebaseConfigured && db) rebindOrgListeners()
   else notify()
 }
@@ -1889,7 +1900,7 @@ export async function updateProfile(userId, patch) {
 }
 
 export async function updateUserRole(targetId, role, actor) {
-  if (!isAdmin(actor)) throw new Error('Seuls les administrateurs peuvent changer les rôles.')
+  if (!isPlatformAdmin(actor)) throw new Error('Seul le super-administrateur peut changer les rôles.')
   const valid = Object.values(ROLES)
   if (!valid.includes(role)) throw new Error('Rôle invalide.')
   const user = memory.xx_users[targetId] || (await getRemoteDoc('xx_users', targetId))
@@ -1905,7 +1916,7 @@ export async function updateUserRole(targetId, role, actor) {
 }
 
 export async function setAccountStatus(userId, status, actor) {
-  if (!actor || !isAdmin(actor)) throw new Error('Permission refusée.')
+  if (!actor || !isPlatformAdmin(actor)) throw new Error('Permission refusée.')
   if (status !== 'active' && status !== 'suspended') throw new Error('Statut inconnu.')
   const target = memory.xx_users?.[userId]
   if (!target) throw new Error('Compte introuvable.')
@@ -1928,6 +1939,11 @@ export async function setAccountStatus(userId, status, actor) {
 
 export function listUsers() {
   return Object.values(memory.xx_users).map(publicUser)
+}
+
+/** Read-only site directory. Null unless the actor is the platform super admin. */
+export function listPlatformDirectory(actor) {
+  return buildPlatformDirectory(memory, actor)
 }
 
 export function listSessionsForUser(userId) {
@@ -2444,7 +2460,7 @@ export async function writeAudit(entry) {
 }
 
 export async function ensureFreeSubscriptions(user) {
-  if (!isAdmin(user)) return []
+  if (!isPlatformAdmin(user)) return []
   const saved = []
   for (const org of Object.values(memory.xx_orgs || {})) {
     if (!org?.id || org.subscription?.planId) continue
@@ -3868,7 +3884,7 @@ export async function saveFeedback(data, user) {
   if (!memory.xx_feedback) memory.xx_feedback = {}
   await persistDoc('xx_feedback', id, row)
   const adminIds = Object.values(memory.xx_users || {})
-    .filter((u) => isAdmin(u))
+    .filter((u) => isPlatformAdmin(u))
     .map((u) => u.id)
     .filter((adminId) => adminId && adminId !== user.id)
   if (adminIds.length) {
@@ -3883,7 +3899,7 @@ export async function saveFeedback(data, user) {
 }
 
 export async function deleteFeedback(id, user) {
-  if (!isAdmin(user)) throw new Error('Seuls les administrateurs peuvent supprimer un retour.')
+  if (!isPlatformAdmin(user)) throw new Error('Seul le super-administrateur peut supprimer un retour.')
   const existing = memory.xx_feedback?.[id]
   if (!existing) return
   await removeDoc('xx_feedback', id)
@@ -3936,11 +3952,12 @@ const orgApi = createOrgLayer({
   removeDoc,
   getActiveOrgId: () => activeOrgId,
   setActiveOrgId,
-  isAdminUser: isAdmin,
+  isAdminUser: isPlatformAdmin,
   newId: uid,
   now: () => new Date().toISOString(),
   setPeek,
   fetchOrgCol,
+  writeAudit: (entry) => writeAudit(entry),
 })
 
 export function listAllFeedback() {
@@ -3999,7 +4016,7 @@ export function selectSpace(spaceId, user) {
   if (!space) throw new Error('Espace introuvable.')
   const orgId = space.organizationId || space.orgId
   if (orgId && orgId !== activeOrgId) selectOrganization(orgId, user)
-  const role = orgApi.memberOf(user, orgId)?.role || (isAdmin(user) ? 'owner' : '')
+  const role = orgApi.memberOf(user, orgId)?.role || (isPlatformAdmin(user) ? 'owner' : '')
   if (!canAccessSpace(user, space, memory.xx_groups, role)) throw new Error('Permission refusée.')
   activeSpaceId = space.id
   try { localStorage.setItem(ACTIVE_SPACE_KEY, activeSpaceId) } catch { /* ignore */ }
